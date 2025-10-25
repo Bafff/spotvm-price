@@ -288,12 +288,12 @@ import matplotlib.pyplot as plt
 df = pd.read_csv('results/history.csv')
 df['timestamp'] = pd.to_datetime(df['timestamp'])
 
-# Plot price trends for specific SKU
-sku_data = df[df['vm_size'] == 'Standard_D4as_v5']
-plt.plot(sku_data['timestamp'], sku_data['price_usd'])
+# Plot price trends for specific SKU (regional data only)
+sku_regional = df[(df['vm_size'] == 'Standard_D4as_v5') & (df['zone'] == '')]
+plt.plot(sku_regional['timestamp'], sku_regional['price_usd'])
 plt.xlabel('Date')
 plt.ylabel('Price (USD/hr)')
-plt.title('Spot Price Trend: Standard_D4as_v5')
+plt.title('Spot Price Trend: Standard_D4as_v5 (Regional)')
 plt.show()
 ```
 
@@ -313,6 +313,84 @@ plt.show()
 - **Automation:** Run hourly via cron with `--save-results`, analyze weekly trends
 
 **Note:** The tool doesn't include built-in visualization (keeps dependencies minimal). Use the CSV output with your preferred analytics/charting tools.
+
+### Working with Availability Zones in Historical Data
+
+**Important:** The same SKU in the same region can appear multiple times in historical data:
+
+**Scenario 1: Without `--availability-zones` (regional aggregation)**
+```bash
+spotvm-tool --regions centralus --sizes Standard_D4as_v5 --save-results
+```
+Produces:
+```csv
+timestamp,vm_size,region,zone,price_usd,...
+2025-01-25T14:00:00Z,Standard_D4as_v5,centralus,,0.0336,...
+```
+- `zone` column is empty
+- One record per SKU/Region
+
+**Scenario 2: With `--availability-zones` (zone-specific)**
+```bash
+spotvm-tool --regions centralus --sizes Standard_D4as_v5 --availability-zones --save-results
+```
+Produces:
+```csv
+timestamp,vm_size,region,zone,price_usd,...
+2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,1,0.0338,...
+2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,2,0.0340,...
+2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,3,0.0342,...
+```
+- Three separate records (one per zone)
+- Prices **can differ** between zones!
+
+**Scenario 3: Mixed runs (inconsistent zone usage)**
+
+If you alternate between runs with/without `--availability-zones`:
+```csv
+timestamp,vm_size,region,zone,price_usd,...
+2025-01-25T14:00:00Z,Standard_D4as_v5,centralus,,0.0336,...      # Regional
+2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,1,0.0338,...     # Zone 1
+2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,2,0.0340,...     # Zone 2
+2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,3,0.0342,...     # Zone 3
+2025-01-26T10:00:00Z,Standard_D4as_v5,centralus,,0.0335,...      # Regional
+```
+
+**How to handle mixed data when visualizing:**
+
+```python
+import pandas as pd
+import matplotlib.pyplot as plt
+
+df = pd.read_csv('results/history.csv')
+df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+# OPTION 1: Regional data only (exclude zone-specific)
+regional = df[(df['vm_size'] == 'Standard_D4as_v5') & (df['zone'] == '')]
+plt.plot(regional['timestamp'], regional['price_usd'], label='Regional')
+
+# OPTION 2: Specific zone only
+zone1 = df[(df['vm_size'] == 'Standard_D4as_v5') & (df['zone'] == '1')]
+plt.plot(zone1['timestamp'], zone1['price_usd'], label='Zone 1')
+
+# OPTION 3: All zones as separate lines
+for zone in df['zone'].unique():
+    zone_label = f"Zone {zone}" if zone else "Regional"
+    zone_data = df[(df['vm_size'] == 'Standard_D4as_v5') & (df['zone'] == zone)]
+    plt.plot(zone_data['timestamp'], zone_data['price_usd'], label=zone_label, marker='o')
+
+plt.legend()
+plt.xlabel('Date')
+plt.ylabel('Price (USD/hr)')
+plt.title('Spot Price Trends by Availability Zone')
+plt.show()
+```
+
+**Best Practices:**
+1. **Consistency:** Use the **same parameters** for regular scheduled runs (always with or without `--availability-zones`)
+2. **Filter by zone:** Always filter on the `zone` column when analyzing trends
+3. **Aggregate carefully:** If you need regional averages from zone-specific data, use `groupby(['timestamp', 'vm_size', 'region']).mean()`
+4. **Document your runs:** Keep track of which runs used `--availability-zones` to avoid confusion
 
 ## Operational notes
 - The tool retries transient HTTP errors and honours `Retry-After` headers when Azure throttles requests.
