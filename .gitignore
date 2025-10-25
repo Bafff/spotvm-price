@@ -29,3 +29,6 @@ pytest_cache/
 
 # Generated reports
 reports/
+
+# Historical data
+results/

@@ -82,6 +82,35 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         help="Baseline VM size for relative performance comparison (e.g., Standard_D4as_v6 = 100%%)",
     )
+
+    # Historical data features
+    parser.add_argument(
+        "--save-results",
+        action="store_true",
+        help="Save run results to results/runs/{timestamp}.json for historical analysis",
+    )
+    parser.add_argument(
+        "--results-dir",
+        type=Path,
+        default=Path("./results"),
+        help="Directory for historical results storage (default: ./results)",
+    )
+    parser.add_argument(
+        "--analyze-history",
+        action="store_true",
+        help="Analyze previous runs and generate unified history CSV file",
+    )
+    parser.add_argument(
+        "--history-depth",
+        type=int,
+        help="Number of most recent runs to include in analysis (default: all)",
+    )
+    parser.add_argument(
+        "--history-output",
+        type=Path,
+        help="Path for history CSV output (default: results/history.csv)",
+    )
+
     return parser
 
 
@@ -94,6 +123,31 @@ def main(argv: List[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(message)s",
     )
     logger = logging.getLogger("spotvm-tool")
+
+    # Handle --analyze-history mode (separate from normal runs)
+    if args.analyze_history:
+        from .history import analyze_history
+
+        results_dir = args.results_dir
+        history_output = args.history_output or (results_dir / "history.csv")
+
+        logger.info("Analyzing historical data from %s", results_dir)
+        num_runs, num_datapoints, csv_path = analyze_history(
+            results_dir=results_dir,
+            depth=args.history_depth,
+            output_path=history_output,
+        )
+
+        print(f"Historical Analysis Complete:")
+        print(f"  Runs analyzed: {num_runs}")
+        print(f"  Data points: {num_datapoints}")
+        print(f"  CSV output: {csv_path}")
+        print(f"\nUse this CSV for visualization with tools like:")
+        print(f"  - Excel/Google Sheets: Import {csv_path}")
+        print(f"  - Python: pd.read_csv('{csv_path}')")
+        print(f"  - Grafana: CSV data source plugin")
+
+        return 0
 
     base_config: Dict[str, Any] = {}
     if args.config:
@@ -148,6 +202,18 @@ def main(argv: List[str] | None = None) -> int:
 
     if config.result_limit:
         ranked = ranked[: config.result_limit]
+
+    # Save results for historical analysis if requested
+    if args.save_results:
+        from .history import save_run_results
+
+        saved_path = save_run_results(
+            candidates=ranked,
+            config=config,
+            results_dir=args.results_dir,
+        )
+        logger.info("Results saved to %s", saved_path)
+        print(f"✅ Results saved to: {saved_path}\n")
 
     table = render_table(ranked)
     print(table)
