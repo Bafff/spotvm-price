@@ -38,3 +38,5 @@ class CandidateInsight:
     availability_zone: Optional[str] = None
     recommendation_rank: Optional[int] = None
     notes: Optional[str] = None
+    performance_relative: Optional[float] = None  # % relative to baseline
+    price_per_performance: Optional[float] = None  # USD per performance unit
