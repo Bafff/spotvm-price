@@ -27,6 +27,12 @@ class VMSpec:
 
 # Azure VM specifications
 # Source: https://learn.microsoft.com/en-us/azure/virtual-machines/sizes
+#
+# Note: Microsoft's ACU (Azure Compute Units) are NOT published for newer VM generations (v5, v6+)
+# See: https://github.com/MicrosoftDocs/azure-docs/issues/84034
+# Microsoft is "reevaluating ACU methodology" and now uses CoreMark/SPECInt benchmarks instead.
+# Until official performance metrics are published, we use vCPU and RAM as performance indicators.
+#
 VM_SPECIFICATIONS: Dict[str, VMSpec] = {
     # D-series (General purpose)
     "Standard_D2s_v4": VMSpec(vcpus=2, ram_gb=8),
