@@ -1,0 +1,13 @@
+subscription_id: "00000000-0000-0000-0000-000000000000"
+regions:
+  - eastus
+  - westus
+sizes:
+  - Standard_D2s_v4
+  - Standard_D4s_v4
+desired_count: 10
+os_type: linux
+availability_zones: false
+cache_ttl_minutes: 15
+result_limit: 10
+emit_json: false
