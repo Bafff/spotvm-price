@@ -83,6 +83,7 @@ emit_json: false
 - `desired_count`: Number of VMs you intend to launch; placement score sensitivity increases with larger counts.
 - `os_type`: `linux` (default) or `windows` to align price history with OS-specific retail rates.
 - `availability_zones`: Set `true` to request zone-level placement scores; otherwise the tool queries region scope.
+- `baseline_sku`: Optional VM SKU to use as 100% performance baseline for relative comparison (e.g., `Standard_D4as_v6`). When set, enables `Perf %` and `Price/Perf` columns and optimizes recommendations for value.
 - `cache_ttl_minutes`: Reuses identical placement/Resource Graph responses for the specified TTL to respect Azure guidance of avoiding duplicate calls within 15 minutes.[^placement-score]
 - `result_limit`: Optional maximum number of rows in the final ranked report.
 - `emit_json`: When `true`, prints a JSON representation in addition to the table (also useful when saving reports).
@@ -109,16 +110,88 @@ The CLI prints an aligned ASCII table with the placement score, quota availabili
 
 ### Example snippet
 ```
-Rank | Region | Zone | VM Size         | Placement | Quota | Price (USD/hr) | Eviction % | Price Updated     | Eviction Updated  | Notes
----- | ------ | ---- | --------------- | --------- | ----- | -------------- | ---------- | ----------------- | ----------------- | -----
-1    | eastus |      | Standard_D2s_v4 | High      | Yes   | $0.0450        | 3.0%       | 2025-10-24T12:00  | 2025-10-20T08:00  |
-2    | westus | 2    | Standard_D4s_v4 | Medium    | No    | $0.0820        | 6.5%       | 2025-10-24T11:45  | 2025-10-19T21:15  | Data not found
+Rank | Region | Zone | VM Size         | Placement | Quota | Price (USD/hr) | Eviction % | Perf % | Price/Perf | Price Updated     | Eviction Updated  | Notes
+---- | ------ | ---- | --------------- | --------- | ----- | -------------- | ---------- | ------ | ---------- | ----------------- | ----------------- | -----
+1    | eastus |      | Standard_D2s_v4 | High      | Yes   | $0.0450        | 3.0%       | 100%   | $0.000450  | 2025-10-24T12:00  | 2025-10-20T08:00  |
+2    | westus | 2    | Standard_D4s_v4 | Medium    | No    | $0.0820        | 6.5%       | 200%   | $0.000410  | 2025-10-24T11:45  | 2025-10-19T21:15  | Data not found
 ```
+*(Perf % and Price/Perf columns shown when `--baseline-sku` is specified)*
 
 ## Output artifacts
 - **Console table** – always emitted.
 - **Recommendations** – human-readable summary of the top three entries.
 - **JSON report** – optional structured output (includes timestamps, metrics, and notes) controllable via `--json` and `--save-report`.
+
+## Recommendation Logic
+
+The tool ranks VM candidates using a three-tier priority system:
+
+### Ranking Formula
+```
+Priority 1: Placement Score (High > Medium > Low)
+Priority 2: Eviction Rate (lower is better)
+Priority 3: Price/Performance ratio (lower is better value)
+```
+
+### How it works:
+1. **Placement Score** (when `--skip-placement` is NOT used)
+   - `High` (best) - Azure has strong capacity signals
+   - `Medium` - Moderate availability
+   - `Low` - Limited availability
+   - `N/A` - No placement data (when using `--skip-placement`)
+
+2. **Eviction Rate** - Historical eviction percentage
+   - `5%` means 5% chance of eviction in the next hour
+   - Lower rates indicate more stable workloads
+   - Based on last 7 days of eviction history
+
+3. **Price/Performance** - Cost per performance unit
+   - When `--baseline-sku` is specified, sorts by price per performance unit
+   - Without baseline, sorts by raw price
+   - Optimizes for best value (bang for buck) rather than just cheapest option
+
+### Performance Comparison
+
+Add `--baseline-sku` to compare relative performance:
+
+```bash
+spotvm-tool \
+  --baseline-sku Standard_D4as_v6 \
+  --regions eastus centralus \
+  --sizes Standard_D2as_v6 Standard_D4as_v5 Standard_E4s_v5 \
+  --desired-count 10
+```
+
+**Output includes:**
+- `Perf %` - Performance relative to baseline (100% = baseline)
+- `Price/Perf` - Price per 1% of baseline performance
+
+**Performance calculation:**
+```
+Compute Score = (vCPUs × 100) + (RAM_GB × 5)
+Relative % = (SKU_score / Baseline_score) × 100
+```
+
+*Source: [Azure VM Sizes Documentation](https://learn.microsoft.com/en-us/azure/virtual-machines/sizes)*
+
+**Example results:**
+```
+Rank | VM Size          | Price   | Eviction | Perf % | Price/Perf
+-----|------------------|---------|----------|--------|------------
+1    | Standard_D4as_v5 | $0.0336 | 5.0%     | 100%   | $0.000336
+2    | Standard_E4s_v5  | $0.0696 | 5.0%     | 117%   | $0.000597
+3    | Standard_D2as_v6 | $0.0168 | 20.0%    | 50%    | $0.000336
+```
+
+**Interpretation:**
+- **D4as_v5**: Best recommendation - low eviction (5%) + best price/performance value
+- **E4s_v5**: More RAM (+17% perf) but worse value due to higher price
+- **D2as_v6**: Cheapest, same price/performance, but high eviction risk (20%)
+
+**Notes:**
+- Performance formula weights CPU more heavily (100×) than RAM (5×)
+- Formula is simplified; real performance depends on workload type, CPU generation, I/O, etc.
+- Choose a baseline similar to your typical workload for accurate comparison
 
 ## Operational notes
 - The tool retries transient HTTP errors and honours `Retry-After` headers when Azure throttles requests.
