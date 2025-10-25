@@ -127,3 +127,44 @@ def calculate_relative_performance(
         return None
 
     return (spec.compute_score / baseline_score) * 100.0
+
+
+def discover_skus(
+    min_vcpu: Optional[int] = None,
+    min_ram: Optional[int] = None,
+) -> list[str]:
+    """Discover VM SKUs matching hardware requirements.
+
+    Scans all known SKUs in VM_SPECIFICATIONS and returns those that meet
+    the specified minimum vCPU and RAM requirements. Useful for auto-discovery
+    when user doesn't specify --sizes but provides hardware requirements.
+
+    Args:
+        min_vcpu: Minimum vCPUs required (None = no filter)
+        min_ram: Minimum RAM in GB required (None = no filter)
+
+    Returns:
+        List of SKU names that meet the requirements, sorted by compute score
+
+    Example:
+        # Find all VMs with at least 4 vCPUs and 16 GB RAM
+        skus = discover_skus(min_vcpu=4, min_ram=16)
+        # Returns: ['Standard_D4as_v6', 'Standard_E4s_v5', ...]
+    """
+    matching_skus = []
+
+    for sku_name, spec in VM_SPECIFICATIONS.items():
+        # Check vCPU requirement
+        if min_vcpu is not None and spec.vcpus < min_vcpu:
+            continue
+
+        # Check RAM requirement
+        if min_ram is not None and spec.ram_gb < min_ram:
+            continue
+
+        matching_skus.append((sku_name, spec.compute_score))
+
+    # Sort by compute score (ascending) - cheaper/smaller VMs first
+    matching_skus.sort(key=lambda x: x[1])
+
+    return [sku for sku, _ in matching_skus]

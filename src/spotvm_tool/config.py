@@ -45,7 +45,10 @@ class ToolConfig:
         if not self.regions:
             raise ValueError("At least one region must be supplied")
         if not self.sizes:
-            raise ValueError("At least one VM size must be supplied")
+            raise ValueError(
+                "At least one VM size must be supplied via --sizes, "
+                "OR use --min-vcpu/--min-ram for auto-discovery"
+            )
         if self.desired_count <= 0:
             raise ValueError("desired_count must be positive")
         self.os_type = self.os_type.lower()

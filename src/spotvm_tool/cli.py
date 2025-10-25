@@ -3,17 +3,22 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import signal
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
 from .analysis import (
     enrich_with_performance,
+    filter_by_cost,
+    filter_by_requirements,
     merge_datasets,
     rank_candidates,
     summarize_top_candidates,
 )
+from .vm_specs import discover_skus
 from .auth import AzureAuthenticator
 from .config import ToolConfig, load_config_file, merge_cli_overrides
 from .http_client import AzureRestClient, AzureHttpError
@@ -83,11 +88,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="Baseline VM size for relative performance comparison (e.g., Standard_D4as_v6 = 100%%)",
     )
 
+    # Requirements-based filtering
+    parser.add_argument(
+        "--min-vcpu",
+        type=int,
+        help="Minimum vCPUs required (filters SKUs with fewer cores)",
+    )
+    parser.add_argument(
+        "--min-ram",
+        type=int,
+        help="Minimum RAM required in GB (filters SKUs with less memory)",
+    )
+
+    # Cost-based filtering
+    parser.add_argument(
+        "--max-price",
+        type=float,
+        help="Maximum acceptable price per hour in USD (e.g., 0.10 for $0.10/hr)",
+    )
+    parser.add_argument(
+        "--max-eviction",
+        type=float,
+        help="Maximum acceptable eviction rate in percentage (e.g., 10 for 10%%)",
+    )
+    parser.add_argument(
+        "--min-performance",
+        type=float,
+        help="Minimum performance relative to baseline in percentage (requires --baseline-sku, e.g., 80 for 80%%)",
+    )
+
     # Historical data features
     parser.add_argument(
         "--save-results",
         action="store_true",
         help="Save run results to results/runs/{timestamp}.json for historical analysis",
+    )
+    parser.add_argument(
+        "--run-unattended",
+        type=int,
+        nargs="?",
+        const=60,
+        metavar="MINUTES",
+        help="Run continuously in background, collecting data every MINUTES (default: 60). "
+             "Automatically enables --save-results. Stop with Ctrl+C.",
     )
     parser.add_argument(
         "--results-dir",
@@ -153,10 +196,23 @@ def main(argv: List[str] | None = None) -> int:
     if args.config:
         base_config = load_config_file(args.config)
 
+    # Auto-discover SKUs if not specified but requirements are
+    sizes = args.sizes
+    if not sizes and (args.min_vcpu or args.min_ram):
+        logger.info(
+            "No --sizes specified, auto-discovering SKUs matching requirements "
+            f"(vCPU≥{args.min_vcpu}, RAM≥{args.min_ram} GB)"
+        )
+        sizes = discover_skus(min_vcpu=args.min_vcpu, min_ram=args.min_ram)
+        if not sizes:
+            logger.error("No SKUs found matching specified requirements")
+            return 1
+        logger.info(f"Auto-discovered {len(sizes)} SKUs: {', '.join(sizes[:5])}{'...' if len(sizes) > 5 else ''}")
+
     overrides: Dict[str, Any] = {
         "subscription_id": args.subscription_id,
         "regions": args.regions,
-        "sizes": args.sizes,
+        "sizes": sizes,
         "desired_count": args.desired_count,
         "os_type": args.os_type,
         "availability_zones": args.availability_zones or None,
@@ -182,29 +238,141 @@ def main(argv: List[str] | None = None) -> int:
         cache.clear()
         logger.info("Cache cleared")
 
+    # Unattended mode: run continuously
+    if args.run_unattended:
+        # Force save results in unattended mode
+        save_results_enabled = True
+        interval_minutes = args.run_unattended
+
+        logger.info(
+            f"Starting unattended monitoring mode: running every {interval_minutes} minutes. "
+            f"Press Ctrl+C to stop."
+        )
+        print(f"🔄 Monitoring mode started (interval: {interval_minutes} min)")
+        print(f"📊 Results will be saved to: {args.results_dir}/runs/")
+        print(f"⏸️  Press Ctrl+C to stop\n")
+
+        # Setup signal handler for graceful shutdown
+        stop_requested = False
+
+        def signal_handler(signum, frame):
+            nonlocal stop_requested
+            stop_requested = True
+            print("\n⏹️  Stop requested, finishing current run...")
+
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
+        run_count = 0
+        while not stop_requested:
+            run_count += 1
+            print(f"\n{'='*60}")
+            print(f"Run #{run_count} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"{'='*60}")
+
+            try:
+                _run_single_analysis(
+                    args=args,
+                    config=config,
+                    logger=logger,
+                    save_results=save_results_enabled,
+                )
+            except AzureHttpError as exc:
+                logger.error(f"Azure API request failed: {exc}")
+                logger.info("Continuing despite error...")
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"Unexpected error: {exc}")
+                logger.info("Continuing despite error...")
+
+            if not stop_requested:
+                next_run = datetime.now()
+                next_run = next_run.replace(
+                    minute=(next_run.minute + interval_minutes) % 60,
+                    second=0,
+                    microsecond=0,
+                )
+                if (next_run.minute + interval_minutes) >= 60:
+                    next_run = next_run.replace(hour=(next_run.hour + 1) % 24)
+
+                logger.info(f"Next run at {next_run.strftime('%H:%M:%S')}")
+                print(f"\n💤 Sleeping for {interval_minutes} minutes...")
+                print(f"   Next run at: {next_run.strftime('%H:%M:%S')}")
+
+                # Sleep in small intervals to allow quicker Ctrl+C response
+                sleep_seconds = interval_minutes * 60
+                for _ in range(sleep_seconds):
+                    if stop_requested:
+                        break
+                    time.sleep(1)
+
+        print(f"\n✅ Monitoring stopped after {run_count} run(s)")
+        return 0
+
+    # Normal mode: run once
+    else:
+        try:
+            _run_single_analysis(
+                args=args,
+                config=config,
+                logger=logger,
+                save_results=args.save_results,
+            )
+        except AzureHttpError as exc:
+            logger.error("Azure API request failed: %s", exc)
+            return 2
+
+        return 0
+
+
+def _run_single_analysis(
+    args,
+    config: ToolConfig,
+    logger,
+    save_results: bool,
+) -> None:
+    """Execute a single analysis run.
+
+    Args:
+        args: Parsed command-line arguments
+        config: Tool configuration
+        logger: Logger instance
+        save_results: Whether to save results to disk
+    """
     authenticator = AzureAuthenticator()
     client = AzureRestClient(authenticator)
 
-    try:
-        placement_scores = (
-            fetch_placement_scores(client, config)
-            if config.enable_placement
-            else []
-        )
-        historical_metrics = fetch_historical_metrics(client, config)
-    except AzureHttpError as exc:
-        logger.error("Azure API request failed: %s", exc)
-        return 2
+    placement_scores = (
+        fetch_placement_scores(client, config)
+        if config.enable_placement
+        else []
+    )
+    historical_metrics = fetch_historical_metrics(client, config)
 
     candidates = merge_datasets(placement_scores, historical_metrics)
+
+    # Filter by hardware requirements (before ranking to reduce dataset)
+    candidates = filter_by_requirements(
+        candidates,
+        min_vcpu=args.min_vcpu,
+        min_ram=args.min_ram,
+    )
+
     ranked = rank_candidates(candidates)
     ranked = enrich_with_performance(ranked, config.baseline_sku)
+
+    # Filter by cost constraints (after enrichment for min_performance filter)
+    ranked = filter_by_cost(
+        ranked,
+        max_price=args.max_price,
+        max_eviction=args.max_eviction,
+        min_performance=args.min_performance,
+    )
 
     if config.result_limit:
         ranked = ranked[: config.result_limit]
 
     # Save results for historical analysis if requested
-    if args.save_results:
+    if save_results:
         from .history import save_run_results
 
         saved_path = save_run_results(
@@ -253,8 +421,6 @@ def main(argv: List[str] | None = None) -> int:
         "do not guarantee successful allocation or avoidance of eviction."
     )
     print(f"\n{disclaimer}")
-
-    return 0
 
 
 def _build_report(candidates: List[Any]) -> Dict[str, Any]:

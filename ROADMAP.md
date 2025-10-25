@@ -1,6 +1,6 @@
 # spotvm-tool Roadmap
 
-## 🎯 Current Status (v0.2.0-dev)
+## 🎯 Current Status (v0.3.0)
 
 ### ✅ Implemented Features
 - Azure Spot VM placement score analysis
@@ -12,27 +12,32 @@
 - Caching with TTL
 - Emoji status indicators (✅❌❓)
 - Comprehensive documentation
-- **NEW:** Historical data tracking with `--save-results`
-- **NEW:** Trend analysis with `--analyze-history`
-- **NEW:** CSV export for visualization (history.csv)
+- **v0.2.0:** Historical data tracking with `--save-results`
+- **v0.2.0:** Trend analysis with `--analyze-history`
+- **v0.2.0:** CSV export for visualization (history.csv)
+- **v0.3.0:** SKU auto-discovery by hardware requirements
+- **v0.3.0:** Requirements-based filtering (--min-vcpu, --min-ram)
+- **v0.3.0:** Cost-based filtering (--max-price, --max-eviction, --min-performance)
+- **v0.3.0:** Unattended monitoring mode (--run-unattended)
 
 ---
 
 ## 🚀 Planned Improvements
 
-### Phase 1: Essential Filters & Export (v0.2.0)
-**Timeline:** 2-3 hours development
-**Priority:** 🔥 HIGH
+### Phase 1: Essential Filters & Export ✅ IMPLEMENTED
+**Status:** Completed in v0.3.0
+**Actual time:** ~3 hours
 
-#### 1.1 Cost Filtering
+#### 1.1 Cost Filtering ✅ IMPLEMENTED
 ```bash
 --max-price <float>           # Maximum price per hour (USD)
 --max-eviction <float>        # Maximum eviction rate (%)
 --min-performance <float>     # Minimum performance vs baseline (%)
 ```
 
+**Status:** ✅ Completed in v0.3.0
 **Impact:** Immediately useful for budget-constrained scenarios
-**Complexity:** ⭐ Easy (30 min)
+**Complexity:** ⭐ Easy (30 min) - DONE
 
 #### 1.2 CSV Export
 ```bash
@@ -53,19 +58,20 @@ Savings vs on-demand: 72%
 
 ---
 
-### Phase 2: Smart Automation (v0.3.0)
+### Phase 2: Smart Automation (v0.3.0+)
 **Timeline:** 4-6 hours development
 **Priority:** 🎯 MEDIUM
 
-#### 2.1 Requirements-Based Matching
+#### 2.1 Requirements-Based Matching ✅ IMPLEMENTED
 ```bash
 --min-vcpu <int>              # Minimum vCPUs required
 --min-ram <int>               # Minimum RAM (GB) required
---auto-select                 # Auto-select SKUs matching requirements
+# Auto-discovery happens automatically if --sizes not specified
 ```
 
-**Impact:** Simplifies VM selection process
-**Complexity:** ⭐⭐ Medium (45 min)
+**Status:** ✅ Completed in v0.3.0
+**Impact:** Simplifies VM selection process - no need to manually specify SKUs!
+**Complexity:** ⭐⭐ Medium (45 min) - DONE
 
 #### 2.2 Historical Price Trends ✅ IMPLEMENTED
 ```bash

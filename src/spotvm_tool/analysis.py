@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
-from .vm_specs import calculate_relative_performance
+from .vm_specs import calculate_relative_performance, get_vm_spec
+
+logger = logging.getLogger(__name__)
 
 PLACEMENT_ORDER = {"high": 3, "medium": 2, "low": 1}
 
@@ -144,3 +147,131 @@ def summarize_top_candidates(
             parts.append(f"${item.price_usd:.4f}/hr")
         summary.append("; ".join(parts))
     return summary
+
+
+def filter_by_requirements(
+    candidates: List[CandidateInsight],
+    min_vcpu: Optional[int] = None,
+    min_ram: Optional[int] = None,
+) -> List[CandidateInsight]:
+    """Filter candidates by hardware requirements (vCPU and RAM).
+
+    Removes candidates that don't meet minimum vCPU or RAM requirements.
+    SKUs not found in VM_SPECIFICATIONS are kept with a warning.
+
+    Args:
+        candidates: List of candidate insights to filter
+        min_vcpu: Minimum vCPUs required (None = no filter)
+        min_ram: Minimum RAM in GB required (None = no filter)
+
+    Returns:
+        Filtered list of candidates meeting requirements
+    """
+    if not min_vcpu and not min_ram:
+        return candidates
+
+    filtered = []
+    filtered_count = 0
+
+    for candidate in candidates:
+        spec = get_vm_spec(candidate.vm_size)
+
+        if not spec:
+            # Unknown SKU - keep it but warn
+            logger.warning(
+                f"VM size {candidate.vm_size} not in specifications database, "
+                f"cannot verify hardware requirements"
+            )
+            filtered.append(candidate)
+            continue
+
+        # Check vCPU requirement
+        if min_vcpu and spec.vcpus < min_vcpu:
+            logger.debug(
+                f"Filtered {candidate.vm_size}: {spec.vcpus} vCPU < {min_vcpu} required"
+            )
+            filtered_count += 1
+            continue
+
+        # Check RAM requirement
+        if min_ram and spec.ram_gb < min_ram:
+            logger.debug(
+                f"Filtered {candidate.vm_size}: {spec.ram_gb} GB RAM < {min_ram} GB required"
+            )
+            filtered_count += 1
+            continue
+
+        filtered.append(candidate)
+
+    if filtered_count > 0:
+        logger.info(
+            f"Filtered out {filtered_count} candidate(s) not meeting "
+            f"hardware requirements (vCPU≥{min_vcpu}, RAM≥{min_ram} GB)"
+        )
+
+    return filtered
+
+
+def filter_by_cost(
+    candidates: List[CandidateInsight],
+    max_price: Optional[float] = None,
+    max_eviction: Optional[float] = None,
+    min_performance: Optional[float] = None,
+) -> List[CandidateInsight]:
+    """Filter candidates by cost and performance constraints.
+
+    Removes candidates that exceed maximum price, eviction rate, or don't
+    meet minimum performance requirements.
+
+    Args:
+        candidates: List of candidate insights to filter
+        max_price: Maximum price per hour in USD (None = no filter)
+        max_eviction: Maximum eviction rate percentage (None = no filter)
+        min_performance: Minimum performance relative to baseline % (None = no filter)
+
+    Returns:
+        Filtered list of candidates meeting cost constraints
+    """
+    if not max_price and not max_eviction and not min_performance:
+        return candidates
+
+    filtered = []
+    filtered_count = 0
+
+    for candidate in candidates:
+        # Check price constraint
+        if max_price and candidate.price_usd and candidate.price_usd > max_price:
+            logger.debug(
+                f"Filtered {candidate.vm_size} in {candidate.region}: "
+                f"price ${candidate.price_usd:.4f} > ${max_price} max"
+            )
+            filtered_count += 1
+            continue
+
+        # Check eviction rate constraint
+        if max_eviction and candidate.eviction_rate and candidate.eviction_rate > max_eviction:
+            logger.debug(
+                f"Filtered {candidate.vm_size} in {candidate.region}: "
+                f"eviction {candidate.eviction_rate:.1f}% > {max_eviction}% max"
+            )
+            filtered_count += 1
+            continue
+
+        # Check performance constraint
+        if min_performance and candidate.performance_relative and candidate.performance_relative < min_performance:
+            logger.debug(
+                f"Filtered {candidate.vm_size} in {candidate.region}: "
+                f"performance {candidate.performance_relative:.0f}% < {min_performance}% min"
+            )
+            filtered_count += 1
+            continue
+
+        filtered.append(candidate)
+
+    if filtered_count > 0:
+        logger.info(
+            f"Filtered out {filtered_count} candidate(s) not meeting cost constraints "
+            f"(price≤${max_price}, eviction≤{max_eviction}%, performance≥{min_performance}%)"
+        )
+
+    return filtered
