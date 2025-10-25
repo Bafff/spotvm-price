@@ -191,8 +191,12 @@ Rank | VM Size          | Price   | Eviction | Perf % | Price/Perf
 **Notes:**
 - Performance formula weights CPU more heavily (100×) than RAM (5×)
 - Formula is simplified; real performance depends on workload type, CPU generation, I/O, etc.
-- **ACU (Azure Compute Units) not used**: Microsoft stopped publishing ACU for newer VM generations (v5, v6+). See [GitHub Issue #84034](https://github.com/MicrosoftDocs/azure-docs/issues/84034). Microsoft is "reevaluating ACU methodology" and now uses CoreMark/SPECInt benchmarks, but these are not yet published for all SKUs.
-- Choose a baseline similar to your typical workload for accurate comparison
+- **Why not use official Azure metrics?**
+  - **ACU (Azure Compute Units)**: [Deprecated 12/16/2024](https://learn.microsoft.com/en-us/azure/virtual-machines/acu). No longer published for ANY VM series.
+  - **CoreMark benchmarks**: Available for older generations (v2, v3, v4) but [no longer published](https://learn.microsoft.com/en-us/azure/virtual-machines/windows/compute-benchmark-scores) for newer generations (v5, v6+). See [GitHub Issue #84034](https://github.com/MicrosoftDocs/azure-docs/issues/84034).
+  - Microsoft recommends: *"Run your actual workload on target VMs for accurate performance assessment"*
+- Our vCPU + RAM formula provides a reasonable approximation until you can benchmark your specific workload
+- Choose a baseline similar to your typical workload for most accurate relative comparison
 
 ## Operational notes
 - The tool retries transient HTTP errors and honours `Retry-After` headers when Azure throttles requests.
