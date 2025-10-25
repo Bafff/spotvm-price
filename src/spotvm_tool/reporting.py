@@ -1,23 +1,16 @@
 from __future__ import annotations
 
-import unicodedata
 from datetime import datetime
 from typing import Iterable, List
+
+import wcwidth
 
 from .models import CandidateInsight
 
 
 def _display_width(text: str) -> int:
-    """Calculate display width of text, accounting for emoji taking 2 columns."""
-    width = 0
-    for char in text:
-        if unicodedata.east_asian_width(char) in ('F', 'W'):
-            width += 2  # Full-width characters
-        elif unicodedata.category(char) == 'So':  # Symbol, Other (includes emoji)
-            width += 2
-        else:
-            width += 1
-    return width
+    """Calculate display width of text using wcwidth for proper emoji/wide char handling."""
+    return wcwidth.wcswidth(text)
 
 
 TABLE_COLUMNS = [
