@@ -66,32 +66,39 @@ def _parse_response(payload: dict) -> List[PlacementScoreResult]:
         vm_size = item.get("sku") or item.get("vmSize") or item.get("name")
         if not vm_size:
             continue
-        for score_entry in item.get("scoresByLocation", []):
-            region = score_entry.get("location")
-            score = score_entry.get("score")
-            quota = score_entry.get("isQuotaAvailable")
-            availability_zone = score_entry.get("availabilityZone")
-            message = (
-                score_entry.get("statusMessage")
-                or score_entry.get("message")
-                or score_entry.get("status")
-            )
-            results.append(
-                PlacementScoreResult(
-                    region=region,
-                    vm_size=vm_size,
-                    placement_score=score,
-                    quota_available=quota,
-                    availability_zone=availability_zone,
-                    error_detail=message,
-                )
-            )
+        scores = item.get("scoresByLocation")
+        if scores:
+            for score_entry in scores:
+                results.append(_build_result(vm_size, score_entry))
+        else:
+            results.append(_build_result(vm_size, item))
     return results
 
 
 def _cache_key(prefix: str, payload: dict, subscription_id: str) -> str:
     normalized = json.dumps(payload, sort_keys=True)
     return f"{prefix}:{subscription_id}:{normalized}"
+
+
+def _build_result(vm_size: str, entry: dict) -> PlacementScoreResult:
+    region = entry.get("location") or entry.get("region")
+    score = entry.get("score")
+    quota = entry.get("isQuotaAvailable")
+    availability_zone = entry.get("availabilityZone") or entry.get("zone")
+    message = (
+        entry.get("statusMessage")
+        or entry.get("message")
+        or entry.get("status")
+        or entry.get("code")
+    )
+    return PlacementScoreResult(
+        region=region,
+        vm_size=vm_size,
+        placement_score=score,
+        quota_available=quota,
+        availability_zone=availability_zone,
+        error_detail=message,
+    )
 
 
 def _batched(values: Iterable[str], batch_size: int) -> Iterable[List[str]]:
