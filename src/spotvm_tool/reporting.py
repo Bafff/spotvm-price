@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+import unicodedata
 from datetime import datetime
 from typing import Iterable, List
 
 from .models import CandidateInsight
+
+
+def _display_width(text: str) -> int:
+    """Calculate display width of text, accounting for emoji taking 2 columns."""
+    width = 0
+    for char in text:
+        if unicodedata.east_asian_width(char) in ('F', 'W'):
+            width += 2  # Full-width characters
+        elif unicodedata.category(char) == 'So':  # Symbol, Other (includes emoji)
+            width += 2
+        else:
+            width += 1
+    return width
 
 
 TABLE_COLUMNS = [
@@ -53,11 +67,18 @@ def render_table(candidates: Iterable[CandidateInsight]) -> str:
 
 
 def _compute_widths(rows: List[List[str]]) -> List[int]:
-    return [max(len(row[idx]) for row in rows) for idx in range(len(rows[0]))]
+    """Compute maximum display width for each column, accounting for emoji."""
+    return [max(_display_width(row[idx]) for row in rows) for idx in range(len(rows[0]))]
 
 
 def _format_row(row: List[str], widths: List[int]) -> str:
-    return " | ".join(cell.ljust(widths[idx]) for idx, cell in enumerate(row))
+    """Format row with proper spacing, accounting for emoji taking 2 columns."""
+    formatted_cells = []
+    for idx, cell in enumerate(row):
+        display_width = _display_width(cell)
+        padding = widths[idx] - display_width
+        formatted_cells.append(cell + " " * padding)
+    return " | ".join(formatted_cells)
 
 
 def _format_rank(rank: int | None) -> str:
