@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -90,13 +91,16 @@ def _execute_query(
     cache_prefix: str,
 ) -> List[dict]:
     # SpotResources table works differently than regular resources
-    # Try without explicit scope first (queries across all accessible subscriptions)
+    # Azure Portal uses authorizationScopeFilter to query across all accessible scopes
     payload = {
         "query": query,
-        "options": {"resultFormat": "objectArray"},
+        "options": {
+            "resultFormat": "objectArray",
+            "authorizationScopeFilter": "AtScopeAboveAndBelow",
+        },
     }
 
-    logger.debug("Executing query without explicit scope (all accessible subscriptions)")
+    logger.debug("Executing query with authorizationScopeFilter=AtScopeAboveAndBelow")
 
     cache_key = _cache_key(cache_prefix, payload)
     cached = cache.load(cache_key, config.cache_ttl_minutes)
@@ -125,16 +129,16 @@ def _cache_key(prefix: str, payload: dict) -> str:
 
 
 def _build_price_query(config: ToolConfig) -> str:
-    region_filter = _in_expression("tolower(location)", config.regions)
+    region_filter = _in_expression("location", config.regions)
     sku_list = _in_list(config.sizes)
-    os_filter = f"| where tolower(osType) =~ '{config.os_type.lower()}'" if config.os_type else ""
+    os_filter = f"| where osType =~ '{config.os_type}'" if config.os_type else ""
     return (
         "spotresources\n"
         "| where type =~ 'microsoft.compute/skuspotpricehistory/ostype/location'\n"
         "| extend skuName = tostring(sku.name),"
         " osType = tostring(properties.osType),"
         " spotPrices = todynamic(properties.spotPrices)\n"
-        f"| where tolower(skuName) in~ ({sku_list})\n"
+        f"| where sku.name in~ ({sku_list})\n"
         f"| {region_filter}\n"
         f"{os_filter}\n"
         "| project skuName, location = tostring(location), spotPrices"
@@ -142,32 +146,16 @@ def _build_price_query(config: ToolConfig) -> str:
 
 
 def _build_eviction_query(config: ToolConfig) -> str:
-    region_filter = _in_expression("tolower(location)", config.regions)
+    region_filter = _in_expression("location", config.regions)
     sku_list = _in_list(config.sizes)
     return (
         "spotresources\n"
         "| where type =~ 'microsoft.compute/skuspotevictionrate/location'\n"
-        f"| where tolower(sku.name) in~ ({sku_list})\n"
+        f"| where sku.name in~ ({sku_list})\n"
         f"| {region_filter}\n"
-        # Azure returns evictionRate as range strings like "0-5%" or "5-10%"
-        # Extract the upper bound as the eviction percentage
-        "| extend evRaw = tostring(coalesce(\n"
-        "          properties.evictionRate,\n"
-        "          properties['evictionRate'],\n"
-        "          properties.evictionrate,\n"
-        "          properties['evictionrate'],\n"
-        "          properties.evictionRateBand,\n"
-        "          properties['evictionRateBand']))\n"
-        # Extract upper bound from range like "5-10" -> 10
-        "| extend evHigh = todouble(extract(@\"-(\\\\d+(?:\\\\.\\\\d+)?)\", 1, evRaw))\n"
-        # Extract single value like "5" -> 5
-        "| extend evOne  = todouble(extract(@\"^(\\\\d+(?:\\\\.\\\\d+)?)\", 1, evRaw))\n"
-        "| extend evictionPct = coalesce(todouble(evRaw), evHigh, evOne)\n"
         "| project skuName = tostring(sku.name), location = tostring(location),"
-        " evictionRate = evictionPct,"
-        " evictionLastUpdated = tostring(properties.lastUpdatedTime)\n"
-        "| summarize evictionRate = any(evictionRate), "
-        "evictionLastUpdated = any(evictionLastUpdated) by location, skuName"
+        " spotEvictionRate = tostring(properties.evictionRate),"
+        " evictionLastUpdated = tostring(properties.lastUpdatedTime)"
     )
 
 
@@ -177,7 +165,7 @@ def _in_expression(column: str, values: Iterable[str]) -> str:
 
 
 def _in_list(values: Iterable[str]) -> str:
-    return ", ".join(f"'{value.lower()}'" for value in values)
+    return ", ".join(f"'{value}'" for value in values)
 
 
 def _extract_latest_price(entry: Optional[dict]) -> tuple[Optional[float], Optional[datetime]]:
@@ -204,7 +192,27 @@ def _extract_latest_price(entry: Optional[dict]) -> tuple[Optional[float], Optio
 def _extract_eviction(entry: Optional[dict]) -> tuple[Optional[float], Optional[datetime]]:
     if not entry:
         return None, None
-    rate = _to_float(entry.get("evictionRate"))
+
+    # Azure returns evictionRate as string like "5", "10", "20", or ranges like "0-5", "5-10"
+    eviction_str = entry.get("spotEvictionRate") or entry.get("evictionRate")
+    rate = None
+
+    if eviction_str:
+        # Try to parse as direct number first
+        rate = _to_float(eviction_str)
+
+        # If that fails, try to extract from range (e.g., "5-10" -> 10, "0-5" -> 5)
+        if rate is None and isinstance(eviction_str, str):
+            # Extract upper bound from range like "5-10" -> 10
+            match = re.search(r"-(\d+(?:\.\d+)?)", eviction_str)
+            if match:
+                rate = _to_float(match.group(1))
+            else:
+                # Try single number like "5" -> 5
+                match = re.search(r"^(\d+(?:\.\d+)?)", eviction_str)
+                if match:
+                    rate = _to_float(match.group(1))
+
     timestamp = _parse_datetime_string(
         entry.get("evictionLastUpdated") or entry.get("lastUpdatedTime")
     )
