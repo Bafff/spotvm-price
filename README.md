@@ -198,6 +198,106 @@ Rank | VM Size          | Price   | Eviction | Perf % | Price/Perf
 - Our vCPU + RAM formula provides a reasonable approximation until you can benchmark your specific workload
 - Choose a baseline similar to your typical workload for most accurate relative comparison
 
+## Filtering and Auto-Discovery
+
+### Requirements-Based Filtering
+
+Filter VMs by minimum hardware requirements instead of manually specifying SKUs:
+
+```bash
+# Auto-discover all VMs with at least 4 vCPUs and 32 GB RAM
+spotvm-tool \
+  --subscription-id XXX \
+  --regions centralus eastus \
+  --min-vcpu 4 \
+  --min-ram 32 \
+  --max-price 0.10 \
+  --limit 5
+```
+
+**What happens:**
+1. Tool scans all known SKUs in specifications database
+2. Filters for `vCPU ≥ 4` AND `RAM ≥ 32 GB`
+3. Queries Azure for those SKUs only
+4. Applies cost filtering
+5. Returns top 5 results
+
+**Output example:**
+```
+2025-10-25 19:30:00,000 INFO Auto-discovered 26 SKUs: Standard_D4as_v6, Standard_E4s_v5, ...
+2025-10-25 19:30:05,000 INFO Filtered out 12 candidate(s) not meeting cost constraints
+
+Rank | VM Size          | Region    | Price   | Eviction | vCPU | RAM
+-----|------------------|-----------|---------|----------|------|------
+1    | Standard_E4s_v5  | eastus    | $0.0696 | 5.0%     | 4    | 32 GB
+2    | Standard_E8s_v5  | centralus | $0.0890 | 4.2%     | 8    | 64 GB
+...
+```
+
+### Cost-Based Filtering
+
+Apply maximum constraints on price, eviction rate, and performance:
+
+```bash
+# Find VMs cheaper than $0.10/hr with low eviction risk
+spotvm-tool \
+  --subscription-id XXX \
+  --regions centralus eastus westus \
+  --sizes Standard_D4as_v5 Standard_D4as_v6 Standard_E4s_v5 \
+  --baseline-sku Standard_D4as_v6 \
+  --max-price 0.10 \
+  --max-eviction 10 \
+  --min-performance 80
+```
+
+**Filters applied:**
+- `--max-price 0.10` - Excludes VMs costing more than $0.10/hour
+- `--max-eviction 10` - Excludes VMs with >10% eviction rate
+- `--min-performance 80` - Excludes VMs with <80% of baseline performance
+
+### Combined Filtering Example
+
+Find the cheapest Spot VM for your workload:
+
+```bash
+spotvm-tool \
+  --subscription-id XXX \
+  --regions centralus eastus \
+  --min-vcpu 8 \          # At least 8 cores
+  --min-ram 64 \          # At least 64 GB RAM
+  --max-price 0.20 \      # Max $0.20/hour
+  --max-eviction 5 \      # Max 5% eviction risk
+  --baseline-sku Standard_D8as_v6 \
+  --min-performance 90 \  # At least 90% of baseline
+  --limit 3               # Top 3 results
+```
+
+**Workflow:**
+1. **Auto-discovery:** Finds all SKUs with ≥8 vCPU and ≥64 GB RAM
+2. **Azure query:** Fetches placement scores and pricing for discovered SKUs
+3. **Hardware filter:** Re-validates vCPU/RAM (handles unknown SKUs)
+4. **Ranking:** Sorts by placement score → eviction → price/performance
+5. **Performance calc:** Computes relative to Standard_D8as_v6
+6. **Cost filter:** Removes VMs exceeding price/eviction/performance limits
+7. **Results:** Shows top 3 candidates
+
+### Filter Parameters Reference
+
+**Hardware Requirements** (applied before ranking):
+- `--min-vcpu <int>` - Minimum vCPUs required
+- `--min-ram <int>` - Minimum RAM in GB
+
+**Cost Constraints** (applied after ranking):
+- `--max-price <float>` - Maximum price per hour (USD)
+- `--max-eviction <float>` - Maximum eviction rate (percentage)
+- `--min-performance <float>` - Minimum performance vs baseline (percentage, requires `--baseline-sku`)
+
+**Notes:**
+- SKUs not in specifications database are kept with warnings
+- Filters are optional - omit to see all candidates
+- Combine multiple filters for precise requirements
+- Verbose logging shows filtered count: `--verbose`
+
 ## Historical Price Trends
 
 Track spot price and eviction rate changes over time by saving results from each run:
@@ -313,6 +413,107 @@ plt.show()
 - **Automation:** Run hourly via cron with `--save-results`, analyze weekly trends
 
 **Note:** The tool doesn't include built-in visualization (keeps dependencies minimal). Use the CSV output with your preferred analytics/charting tools.
+
+### Unattended Monitoring Mode
+
+For continuous data collection without setting up cron, use `--run-unattended`:
+
+```bash
+# Run every hour (default), saving data automatically
+spotvm-tool \
+  --subscription-id XXX \
+  --regions centralus eastus \
+  --min-vcpu 4 \
+  --min-ram 16 \
+  --max-price 0.10 \
+  --run-unattended
+```
+
+**Output:**
+```
+🔄 Monitoring mode started (interval: 60 min)
+📊 Results will be saved to: ./results/runs/
+⏸️  Press Ctrl+C to stop
+
+============================================================
+Run #1 at 2025-10-25 19:00:00
+============================================================
+✅ Results saved to: results/runs/2025-10-25T19-00-00.123456Z.json
+
+Rank | VM Size          | Region    | Price   | Eviction
+-----|------------------|-----------|---------|----------
+...
+
+💤 Sleeping for 60 minutes...
+   Next run at: 20:00:00
+
+============================================================
+Run #2 at 2025-10-25 20:00:00
+============================================================
+...
+```
+
+**Custom interval:**
+```bash
+# Run every 15 minutes
+spotvm-tool \
+  --subscription-id XXX \
+  --regions centralus \
+  --sizes Standard_D4as_v5 \
+  --run-unattended 15
+```
+
+**Features:**
+- **Automatic data saving**: Enables `--save-results` automatically
+- **Graceful shutdown**: Press `Ctrl+C` to stop after current run completes
+- **Error resilience**: Continues running even if individual runs fail
+- **Timestamped runs**: Each run saved with microsecond-precision timestamp
+- **Flexible interval**: Specify minutes (default: 60)
+
+**Use cases:**
+- **Intraday analysis**: Run every 15-30 minutes during business hours
+- **Daily tracking**: Run every hour to capture price fluctuations
+- **Testing**: Run every 1-5 minutes to quickly accumulate test data
+
+**Example workflow:**
+```bash
+# 1. Start monitoring (let it run for several hours)
+spotvm-tool \
+  --subscription-id XXX \
+  --regions centralus \
+  --min-vcpu 4 \
+  --min-ram 16 \
+  --run-unattended 30 &  # Every 30 minutes, in background
+
+# 2. Stop after collecting enough data (Ctrl+C or kill process)
+
+# 3. Analyze collected data
+spotvm-tool --analyze-history
+
+# 4. Visualize trends
+python -c "
+import pandas as pd
+import matplotlib.pyplot as plt
+
+df = pd.read_csv('results/history.csv')
+df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+# Plot price changes throughout the day
+for sku in df['vm_size'].unique():
+    sku_data = df[df['vm_size'] == sku]
+    plt.plot(sku_data['timestamp'], sku_data['price_usd'], label=sku, marker='o')
+
+plt.xlabel('Time')
+plt.ylabel('Price (USD/hr)')
+plt.title('Intraday Spot Price Fluctuations')
+plt.legend()
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+"
+```
+
+**Note:** For long-term production monitoring, consider using `systemd` service or `cron` with `--save-results` instead of `--run-unattended`.
 
 ### Working with Availability Zones in Historical Data
 
