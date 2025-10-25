@@ -66,10 +66,10 @@ def _format_rank(rank: int | None) -> str:
 
 def _format_quota(value: bool | None) -> str:
     if value is True:
-        return "Yes"
+        return "✅ Yes"
     if value is False:
-        return "No"
-    return "Unknown"
+        return "❌ No"
+    return "❓ Unknown"
 
 
 def _format_price(value: float | None) -> str:
