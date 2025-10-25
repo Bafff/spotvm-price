@@ -8,7 +8,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .analysis import merge_datasets, rank_candidates, summarize_top_candidates
+from .analysis import (
+    enrich_with_performance,
+    merge_datasets,
+    rank_candidates,
+    summarize_top_candidates,
+)
 from .auth import AzureAuthenticator
 from .config import ToolConfig, load_config_file, merge_cli_overrides
 from .http_client import AzureRestClient, AzureHttpError
@@ -72,6 +77,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip calling the Spot Placement Score API",
     )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    parser.add_argument(
+        "--baseline-sku",
+        type=str,
+        help="Baseline VM size for relative performance comparison (e.g., Standard_D4as_v6 = 100%%)",
+    )
     return parser
 
 
@@ -100,6 +110,7 @@ def main(argv: List[str] | None = None) -> int:
         "save_report": str(args.save_report) if args.save_report else None,
         "emit_json": args.json,
         "result_limit": args.limit,
+        "baseline_sku": args.baseline_sku,
     }
     if args.skip_placement:
         overrides["enable_placement"] = False
@@ -133,12 +144,25 @@ def main(argv: List[str] | None = None) -> int:
 
     candidates = merge_datasets(placement_scores, historical_metrics)
     ranked = rank_candidates(candidates)
+    ranked = enrich_with_performance(ranked, config.baseline_sku)
 
     if config.result_limit:
         ranked = ranked[: config.result_limit]
 
     table = render_table(ranked)
     print(table)
+
+    # Print column explanations
+    if config.enable_placement:
+        print("\nColumn Descriptions:")
+        print("  Quota: Indicates if sufficient vCPU quota is available")
+        print("    - Yes: Quota available for deployment")
+        print("    - No:  Insufficient quota (increase quota or choose different region/size)")
+        print("    - Unknown: Quota data not available (using --skip-placement)")
+    if config.baseline_sku:
+        print(f"\nPerformance Baseline: {config.baseline_sku} = 100%")
+        print("  Perf %: Relative computing power compared to baseline")
+        print("  Price/Perf: Price per performance unit (lower is better value)")
 
     summary_lines = summarize_top_candidates(ranked)
     if summary_lines:
@@ -182,6 +206,8 @@ def _build_report(candidates: List[Any]) -> Dict[str, Any]:
                 "priceLastUpdated": _json_serializer(item.price_last_updated),
                 "evictionRatePercent": item.eviction_rate,
                 "evictionLastUpdated": _json_serializer(item.eviction_last_updated),
+                "performanceRelativePercent": item.performance_relative,
+                "pricePerPerformance": item.price_per_performance,
                 "notes": item.notes,
             }
             for item in candidates

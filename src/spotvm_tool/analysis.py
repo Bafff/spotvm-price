@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
+from .vm_specs import calculate_relative_performance
 
 PLACEMENT_ORDER = {"high": 3, "medium": 2, "low": 1}
 
@@ -78,13 +79,48 @@ def rank_candidates(candidates: List[CandidateInsight]) -> List[CandidateInsight
             0,
         )
         eviction = item.eviction_rate if item.eviction_rate is not None else float("inf")
-        price = item.price_usd if item.price_usd is not None else float("inf")
-        return (-score_rank, eviction, price)
+
+        # Use price/performance if available (better value), otherwise use raw price
+        if item.price_per_performance is not None:
+            price_metric = item.price_per_performance
+        else:
+            price_metric = item.price_usd if item.price_usd is not None else float("inf")
+
+        return (-score_rank, eviction, price_metric)
 
     ranked = sorted(candidates, key=sort_key)
     for idx, item in enumerate(ranked, 1):
         item.recommendation_rank = idx
     return ranked
+
+
+def enrich_with_performance(
+    candidates: List[CandidateInsight],
+    baseline_sku: Optional[str] = None,
+) -> List[CandidateInsight]:
+    """Calculate performance metrics relative to baseline SKU.
+
+    Args:
+        candidates: List of candidate insights
+        baseline_sku: SKU to use as 100% baseline. If None, no performance calculation.
+
+    Returns:
+        Same list with performance_relative and price_per_performance populated
+    """
+    if not baseline_sku:
+        return candidates
+
+    for candidate in candidates:
+        # Calculate relative performance
+        perf = calculate_relative_performance(candidate.vm_size, baseline_sku)
+        candidate.performance_relative = perf
+
+        # Calculate price per performance unit
+        if perf and perf > 0 and candidate.price_usd:
+            # Price per 1% of baseline performance
+            candidate.price_per_performance = candidate.price_usd / perf
+
+    return candidates
 
 
 def summarize_top_candidates(
@@ -102,6 +138,8 @@ def summarize_top_candidates(
             parts.append(f"placement score {item.placement_score}")
         if item.eviction_rate is not None:
             parts.append(f"eviction {item.eviction_rate:.1f}%")
+        if item.performance_relative is not None:
+            parts.append(f"perf {item.performance_relative:.0f}%")
         if item.price_usd is not None:
             parts.append(f"${item.price_usd:.4f}/hr")
         summary.append("; ".join(parts))

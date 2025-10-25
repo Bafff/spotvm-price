@@ -15,6 +15,8 @@ TABLE_COLUMNS = [
     "Quota",
     "Price (USD/hr)",
     "Eviction %",
+    "Perf %",
+    "Price/Perf",
     "Price Updated",
     "Eviction Updated",
     "Notes",
@@ -34,6 +36,8 @@ def render_table(candidates: Iterable[CandidateInsight]) -> str:
                 _format_quota(item.quota_available),
                 _format_price(item.price_usd),
                 _format_percentage(item.eviction_rate),
+                _format_performance(item.performance_relative),
+                _format_price_per_perf(item.price_per_performance),
                 _format_dt(item.price_last_updated),
                 _format_dt(item.eviction_last_updated),
                 item.notes or "",
@@ -84,3 +88,17 @@ def _format_dt(value: datetime | None) -> str:
     if value is None:
         return "-"
     return value.isoformat(timespec="minutes")
+
+
+def _format_performance(value: float | None) -> str:
+    """Format performance percentage relative to baseline."""
+    if value is None:
+        return "-"
+    return f"{value:.0f}%"
+
+
+def _format_price_per_perf(value: float | None) -> str:
+    """Format price per performance unit."""
+    if value is None:
+        return "-"
+    return f"${value:.6f}"
