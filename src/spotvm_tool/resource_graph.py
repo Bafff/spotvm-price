@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from . import cache
 from .config import ToolConfig
@@ -58,14 +58,17 @@ def fetch_historical_metrics(
             or sku
         )
 
+        price_usd, price_dt = _extract_latest_price(price_entry)
+        eviction_rate, eviction_dt = _extract_eviction(eviction_entry)
+
         metrics.append(
             HistoricalMetrics(
                 region=region_display,
                 vm_size=sku_display,
-                price_usd=_parse_float(price_entry, "latestSpotPriceUSD"),
-                price_last_updated=_parse_dt(price_entry, "lastPriceUpdate"),
-                eviction_rate=_parse_float(eviction_entry, "evictionRatePercent"),
-                eviction_last_updated=_parse_dt(eviction_entry, "evictionLastUpdated"),
+                price_usd=price_usd,
+                price_last_updated=price_dt,
+                eviction_rate=eviction_rate,
+                eviction_last_updated=eviction_dt,
             )
         )
     return metrics
@@ -103,42 +106,93 @@ def _cache_key(prefix: str, payload: dict) -> str:
 
 
 def _build_price_query(config: ToolConfig) -> str:
-    sku_filter = _in_expression("sku.name", config.sizes)
     region_filter = _in_expression("location", config.regions)
-    os_filter = f"| where properties.osType =~ '{config.os_type}'" if config.os_type else ""
-    return f"""
-SpotResources
-| where type =~ 'microsoft.compute/skuspotpricehistory/ostype/location'
-| {sku_filter}
-| {region_filter}
-{os_filter}
-| where array_length(properties.spotPrices) > 0
-| extend latest = properties.spotPrices[0]
-| project skuName = tostring(sku.name), location = tostring(location), latestSpotPriceUSD = todouble(latest.priceUSD), lastPriceUpdate = todatetime(latest.dateTime)
-""".strip()
+    sku_list = _in_list(config.sizes)
+    os_filter = f"| where osType =~ '{config.os_type}'" if config.os_type else ""
+    return (
+        "SpotResources\n"
+        "| where type =~ 'microsoft.compute/skuspotpricehistory/ostype/location'\n"
+        "| extend skuName = tostring(properties.skuName),"
+        " osType = tostring(properties.osType),"
+        " spotPrices = todynamic(properties.spotPrices)\n"
+        f"| where skuName in~ ({sku_list})\n"
+        f"| {region_filter}\n"
+        f"{os_filter}\n"
+        "| project skuName, location = tostring(location), spotPrices"
+    )
 
 
 def _build_eviction_query(config: ToolConfig) -> str:
-    sku_filter = _in_expression("sku.name", config.sizes)
     region_filter = _in_expression("location", config.regions)
-    return f"""
-SpotResources
-| where type =~ 'microsoft.compute/skuspotevictionrate/location'
-| {sku_filter}
-| {region_filter}
-| project skuName = tostring(sku.name), location = tostring(location), evictionRatePercent = todouble(properties.evictionRate), evictionLastUpdated = todatetime(properties.lastUpdatedTime)
-""".strip()
+    sku_list = _in_list(config.sizes)
+    return (
+        "SpotResources\n"
+        "| where type =~ 'microsoft.compute/skuspotevictionrate/location'\n"
+        "| extend skuName = tostring(properties.skuName)\n"
+        f"| where skuName in~ ({sku_list})\n"
+        f"| {region_filter}\n"
+        "| project skuName, location = tostring(location),"
+        " evictionRate = todouble(properties.evictionRate),"
+        " evictionLastUpdated = tostring(properties.lastUpdatedTime)"
+    )
 
 
 def _in_expression(column: str, values: Iterable[str]) -> str:
-    quoted = ", ".join(f"'{value}'" for value in values)
+    quoted = _in_list(values)
     return f"where {column} in~ ({quoted})"
 
 
-def _parse_float(entry: Optional[dict], key: str) -> Optional[float]:
+def _in_list(values: Iterable[str]) -> str:
+    return ", ".join(f"'{value}'" for value in values)
+
+
+def _extract_latest_price(entry: Optional[dict]) -> tuple[Optional[float], Optional[datetime]]:
     if not entry:
-        return None
-    value = entry.get(key)
+        return None, None
+    raw_prices = entry.get("spotPrices")
+    spot_prices = _ensure_list(raw_prices)
+    if not spot_prices:
+        return None, None
+    latest = spot_prices[0]
+    if isinstance(latest, str):
+        try:
+            latest = json.loads(latest)
+        except json.JSONDecodeError:
+            return None, None
+    if not isinstance(latest, dict):
+        return None, None
+    price = _to_float(latest.get("priceUSD"))
+    timestamp = _parse_datetime_string(latest.get("dateTime"))
+    return price, timestamp
+
+
+def _extract_eviction(entry: Optional[dict]) -> tuple[Optional[float], Optional[datetime]]:
+    if not entry:
+        return None, None
+    rate = _to_float(entry.get("evictionRate"))
+    timestamp = _parse_datetime_string(
+        entry.get("evictionLastUpdated") or entry.get("lastUpdatedTime")
+    )
+    return rate, timestamp
+
+
+def _ensure_list(value: Any) -> list:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(parsed, list):
+            return parsed
+        return []
+    if isinstance(value, list):
+        return value
+    return []
+
+
+def _to_float(value: Any) -> Optional[float]:
     if value is None:
         return None
     try:
@@ -147,13 +201,15 @@ def _parse_float(entry: Optional[dict], key: str) -> Optional[float]:
         return None
 
 
-def _parse_dt(entry: Optional[dict], key: str) -> Optional[datetime]:
-    if not entry:
-        return None
-    value = entry.get(key)
+def _parse_datetime_string(value: Any) -> Optional[datetime]:
     if not value:
         return None
-    try:
-        return datetime.fromisoformat(value.rstrip("Z"))
-    except ValueError:
-        return None
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value)
+    if isinstance(value, str):
+        cleaned = value.rstrip("Z")
+        try:
+            return datetime.fromisoformat(cleaned)
+        except ValueError:
+            return None
+    return None
