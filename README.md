@@ -77,12 +77,33 @@ emit_json: false
 ```
 
 ### Key fields
-- `subscription_id`: Azure subscription to query.
+- `subscription_id`: **Azure subscription ID to query.** This determines:
+  - **Authorization**: You need access to this subscription (with "Compute Recommendations" role for placement scores)
+  - **Quota availability**: Shows vCPU quotas **for this specific subscription** (different subscriptions have different quotas)
+  - **API endpoint**: Required in Placement Score API URL
+
+  **Note:** Prices and eviction rates are the same for all subscriptions, but **quota availability is subscription-specific**.
+
+  **Example:**
+  ```bash
+  # Subscription A has 100 vCPU quota in eastus (80 used, 20 free)
+  spotvm-tool --subscription-id AAAA... --regions eastus --sizes Standard_D4as_v5
+  # Result: Quota = ✅ Yes (4 vCPU needed, 20 available)
+
+  # Subscription B has 10 vCPU quota in eastus (9 used, 1 free)
+  spotvm-tool --subscription-id BBBB... --regions eastus --sizes Standard_D4as_v5
+  # Result: Quota = ❌ No (4 vCPU needed, only 1 available)
+  ```
+
 - `regions`: Up to eight regions per request (the tool batches automatically if more are provided).
 - `sizes`: Up to five SKUs per request (batched automatically as needed).
 - `desired_count`: Number of VMs you intend to launch; placement score sensitivity increases with larger counts.
 - `os_type`: `linux` (default) or `windows` to align price history with OS-specific retail rates.
 - `availability_zones`: Set `true` to request zone-level placement scores; otherwise the tool queries region scope.
+
+  **Important:** When using `--availability-zones`:
+  - **Placement Score** and **Quota Available** differ per zone (capacity and quotas vary)
+  - **Price** and **Eviction Rate** are the **same** for all zones in a region (Azure sets prices at region level)
 - `baseline_sku`: Optional VM SKU to use as 100% performance baseline for relative comparison (e.g., `Standard_D4as_v6`). When set, enables `Perf %` and `Price/Perf` columns and optimizes recommendations for value.
 - `cache_ttl_minutes`: Reuses identical placement/Resource Graph responses for the specified TTL to respect Azure guidance of avoiding duplicate calls within 15 minutes.[^placement-score]
 - `result_limit`: Optional maximum number of rows in the final ranked report.
@@ -537,25 +558,28 @@ spotvm-tool --regions centralus --sizes Standard_D4as_v5 --availability-zones --
 ```
 Produces:
 ```csv
-timestamp,vm_size,region,zone,price_usd,...
-2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,1,0.0338,...
-2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,2,0.0340,...
-2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,3,0.0342,...
+timestamp,vm_size,region,zone,price_usd,eviction_rate,placement_score,quota_available
+2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,1,0.0336,2.5,High,True
+2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,2,0.0336,2.5,Medium,True
+2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,3,0.0336,2.5,Low,False
 ```
 - Three separate records (one per zone)
-- Prices **can differ** between zones!
+- **Price and Eviction Rate are IDENTICAL** across zones (Azure sets prices at region level)
+- **Placement Score and Quota Available differ** per zone (capacity and quotas vary by zone)
 
 **Scenario 3: Mixed runs (inconsistent zone usage)**
 
 If you alternate between runs with/without `--availability-zones`:
 ```csv
-timestamp,vm_size,region,zone,price_usd,...
-2025-01-25T14:00:00Z,Standard_D4as_v5,centralus,,0.0336,...      # Regional
-2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,1,0.0338,...     # Zone 1
-2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,2,0.0340,...     # Zone 2
-2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,3,0.0342,...     # Zone 3
-2025-01-26T10:00:00Z,Standard_D4as_v5,centralus,,0.0335,...      # Regional
+timestamp,vm_size,region,zone,price_usd,placement_score
+2025-01-25T14:00:00Z,Standard_D4as_v5,centralus,,0.0336,High        # Regional
+2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,1,0.0336,High       # Zone 1 (same price!)
+2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,2,0.0336,Medium     # Zone 2 (same price!)
+2025-01-25T18:00:00Z,Standard_D4as_v5,centralus,3,0.0336,Low        # Zone 3 (same price!)
+2025-01-26T10:00:00Z,Standard_D4as_v5,centralus,,0.0342,High        # Regional (price changed)
 ```
+
+**Note:** Price changed from 0.0336 to 0.0342 between days (normal market fluctuation), but within each day all zones have identical prices.
 
 **How to handle mixed data when visualizing:**
 
