@@ -27,6 +27,36 @@ pip install -e .[dev]
 
 All three commands read `pyproject.toml`, create an isolated environment, install dependencies, and directly execute the CLI without permanently installing the package.
 
+### Complete pipx example
+If you keep your subscription ID in `.env` (for example `AZURE_SUBSCRIPTION_ID=2f929c0a-d1f4-480c-a610-f75d1862fd53`), load it and execute:
+
+```bash
+set -a
+source .env
+set +a
+pipx run --pip-args="--force-reinstall" --spec ./ spotvm-tool \
+  --clear-cache \
+  --subscription-id "$AZURE_SUBSCRIPTION_ID" \
+  --regions centralus \
+  --sizes Standard_D2as_v6 \
+  --desired-count 10 \
+  --json
+```
+
+Alternatively, pass the subscription inline:
+
+```bash
+pipx run --pip-args="--force-reinstall" --spec ./ spotvm-tool \
+  --clear-cache \
+  --subscription-id 2f929c0a-d1f4-480c-a610-f75d1862fd53 \
+  --regions centralus \
+  --sizes Standard_D2as_v6 \
+  --desired-count 10 \
+  --json
+```
+
+`--clear-cache` ensures the run fetches fresh placement/Resource Graph data, while `--pip-args="--force-reinstall"` makes pipx rebuild the package from the current checkout before executing it.
+
 ## Configuration
 You can supply parameters directly via CLI arguments or load them from a JSON/YAML file. The sample below mirrors `config.sample.yaml` in the repository:
 
