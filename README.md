@@ -20,6 +20,13 @@ pip install .  # installs the CLI entry point `spotvm-tool`
 pip install -e .[dev]
 ```
 
+### One-command execution options
+- **pipx from local checkout:** `pipx run --spec ./ spotvm-tool -- --help`
+- **pipx from GitHub:** `pipx run git+https://github.com/Bafff/spotvm-price.git -- --help`
+- **uv (if installed):** `uvx --from git+https://github.com/Bafff/spotvm-price.git spotvm-tool -- --help`
+
+All three commands read `pyproject.toml`, create an isolated environment, install dependencies, and directly execute the CLI without permanently installing the package.
+
 ## Configuration
 You can supply parameters directly via CLI arguments or load them from a JSON/YAML file. The sample below mirrors `config.sample.yaml` in the repository:
 
