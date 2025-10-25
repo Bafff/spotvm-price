@@ -198,6 +198,122 @@ Rank | VM Size          | Price   | Eviction | Perf % | Price/Perf
 - Our vCPU + RAM formula provides a reasonable approximation until you can benchmark your specific workload
 - Choose a baseline similar to your typical workload for most accurate relative comparison
 
+## Historical Price Trends
+
+Track spot price and eviction rate changes over time by saving results from each run:
+
+### Saving Results
+
+Add `--save-results` to any normal run to save a timestamped snapshot:
+
+```bash
+spotvm-tool \
+  --subscription-id 00000000-0000-0000-0000-000000000000 \
+  --regions centralus eastus \
+  --sizes Standard_D4as_v5 Standard_D2as_v6 \
+  --baseline-sku Standard_D4as_v6 \
+  --save-results
+```
+
+**Output:**
+```
+✅ Results saved to: results/runs/2025-01-25T14-30-00Z.json
+
+Rank | Region    | VM Size          | Price   | Eviction % | Perf %
+-----|-----------|------------------|---------|------------|-------
+1    | centralus | Standard_D4as_v5 | $0.0336 | 2.5%       | 95%
+...
+```
+
+Each run creates a JSON snapshot in `results/runs/` containing:
+- Timestamp
+- Configuration (regions, sizes, baseline)
+- All candidate metrics (price, eviction, performance)
+
+### Analyzing Historical Data
+
+After accumulating multiple runs over days/weeks, generate a unified CSV for visualization:
+
+```bash
+spotvm-tool --analyze-history
+```
+
+**Output:**
+```
+Historical Analysis Complete:
+  Runs analyzed: 42
+  Data points: 168
+  CSV output: results/history.csv
+
+Use this CSV for visualization with tools like:
+  - Excel/Google Sheets: Import results/history.csv
+  - Python: pd.read_csv('results/history.csv')
+  - Grafana: CSV data source plugin
+```
+
+**CSV Format:**
+```csv
+timestamp,vm_size,region,zone,price_usd,eviction_rate,placement_score,performance_relative
+2025-01-25T14:30:00Z,Standard_D4as_v5,centralus,1,0.0336,2.5,High,95.2
+2025-01-25T14:30:00Z,Standard_D2as_v6,eastus,2,0.0168,5.1,Medium,47.6
+2025-01-26T09:15:00Z,Standard_D4as_v5,centralus,1,0.0342,3.2,High,95.2
+```
+
+### Advanced Options
+
+**Limit analysis depth:**
+```bash
+# Analyze only last 7 runs
+spotvm-tool --analyze-history --history-depth 7
+```
+
+**Custom output location:**
+```bash
+spotvm-tool --analyze-history --history-output /tmp/price_trends.csv
+```
+
+**Custom results directory:**
+```bash
+spotvm-tool --save-results --results-dir /data/spot-analysis
+spotvm-tool --analyze-history --results-dir /data/spot-analysis
+```
+
+### Visualization Examples
+
+**Python + matplotlib:**
+```python
+import pandas as pd
+import matplotlib.pyplot as plt
+
+df = pd.read_csv('results/history.csv')
+df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+# Plot price trends for specific SKU
+sku_data = df[df['vm_size'] == 'Standard_D4as_v5']
+plt.plot(sku_data['timestamp'], sku_data['price_usd'])
+plt.xlabel('Date')
+plt.ylabel('Price (USD/hr)')
+plt.title('Spot Price Trend: Standard_D4as_v5')
+plt.show()
+```
+
+**Excel:**
+1. Open Excel/Google Sheets
+2. Import `results/history.csv`
+3. Create pivot table with timestamp on X-axis
+4. Plot price_usd for different vm_size values
+5. Add trendlines to identify price patterns
+
+### Use Cases
+
+- **Budget Planning:** Identify optimal purchase windows when prices drop
+- **Capacity Planning:** Correlate eviction rate spikes with your workload timing
+- **SKU Comparison:** Track price/performance ratio evolution across different VMs
+- **Regional Analysis:** Find which regions have most stable pricing
+- **Automation:** Run hourly via cron with `--save-results`, analyze weekly trends
+
+**Note:** The tool doesn't include built-in visualization (keeps dependencies minimal). Use the CSV output with your preferred analytics/charting tools.
+
 ## Operational notes
 - The tool retries transient HTTP errors and honours `Retry-After` headers when Azure throttles requests.
 - Cached responses are stored in `~/.cache/spotvm_tool` as small JSON blobs.

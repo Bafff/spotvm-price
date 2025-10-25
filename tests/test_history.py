@@ -1,0 +1,272 @@
+"""Tests for historical data management."""
+
+import csv
+import json
+from datetime import datetime
+from pathlib import Path
+
+import pytest
+
+from spotvm_tool.config import ToolConfig
+from spotvm_tool.history import (
+    analyze_history,
+    generate_history_csv,
+    load_historical_runs,
+    save_run_results,
+)
+from spotvm_tool.models import CandidateInsight
+
+
+@pytest.fixture
+def temp_results_dir(tmp_path):
+    """Create a temporary results directory for testing."""
+    results_dir = tmp_path / "results"
+    results_dir.mkdir()
+    return results_dir
+
+
+@pytest.fixture
+def sample_candidates():
+    """Sample candidate data for testing."""
+    return [
+        CandidateInsight(
+            vm_size="Standard_D4as_v5",
+            region="centralus",
+            availability_zone="1",
+            price_usd=0.0336,
+            price_last_updated=datetime(2025, 1, 25, 14, 30),
+            eviction_rate=2.5,
+            eviction_last_updated=datetime(2025, 1, 25, 14, 30),
+            placement_score="High",
+            quota_available=True,
+            performance_relative=95.2,
+            price_per_performance=0.000353,
+            recommendation_rank=1,
+        ),
+        CandidateInsight(
+            vm_size="Standard_D2as_v6",
+            region="eastus",
+            availability_zone="2",
+            price_usd=0.0168,
+            price_last_updated=datetime(2025, 1, 25, 14, 30),
+            eviction_rate=5.1,
+            eviction_last_updated=datetime(2025, 1, 25, 14, 30),
+            placement_score="Medium",
+            quota_available=True,
+            performance_relative=47.6,
+            price_per_performance=0.000353,
+            recommendation_rank=2,
+        ),
+    ]
+
+
+@pytest.fixture
+def sample_config():
+    """Sample configuration for testing."""
+    return ToolConfig(
+        subscription_id="test-subscription-id",
+        regions=["centralus", "eastus"],
+        sizes=["Standard_D4as_v5", "Standard_D2as_v6"],
+        desired_count=10,
+        baseline_sku="Standard_D4as_v6",
+    )
+
+
+def test_save_run_results_creates_json(temp_results_dir, sample_candidates, sample_config):
+    """Test that save_run_results creates a JSON file with correct structure."""
+    saved_path = save_run_results(
+        candidates=sample_candidates,
+        config=sample_config,
+        results_dir=temp_results_dir,
+    )
+
+    # Check file was created
+    assert saved_path.exists()
+    assert saved_path.suffix == ".json"
+    assert saved_path.parent.name == "runs"
+
+    # Load and verify structure
+    with saved_path.open("r") as f:
+        data = json.load(f)
+
+    assert "timestamp" in data
+    assert "config" in data
+    assert "candidates" in data
+    assert len(data["candidates"]) == 2
+
+    # Verify config data
+    assert data["config"]["regions"] == ["centralus", "eastus"]
+    assert data["config"]["baseline_sku"] == "Standard_D4as_v6"
+    assert "..." in data["config"]["subscription_id"]  # Privacy check
+
+    # Verify candidate data
+    assert data["candidates"][0]["vm_size"] == "Standard_D4as_v5"
+    assert data["candidates"][0]["price_usd"] == 0.0336
+    assert data["candidates"][0]["eviction_rate"] == 2.5
+
+
+def test_load_historical_runs_empty_dir(temp_results_dir):
+    """Test loading from empty directory returns empty list."""
+    snapshots = load_historical_runs(temp_results_dir)
+    assert snapshots == []
+
+
+def test_load_historical_runs_loads_all_files(temp_results_dir, sample_candidates, sample_config):
+    """Test loading multiple historical runs."""
+    # Create 3 snapshots
+    for i in range(3):
+        save_run_results(sample_candidates, sample_config, temp_results_dir)
+
+    snapshots = load_historical_runs(temp_results_dir)
+    assert len(snapshots) == 3
+
+    # Verify snapshots are sorted by timestamp
+    for snapshot in snapshots:
+        assert snapshot.timestamp
+        assert snapshot.config
+        assert len(snapshot.candidates) == 2
+
+
+def test_load_historical_runs_with_depth(temp_results_dir, sample_candidates, sample_config):
+    """Test loading with depth limit."""
+    # Create 5 snapshots
+    for i in range(5):
+        save_run_results(sample_candidates, sample_config, temp_results_dir)
+
+    # Load only last 2
+    snapshots = load_historical_runs(temp_results_dir, depth=2)
+    assert len(snapshots) == 2
+
+
+def test_generate_history_csv_creates_file(temp_results_dir, sample_candidates, sample_config):
+    """Test CSV generation from snapshots."""
+    # Create 2 snapshots
+    save_run_results(sample_candidates, sample_config, temp_results_dir)
+    save_run_results(sample_candidates, sample_config, temp_results_dir)
+
+    # Load and generate CSV
+    snapshots = load_historical_runs(temp_results_dir)
+    csv_path = temp_results_dir / "test_history.csv"
+    num_points = generate_history_csv(snapshots, csv_path)
+
+    # Verify CSV created
+    assert csv_path.exists()
+    assert num_points == 4  # 2 candidates × 2 snapshots
+
+    # Parse and verify CSV
+    with csv_path.open("r") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    assert len(rows) == 4
+    assert rows[0]["vm_size"] == "Standard_D4as_v5"
+    assert rows[0]["region"] == "centralus"
+    assert rows[0]["price_usd"] == "0.0336"
+    assert rows[0]["eviction_rate"] == "2.5"
+
+
+def test_generate_history_csv_handles_empty(temp_results_dir):
+    """Test CSV generation with no snapshots."""
+    csv_path = temp_results_dir / "empty_history.csv"
+    num_points = generate_history_csv([], csv_path)
+
+    assert num_points == 0
+    assert not csv_path.exists()
+
+
+def test_analyze_history_complete_workflow(temp_results_dir, sample_candidates, sample_config):
+    """Test complete analyze_history workflow."""
+    # Create 3 snapshots
+    for i in range(3):
+        save_run_results(sample_candidates, sample_config, temp_results_dir)
+
+    # Analyze
+    num_runs, num_datapoints, csv_path = analyze_history(
+        results_dir=temp_results_dir,
+        depth=2,  # Only last 2 runs
+    )
+
+    assert num_runs == 2
+    assert num_datapoints == 4  # 2 candidates × 2 runs
+    assert csv_path.exists()
+    assert csv_path.name == "history.csv"
+
+
+def test_csv_output_format(temp_results_dir, sample_candidates, sample_config):
+    """Test CSV contains all expected columns."""
+    save_run_results(sample_candidates, sample_config, temp_results_dir)
+
+    snapshots = load_historical_runs(temp_results_dir)
+    csv_path = temp_results_dir / "format_test.csv"
+    generate_history_csv(snapshots, csv_path)
+
+    with csv_path.open("r") as f:
+        reader = csv.DictReader(f)
+        headers = reader.fieldnames
+
+    expected_headers = [
+        "timestamp",
+        "vm_size",
+        "region",
+        "zone",
+        "price_usd",
+        "eviction_rate",
+        "placement_score",
+        "quota_available",
+        "performance_relative",
+        "price_per_performance",
+        "recommendation_rank",
+    ]
+
+    assert headers == expected_headers
+
+
+def test_csv_handles_none_values(temp_results_dir, sample_config):
+    """Test CSV generation handles None values correctly."""
+    candidates_with_none = [
+        CandidateInsight(
+            vm_size="Standard_D4as_v5",
+            region="centralus",
+            availability_zone=None,  # None zone
+            price_usd=None,  # None price
+            price_last_updated=None,
+            eviction_rate=None,  # None eviction
+            eviction_last_updated=None,
+            placement_score=None,
+            quota_available=None,
+            performance_relative=None,
+            price_per_performance=None,
+            recommendation_rank=None,
+        ),
+    ]
+
+    save_run_results(candidates_with_none, sample_config, temp_results_dir)
+
+    snapshots = load_historical_runs(temp_results_dir)
+    csv_path = temp_results_dir / "none_values.csv"
+    generate_history_csv(snapshots, csv_path)
+
+    with csv_path.open("r") as f:
+        reader = csv.DictReader(f)
+        row = next(reader)
+
+    # None values should be empty strings in CSV
+    assert row["zone"] == ""
+    assert row["price_usd"] == ""
+    assert row["eviction_rate"] == ""
+    assert row["quota_available"] == ""
+
+
+def test_timestamp_format(temp_results_dir, sample_candidates, sample_config):
+    """Test timestamp is in ISO 8601 format."""
+    saved_path = save_run_results(sample_candidates, sample_config, temp_results_dir)
+
+    with saved_path.open("r") as f:
+        data = json.load(f)
+
+    timestamp = data["timestamp"]
+    # Should be ISO 8601 format with Z suffix
+    assert timestamp.endswith("Z")
+    # Should be parseable as datetime
+    dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    assert isinstance(dt, datetime)

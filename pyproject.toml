@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spotvm-tool"
-version = "0.1.0"
-description = "Azure Spot VM placement score analysis tool"
+version = "0.2.0-dev"
+description = "Azure Spot VM placement score analysis tool with historical trend tracking"
 readme = "README.md"
 authors = [{name = "Arkadium IT"}]
 requires-python = ">=3.10"
