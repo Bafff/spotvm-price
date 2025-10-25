@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -9,7 +10,9 @@ from .config import ToolConfig
 from .http_client import AzureRestClient
 from .models import HistoricalMetrics
 
-RESOURCE_GRAPH_API_VERSION = "2021-03-01"
+logger = logging.getLogger("spotvm-tool")
+
+RESOURCE_GRAPH_API_VERSION = "2022-10-01"
 RESOURCE_GRAPH_ENDPOINT = (
     "https://management.azure.com/providers/Microsoft.ResourceGraph/resources"
     f"?api-version={RESOURCE_GRAPH_API_VERSION}"
@@ -23,8 +26,14 @@ def fetch_historical_metrics(
     price_query = _build_price_query(config)
     eviction_query = _build_eviction_query(config)
 
+    logger.debug("Price query: %s", price_query)
+    logger.debug("Eviction query: %s", eviction_query)
+
     price_rows = _execute_query(client, config, price_query, "price")
     eviction_rows = _execute_query(client, config, eviction_query, "eviction")
+
+    logger.debug("Price rows returned: %d", len(price_rows))
+    logger.debug("Eviction rows returned: %d", len(eviction_rows))
 
     price_map: Dict[tuple[str, str], dict] = {}
     for row in price_rows:
@@ -80,22 +89,32 @@ def _execute_query(
     query: str,
     cache_prefix: str,
 ) -> List[dict]:
+    # SpotResources table works differently than regular resources
+    # Try without explicit scope first (queries across all accessible subscriptions)
     payload = {
-        "subscriptions": [config.subscription_id],
         "query": query,
         "options": {"resultFormat": "objectArray"},
     }
+
+    logger.debug("Executing query without explicit scope (all accessible subscriptions)")
+
     cache_key = _cache_key(cache_prefix, payload)
     cached = cache.load(cache_key, config.cache_ttl_minutes)
     if cached:
+        logger.debug("Using cached %s data", cache_prefix)
         return cached.get("data", [])
 
+    logger.debug("Executing %s query against Resource Graph API", cache_prefix)
     response = client.post_json(
         RESOURCE_GRAPH_ENDPOINT,
         payload,
         retry_attempts=config.retry_attempts,
         retry_backoff_seconds=config.retry_backoff_seconds,
     )
+    logger.debug("Response keys: %s", list(response.keys()))
+    logger.debug("Response data length: %d", len(response.get("data", [])))
+    if response.get("data"):
+        logger.debug("Sample data item: %s", response["data"][0] if response["data"] else "N/A")
     cache.store(cache_key, response, config.cache_ttl_minutes)
     return response.get("data", [])
 
@@ -106,16 +125,16 @@ def _cache_key(prefix: str, payload: dict) -> str:
 
 
 def _build_price_query(config: ToolConfig) -> str:
-    region_filter = _in_expression("location", config.regions)
+    region_filter = _in_expression("tolower(location)", config.regions)
     sku_list = _in_list(config.sizes)
-    os_filter = f"| where osType =~ '{config.os_type}'" if config.os_type else ""
+    os_filter = f"| where tolower(osType) =~ '{config.os_type.lower()}'" if config.os_type else ""
     return (
-        "SpotResources\n"
+        "spotresources\n"
         "| where type =~ 'microsoft.compute/skuspotpricehistory/ostype/location'\n"
-        "| extend skuName = tostring(properties.skuName),"
+        "| extend skuName = tostring(sku.name),"
         " osType = tostring(properties.osType),"
         " spotPrices = todynamic(properties.spotPrices)\n"
-        f"| where skuName in~ ({sku_list})\n"
+        f"| where tolower(skuName) in~ ({sku_list})\n"
         f"| {region_filter}\n"
         f"{os_filter}\n"
         "| project skuName, location = tostring(location), spotPrices"
@@ -123,17 +142,32 @@ def _build_price_query(config: ToolConfig) -> str:
 
 
 def _build_eviction_query(config: ToolConfig) -> str:
-    region_filter = _in_expression("location", config.regions)
+    region_filter = _in_expression("tolower(location)", config.regions)
     sku_list = _in_list(config.sizes)
     return (
-        "SpotResources\n"
+        "spotresources\n"
         "| where type =~ 'microsoft.compute/skuspotevictionrate/location'\n"
-        "| extend skuName = tostring(properties.skuName)\n"
-        f"| where skuName in~ ({sku_list})\n"
+        f"| where tolower(sku.name) in~ ({sku_list})\n"
         f"| {region_filter}\n"
-        "| project skuName, location = tostring(location),"
-        " evictionRate = todouble(properties.evictionRate),"
-        " evictionLastUpdated = tostring(properties.lastUpdatedTime)"
+        # Azure returns evictionRate as range strings like "0-5%" or "5-10%"
+        # Extract the upper bound as the eviction percentage
+        "| extend evRaw = tostring(coalesce(\n"
+        "          properties.evictionRate,\n"
+        "          properties['evictionRate'],\n"
+        "          properties.evictionrate,\n"
+        "          properties['evictionrate'],\n"
+        "          properties.evictionRateBand,\n"
+        "          properties['evictionRateBand']))\n"
+        # Extract upper bound from range like "5-10" -> 10
+        "| extend evHigh = todouble(extract(@\"-(\\\\d+(?:\\\\.\\\\d+)?)\", 1, evRaw))\n"
+        # Extract single value like "5" -> 5
+        "| extend evOne  = todouble(extract(@\"^(\\\\d+(?:\\\\.\\\\d+)?)\", 1, evRaw))\n"
+        "| extend evictionPct = coalesce(todouble(evRaw), evHigh, evOne)\n"
+        "| project skuName = tostring(sku.name), location = tostring(location),"
+        " evictionRate = evictionPct,"
+        " evictionLastUpdated = tostring(properties.lastUpdatedTime)\n"
+        "| summarize evictionRate = any(evictionRate), "
+        "evictionLastUpdated = any(evictionLastUpdated) by location, skuName"
     )
 
 
@@ -143,7 +177,7 @@ def _in_expression(column: str, values: Iterable[str]) -> str:
 
 
 def _in_list(values: Iterable[str]) -> str:
-    return ", ".join(f"'{value}'" for value in values)
+    return ", ".join(f"'{value.lower()}'" for value in values)
 
 
 def _extract_latest_price(entry: Optional[dict]) -> tuple[Optional[float], Optional[datetime]]:
@@ -162,7 +196,8 @@ def _extract_latest_price(entry: Optional[dict]) -> tuple[Optional[float], Optio
     if not isinstance(latest, dict):
         return None, None
     price = _to_float(latest.get("priceUSD"))
-    timestamp = _parse_datetime_string(latest.get("dateTime"))
+    # Field is called effectiveDate, not dateTime
+    timestamp = _parse_datetime_string(latest.get("effectiveDate") or latest.get("dateTime"))
     return price, timestamp
 
 
@@ -213,3 +248,32 @@ def _parse_datetime_string(value: Any) -> Optional[datetime]:
         except ValueError:
             return None
     return None
+
+
+def _get_tenant_id(client: AzureRestClient) -> Optional[str]:
+    """Get the tenant ID from the Azure account for tenant-scoped queries.
+
+    SpotResources table requires tenant-level scope instead of subscription scope.
+    """
+    try:
+        # Query the subscriptions endpoint to get tenant information
+        url = "https://management.azure.com/subscriptions?api-version=2020-01-01"
+        token = client.authenticator.get_token()
+        response = client._session.get(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        if response.ok:
+            data = response.json()
+            # Get tenant ID from the first subscription if available
+            if data.get("value") and len(data["value"]) > 0:
+                tenant_id = data["value"][0].get("tenantId")
+                if tenant_id:
+                    logger.debug("Retrieved tenant ID: %s", tenant_id)
+                    return tenant_id
+        logger.warning("Could not retrieve tenant ID, will fall back to subscription scope")
+        return None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to retrieve tenant ID: %s", exc)
+        return None
