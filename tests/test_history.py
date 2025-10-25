@@ -270,3 +270,129 @@ def test_timestamp_format(temp_results_dir, sample_candidates, sample_config):
     # Should be parseable as datetime
     dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     assert isinstance(dt, datetime)
+
+
+def test_mixed_zone_and_regional_data(temp_results_dir, sample_config):
+    """Test handling of mixed regional and zone-specific data in same CSV.
+
+    This simulates the real-world scenario where some runs use --availability-zones
+    and others don't, resulting in the same SKU appearing multiple times per region.
+    """
+    # Run 1: Regional data (no zones)
+    regional_candidates = [
+        CandidateInsight(
+            vm_size="Standard_D4as_v5",
+            region="centralus",
+            availability_zone=None,  # No zone (regional)
+            price_usd=0.0336,
+            price_last_updated=datetime(2025, 1, 25, 14, 0),
+            eviction_rate=2.5,
+            eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+            placement_score="High",
+            quota_available=True,
+            performance_relative=95.2,
+            price_per_performance=0.000353,
+            recommendation_rank=1,
+        ),
+    ]
+    save_run_results(regional_candidates, sample_config, temp_results_dir)
+
+    # Run 2: Zone-specific data (3 zones)
+    zone_candidates = [
+        CandidateInsight(
+            vm_size="Standard_D4as_v5",
+            region="centralus",
+            availability_zone="1",  # Zone 1
+            price_usd=0.0338,
+            price_last_updated=datetime(2025, 1, 25, 18, 0),
+            eviction_rate=2.8,
+            eviction_last_updated=datetime(2025, 1, 25, 18, 0),
+            placement_score="High",
+            quota_available=True,
+            performance_relative=95.2,
+            price_per_performance=0.000355,
+            recommendation_rank=1,
+        ),
+        CandidateInsight(
+            vm_size="Standard_D4as_v5",
+            region="centralus",
+            availability_zone="2",  # Zone 2
+            price_usd=0.0340,
+            price_last_updated=datetime(2025, 1, 25, 18, 0),
+            eviction_rate=3.0,
+            eviction_last_updated=datetime(2025, 1, 25, 18, 0),
+            placement_score="Medium",
+            quota_available=True,
+            performance_relative=95.2,
+            price_per_performance=0.000357,
+            recommendation_rank=2,
+        ),
+        CandidateInsight(
+            vm_size="Standard_D4as_v5",
+            region="centralus",
+            availability_zone="3",  # Zone 3
+            price_usd=0.0342,
+            price_last_updated=datetime(2025, 1, 25, 18, 0),
+            eviction_rate=3.2,
+            eviction_last_updated=datetime(2025, 1, 25, 18, 0),
+            placement_score="Medium",
+            quota_available=False,
+            performance_relative=95.2,
+            price_per_performance=0.000359,
+            recommendation_rank=3,
+        ),
+    ]
+    save_run_results(zone_candidates, sample_config, temp_results_dir)
+
+    # Run 3: Back to regional data
+    regional_candidates_2 = [
+        CandidateInsight(
+            vm_size="Standard_D4as_v5",
+            region="centralus",
+            availability_zone=None,  # No zone (regional)
+            price_usd=0.0335,
+            price_last_updated=datetime(2025, 1, 26, 10, 0),
+            eviction_rate=2.3,
+            eviction_last_updated=datetime(2025, 1, 26, 10, 0),
+            placement_score="High",
+            quota_available=True,
+            performance_relative=95.2,
+            price_per_performance=0.000352,
+            recommendation_rank=1,
+        ),
+    ]
+    save_run_results(regional_candidates_2, sample_config, temp_results_dir)
+
+    # Generate history CSV
+    snapshots = load_historical_runs(temp_results_dir)
+    csv_path = temp_results_dir / "mixed_zones.csv"
+    num_points = generate_history_csv(snapshots, csv_path)
+
+    # Should have 5 total data points (1 regional + 3 zones + 1 regional)
+    assert num_points == 5
+
+    # Parse CSV and verify structure
+    with csv_path.open("r") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    assert len(rows) == 5
+
+    # Verify regional data has empty zone
+    regional_rows = [r for r in rows if r['zone'] == '']
+    assert len(regional_rows) == 2  # Two regional runs
+    assert regional_rows[0]['price_usd'] == '0.0336'
+    assert regional_rows[1]['price_usd'] == '0.0335'
+
+    # Verify zone-specific data has zone values
+    zone_rows = [r for r in rows if r['zone'] != '']
+    assert len(zone_rows) == 3  # Three zone-specific records
+    assert set([r['zone'] for r in zone_rows]) == {'1', '2', '3'}
+
+    # Verify prices differ between zones
+    zone_prices = [float(r['price_usd']) for r in zone_rows]
+    assert zone_prices == [0.0338, 0.0340, 0.0342]  # Ascending order
+
+    # Verify all rows are for same SKU and region
+    assert all(r['vm_size'] == 'Standard_D4as_v5' for r in rows)
+    assert all(r['region'] == 'centralus' for r in rows)
