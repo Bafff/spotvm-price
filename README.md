@@ -191,6 +191,7 @@ Rank | VM Size          | Price   | Eviction | Perf % | Price/Perf
 **Notes:**
 - Performance formula weights CPU more heavily (100×) than RAM (5×)
 - Formula is simplified; real performance depends on workload type, CPU generation, I/O, etc.
+- **ACU (Azure Compute Units) not used**: Microsoft stopped publishing ACU for newer VM generations (v5, v6+). See [GitHub Issue #84034](https://github.com/MicrosoftDocs/azure-docs/issues/84034). Microsoft is "reevaluating ACU methodology" and now uses CoreMark/SPECInt benchmarks, but these are not yet published for all SKUs.
 - Choose a baseline similar to your typical workload for accurate comparison
 
 ## Operational notes
