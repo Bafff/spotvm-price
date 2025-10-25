@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+*.log
+
+# Virtual environments
+.env/
+.venv/
+venv/
+ENV/
+
+# macOS
+.DS_Store
+
+# IDEs
+.idea/
+.vscode/
+
+# Local artifacts
+*.sqlite3
+.cache/
+.mypy_cache/
+pytest_cache/
+
+# Generated reports
+reports/
+
