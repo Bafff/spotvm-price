@@ -1,0 +1,75 @@
+{
+  "price": {
+    "data": [
+      {
+        "skuName": "Standard_D2as_v6",
+        "location": "centralus",
+        "spotPrices": [
+          {"priceUSD": 0.041, "dateTime": "2025-10-24T12:00:00Z"}
+        ]
+      },
+      {
+        "skuName": "Standard_D4as_v5",
+        "location": "centralus",
+        "spotPrices": [
+          {"priceUSD": 0.079, "dateTime": "2025-10-24T12:00:00Z"}
+        ]
+      },
+      {
+        "skuName": "Standard_E4s_v5",
+        "location": "eastus",
+        "spotPrices": [
+          {"priceUSD": 0.095, "dateTime": "2025-10-23T11:30:00Z"}
+        ]
+      },
+      {
+        "skuName": "Standard_F4s_v2",
+        "location": "eastus",
+        "spotPrices": [
+          {"priceUSD": 0.063, "dateTime": "2025-10-23T19:45:00Z"}
+        ]
+      },
+      {
+        "skuName": "Standard_DS3_v2",
+        "location": "northcentralus",
+        "spotPrices": [
+          {"priceUSD": 0.054, "dateTime": "2025-10-22T08:15:00Z"}
+        ]
+      }
+    ]
+  },
+  "eviction": {
+    "data": [
+      {
+        "skuName": "Standard_D2as_v6",
+        "location": "centralus",
+        "evictionRate": 3.2,
+        "evictionLastUpdated": "2025-10-24T11:00:00Z"
+      },
+      {
+        "skuName": "Standard_D4as_v5",
+        "location": "centralus",
+        "evictionRate": 5.1,
+        "evictionLastUpdated": "2025-10-24T11:00:00Z"
+      },
+      {
+        "skuName": "Standard_E4s_v5",
+        "location": "eastus",
+        "evictionRate": 4.8,
+        "evictionLastUpdated": "2025-10-23T10:30:00Z"
+      },
+      {
+        "skuName": "Standard_F4s_v2",
+        "location": "eastus",
+        "evictionRate": 6.4,
+        "evictionLastUpdated": "2025-10-23T18:15:00Z"
+      },
+      {
+        "skuName": "Standard_DS3_v2",
+        "location": "northcentralus",
+        "evictionRate": 2.9,
+        "evictionLastUpdated": "2025-10-22T07:00:00Z"
+      }
+    ]
+  }
+}
