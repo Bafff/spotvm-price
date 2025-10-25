@@ -86,8 +86,6 @@ emit_json: false
 - `cache_ttl_minutes`: Reuses identical placement/Resource Graph responses for the specified TTL to respect Azure guidance of avoiding duplicate calls within 15 minutes.[^placement-score]
 - `result_limit`: Optional maximum number of rows in the final ranked report.
 - `emit_json`: When `true`, prints a JSON representation in addition to the table (also useful when saving reports).
-- `enable_placement`: Set to `false` (or add `--skip-placement`) to bypass Spot Placement Score calls when you only want to inspect historical data or to avoid rate limits.
-- `resource_graph_sample`: Optional path to a JSON fixture shaped like Azure Resource Graph output; useful for offline testing.
 
 ## Usage
 ### Direct arguments
@@ -105,18 +103,6 @@ spotvm-tool \
 ```bash
 spotvm-tool --config config.sample.yaml --save-report reports/latest.json
 ```
-
-### Using sample Resource Graph data (offline demo)
-```bash
-spotvm-tool \
-  --skip-placement \
-  --graph-sample tests/data/sample_graph.json \
-  --subscription-id demo-subscription \
-  --regions centralus eastus northcentralus \
-  --sizes Standard_D2as_v6 Standard_D4as_v5 Standard_E4s_v5 Standard_F4s_v2 Standard_DS3_v2 \
-  --desired-count 10
-```
-This renders a fully populated table based on the provided fixture and leaves the placement column marked `N/A`.
 
 The CLI prints an aligned ASCII table with the placement score, quota availability, latest spot price, and eviction rate for each combination. After sorting (High > Medium > Low, then by lowest eviction rate and price), it emits a short recommendation list and an optional JSON payload when requested.
 

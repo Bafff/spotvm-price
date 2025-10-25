@@ -34,8 +34,6 @@ class ToolConfig:
     result_limit: Optional[int] = None
     save_report: Optional[Path] = None
     emit_json: bool = False
-    enable_placement: bool = True
-    resource_graph_sample: Optional[Path] = None
 
     def __post_init__(self) -> None:
         self.regions = _clean_list(self.regions)
@@ -51,10 +49,6 @@ class ToolConfig:
         self.os_type = self.os_type.lower()
         if self.os_type not in VALID_OS_TYPES:
             raise ValueError(f"os_type must be one of {sorted(VALID_OS_TYPES)}")
-        if self.resource_graph_sample and not self.resource_graph_sample.exists():
-            raise FileNotFoundError(
-                f"resource_graph_sample not found: {self.resource_graph_sample}"
-            )
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ToolConfig":
@@ -62,9 +56,6 @@ class ToolConfig:
         save_report = payload.get("save_report")
         if save_report:
             payload["save_report"] = Path(save_report)
-        graph_sample = payload.get("resource_graph_sample")
-        if graph_sample:
-            payload["resource_graph_sample"] = Path(graph_sample)
         return cls(**payload)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -83,10 +74,6 @@ class ToolConfig:
             "result_limit": self.result_limit,
             "save_report": str(self.save_report) if self.save_report else None,
             "emit_json": self.emit_json,
-            "enable_placement": self.enable_placement,
-            "resource_graph_sample": str(self.resource_graph_sample)
-            if self.resource_graph_sample
-            else None,
         }
         return payload
 
