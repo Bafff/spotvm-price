@@ -20,16 +20,11 @@ def fetch_historical_metrics(
     client: AzureRestClient,
     config: ToolConfig,
 ) -> List[HistoricalMetrics]:
-    if config.resource_graph_sample:
-        sample = json.loads(config.resource_graph_sample.read_text(encoding="utf-8"))
-        price_rows = _extract_sample_rows(sample, "price")
-        eviction_rows = _extract_sample_rows(sample, "eviction")
-    else:
-        price_query = _build_price_query(config)
-        eviction_query = _build_eviction_query(config)
+    price_query = _build_price_query(config)
+    eviction_query = _build_eviction_query(config)
 
-        price_rows = _execute_query(client, config, price_query, "price")
-        eviction_rows = _execute_query(client, config, eviction_query, "eviction")
+    price_rows = _execute_query(client, config, price_query, "price")
+    eviction_rows = _execute_query(client, config, eviction_query, "eviction")
 
     price_map: Dict[tuple[str, str], dict] = {}
     for row in price_rows:
@@ -103,19 +98,6 @@ def _execute_query(
     )
     cache.store(cache_key, response, config.cache_ttl_minutes)
     return response.get("data", [])
-
-
-def _extract_sample_rows(sample: dict, key: str) -> List[dict]:
-    block = sample.get(key)
-    if block is None:
-        return []
-    if isinstance(block, dict):
-        data = block.get("data")
-        if isinstance(data, list):
-            return data
-    if isinstance(block, list):
-        return block
-    return []
 
 
 def _cache_key(prefix: str, payload: dict) -> str:

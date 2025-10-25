@@ -66,16 +66,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Clear cached responses before running",
     )
-    parser.add_argument(
-        "--skip-placement",
-        action="store_true",
-        help="Skip calling the Spot Placement Score API",
-    )
-    parser.add_argument(
-        "--graph-sample",
-        type=Path,
-        help="Path to JSON file with sample Azure Resource Graph responses",
-    )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     return parser
 
@@ -105,10 +95,7 @@ def main(argv: List[str] | None = None) -> int:
         "save_report": str(args.save_report) if args.save_report else None,
         "emit_json": args.json,
         "result_limit": args.limit,
-        "resource_graph_sample": str(args.graph_sample) if args.graph_sample else None,
     }
-    if args.skip_placement:
-        overrides["enable_placement"] = False
 
     config_data = merge_cli_overrides(base_config, overrides)
     try:
@@ -127,11 +114,7 @@ def main(argv: List[str] | None = None) -> int:
     client = AzureRestClient(authenticator)
 
     try:
-        placement_scores = (
-            fetch_placement_scores(client, config)
-            if config.enable_placement
-            else []
-        )
+        placement_scores = fetch_placement_scores(client, config)
         historical_metrics = fetch_historical_metrics(client, config)
     except AzureHttpError as exc:
         logger.error("Azure API request failed: %s", exc)
