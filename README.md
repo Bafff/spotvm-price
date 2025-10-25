@@ -86,6 +86,7 @@ emit_json: false
 - `cache_ttl_minutes`: Reuses identical placement/Resource Graph responses for the specified TTL to respect Azure guidance of avoiding duplicate calls within 15 minutes.[^placement-score]
 - `result_limit`: Optional maximum number of rows in the final ranked report.
 - `emit_json`: When `true`, prints a JSON representation in addition to the table (also useful when saving reports).
+- `enable_placement`: Set to `false` (or pass `--skip-placement`) to temporarily bypass the Spot Placement Score API when you only want historical metrics or need to avoid rate limits.
 
 ## Usage
 ### Direct arguments

@@ -34,6 +34,7 @@ class ToolConfig:
     result_limit: Optional[int] = None
     save_report: Optional[Path] = None
     emit_json: bool = False
+    enable_placement: bool = True
 
     def __post_init__(self) -> None:
         self.regions = _clean_list(self.regions)
@@ -74,6 +75,7 @@ class ToolConfig:
             "result_limit": self.result_limit,
             "save_report": str(self.save_report) if self.save_report else None,
             "emit_json": self.emit_json,
+            "enable_placement": self.enable_placement,
         }
         return payload
 
