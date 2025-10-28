@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spotvm-tool"
-version = "0.3.0"
-description = "Azure Spot VM analysis with auto-discovery, filtering, and continuous monitoring"
+version = "0.3.1"
+description = "Azure Spot VM analysis with auto-discovery, filtering, continuous monitoring, and color-coded risk indicators"
 readme = "README.md"
 authors = [{name = "Arkadium IT"}]
 requires-python = ">=3.10"
@@ -14,6 +14,7 @@ dependencies = [
     "requests>=2.32.0",
     "PyYAML>=6.0",
     "wcwidth>=0.2.0",
+    "colorama>=0.4.6",
 ]
 keywords = ["azure", "spot", "virtual machines", "placement score"]
 
