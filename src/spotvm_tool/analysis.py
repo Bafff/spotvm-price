@@ -4,7 +4,7 @@ import logging
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
-from .vm_specs import calculate_relative_performance, get_vm_spec
+from .vm_specs import calculate_relative_performance, get_vm_spec, detect_cpu_architecture
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +58,11 @@ def merge_datasets(
 
         metrics = metrics_map.get((region_key, sku_key))
         for entry in matching_placement_entries:
+            vm_size = entry.vm_size or metrics.vm_size if metrics else sku_key
             combined.append(
                 CandidateInsight(
                     region=entry.region or metrics.region if metrics else region_key,
-                    vm_size=entry.vm_size or metrics.vm_size if metrics else sku_key,
+                    vm_size=vm_size,
                     placement_score=entry.placement_score,
                     quota_available=entry.quota_available,
                     price_usd=metrics.price_usd if metrics else None,
@@ -70,6 +71,7 @@ def merge_datasets(
                     eviction_last_updated=metrics.eviction_last_updated if metrics else None,
                     availability_zone=entry.availability_zone,
                     notes=entry.error_detail,
+                    cpu_arch=detect_cpu_architecture(vm_size) if vm_size else None,
                 )
             )
     return combined
@@ -122,6 +124,28 @@ def enrich_with_performance(
         if perf and perf > 0 and candidate.price_usd:
             # Price per 1% of baseline performance
             candidate.price_per_performance = candidate.price_usd / perf
+
+    return candidates
+
+
+def enrich_with_coremark(
+    candidates: List[CandidateInsight],
+) -> List[CandidateInsight]:
+    """Enrich candidates with CoreMark benchmark data.
+
+    Adds CoreMark absolute score and per-vCPU efficiency metric from VM specifications.
+
+    Args:
+        candidates: List of candidate insights
+
+    Returns:
+        Same list with coremark_score and coremark_per_vcpu populated
+    """
+    for candidate in candidates:
+        spec = get_vm_spec(candidate.vm_size)
+        if spec:
+            candidate.coremark_score = spec.coremark_score
+            candidate.coremark_per_vcpu = spec.coremark_per_vcpu
 
     return candidates
 

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from .analysis import (
+    enrich_with_coremark,
     enrich_with_performance,
     filter_by_cost,
     filter_by_requirements,
@@ -23,7 +24,7 @@ from .auth import AzureAuthenticator
 from .config import ToolConfig, load_config_file, merge_cli_overrides
 from .http_client import AzureRestClient, AzureHttpError
 from .placement_score import fetch_placement_scores
-from .reporting import render_table
+from .reporting import render_table, export_to_csv, set_colors_enabled
 from .resource_graph import fetch_historical_metrics
 
 
@@ -83,6 +84,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable colored output (useful for CI/CD or non-TTY environments)",
+    )
+    parser.add_argument(
         "--baseline-sku",
         type=str,
         help="Baseline VM size for relative performance comparison (e.g., Standard_D4as_v6 = 100%%)",
@@ -98,6 +104,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--min-ram",
         type=int,
         help="Minimum RAM required in GB (filters SKUs with less memory)",
+    )
+    parser.add_argument(
+        "--cpu-arch",
+        type=str,
+        choices=["x64", "arm"],
+        help="CPU architecture filter: x64 for Intel/AMD, arm for ARM-based VMs (Cobalt/Ampere)",
     )
 
     # Cost-based filtering
@@ -153,6 +165,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Path for history CSV output (default: results/history.csv)",
     )
+    parser.add_argument(
+        "--csv",
+        type=Path,
+        help="Export results to CSV file (e.g., results.csv)",
+    )
 
     return parser
 
@@ -199,11 +216,21 @@ def main(argv: List[str] | None = None) -> int:
     # Auto-discover SKUs if not specified but requirements are
     sizes = args.sizes
     if not sizes and (args.min_vcpu or args.min_ram):
+        requirements = []
+        if args.min_vcpu:
+            requirements.append(f"vCPU≥{args.min_vcpu}")
+        if args.min_ram:
+            requirements.append(f"RAM≥{args.min_ram} GB")
+        if args.cpu_arch:
+            requirements.append(f"arch={args.cpu_arch}")
         logger.info(
-            "No --sizes specified, auto-discovering SKUs matching requirements "
-            f"(vCPU≥{args.min_vcpu}, RAM≥{args.min_ram} GB)"
+            f"No --sizes specified, auto-discovering SKUs matching requirements ({', '.join(requirements)})"
         )
-        sizes = discover_skus(min_vcpu=args.min_vcpu, min_ram=args.min_ram)
+        sizes = discover_skus(
+            min_vcpu=args.min_vcpu,
+            min_ram=args.min_ram,
+            cpu_arch=args.cpu_arch,
+        )
         if not sizes:
             logger.error("No SKUs found matching specified requirements")
             return 1
@@ -221,6 +248,7 @@ def main(argv: List[str] | None = None) -> int:
         "emit_json": args.json,
         "result_limit": args.limit,
         "baseline_sku": args.baseline_sku,
+        "cpu_arch": args.cpu_arch,
     }
     if args.skip_placement:
         overrides["enable_placement"] = False
@@ -338,6 +366,10 @@ def _run_single_analysis(
         logger: Logger instance
         save_results: Whether to save results to disk
     """
+    # Handle color output setting
+    if args.no_color:
+        set_colors_enabled(False)
+
     authenticator = AzureAuthenticator()
     client = AzureRestClient(authenticator)
 
@@ -359,6 +391,7 @@ def _run_single_analysis(
 
     ranked = rank_candidates(candidates)
     ranked = enrich_with_performance(ranked, config.baseline_sku)
+    ranked = enrich_with_coremark(ranked)  # Add CoreMark benchmark data
 
     # Filter by cost constraints (after enrichment for min_performance filter)
     ranked = filter_by_cost(
@@ -386,6 +419,12 @@ def _run_single_analysis(
     table = render_table(ranked)
     print(table)
 
+    # Export to CSV if requested
+    if args.csv:
+        export_to_csv(ranked, args.csv)
+        logger.info("Results exported to CSV: %s", args.csv)
+        print(f"✅ CSV exported to: {args.csv}\n")
+
     # Print column explanations
     if config.enable_placement:
         print("\nColumn Descriptions:")
@@ -397,6 +436,19 @@ def _run_single_analysis(
         print(f"\nPerformance Baseline: {config.baseline_sku} = 100%")
         print("  Perf %: Relative computing power compared to baseline")
         print("  Price/Perf: Price per performance unit (lower is better value)")
+
+    # Print color legend if colors are enabled
+    if not args.no_color:
+        from colorama import Fore, Style
+        print("\nColor Legend:")
+        print(f"  Eviction Rate: {Fore.BLUE}<5%{Style.RESET_ALL} | "
+              f"{Fore.GREEN}5-<10%{Style.RESET_ALL} | "
+              f"{Fore.YELLOW}10-<15%{Style.RESET_ALL} | "
+              f"{Fore.RED}15-<25%{Style.RESET_ALL} | "
+              f"{Fore.RED}{Style.BRIGHT}≥25%{Style.RESET_ALL}")
+        print(f"  Placement:     {Fore.GREEN}High{Style.RESET_ALL} | "
+              f"{Fore.YELLOW}Medium{Style.RESET_ALL} | "
+              f"{Fore.RED}Low{Style.RESET_ALL}")
 
     summary_lines = summarize_top_candidates(ranked)
     if summary_lines:
@@ -432,14 +484,16 @@ def _build_report(candidates: List[Any]) -> Dict[str, Any]:
                 "region": item.region,
                 "availabilityZone": item.availability_zone,
                 "vmSize": item.vm_size,
+                "cpuArchitecture": item.cpu_arch,
                 "placementScore": item.placement_score,
                 "quotaAvailable": item.quota_available,
                 "priceUSDPerHour": item.price_usd,
                 "priceLastUpdated": _json_serializer(item.price_last_updated),
                 "evictionRatePercent": item.eviction_rate,
-                "evictionLastUpdated": _json_serializer(item.eviction_last_updated),
                 "performanceRelativePercent": item.performance_relative,
                 "pricePerPerformance": item.price_per_performance,
+                "coremarkScore": item.coremark_score,
+                "coremarkPerVCPU": item.coremark_per_vcpu,
                 "notes": item.notes,
             }
             for item in candidates

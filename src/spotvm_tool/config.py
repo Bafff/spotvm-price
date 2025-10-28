@@ -14,6 +14,7 @@ except ImportError:  # pragma: no cover - optional dependency
 DEFAULT_CACHE_TTL_MINUTES = 15
 DEFAULT_OS_TYPE = "linux"
 VALID_OS_TYPES = {"linux", "windows"}
+VALID_CPU_ARCHS = {"x64", "arm"}
 
 
 @dataclass
@@ -36,6 +37,7 @@ class ToolConfig:
     emit_json: bool = False
     enable_placement: bool = True
     baseline_sku: Optional[str] = None
+    cpu_arch: Optional[str] = None  # "x64" or "arm"
 
     def __post_init__(self) -> None:
         self.regions = _clean_list(self.regions)
@@ -54,6 +56,10 @@ class ToolConfig:
         self.os_type = self.os_type.lower()
         if self.os_type not in VALID_OS_TYPES:
             raise ValueError(f"os_type must be one of {sorted(VALID_OS_TYPES)}")
+        if self.cpu_arch is not None:
+            self.cpu_arch = self.cpu_arch.lower()
+            if self.cpu_arch not in VALID_CPU_ARCHS:
+                raise ValueError(f"cpu_arch must be one of {sorted(VALID_CPU_ARCHS)}")
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ToolConfig":
