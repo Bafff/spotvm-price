@@ -6,7 +6,7 @@ import pytest
 
 from spotvm_tool.analysis import filter_by_cost, filter_by_requirements
 from spotvm_tool.models import CandidateInsight
-from spotvm_tool.vm_specs import discover_skus
+from spotvm_tool.vm_specs import discover_skus, detect_cpu_architecture
 
 
 class TestAutoDiscovery:
@@ -275,3 +275,58 @@ class TestFilterByCost:
         )
 
         assert len(filtered) == 1
+
+
+class TestCPUArchitecture:
+    """Tests for CPU architecture detection and filtering."""
+
+    def test_detect_x64_intel(self):
+        """Test detecting Intel x64 VMs (no architecture letter)."""
+        assert detect_cpu_architecture("Standard_D4s_v5") == "x64"
+        assert detect_cpu_architecture("Standard_D8s_v5") == "x64"
+        assert detect_cpu_architecture("Standard_E4s_v5") == "x64"
+
+    def test_detect_x64_amd(self):
+        """Test detecting AMD x64 VMs (letter 'a')."""
+        assert detect_cpu_architecture("Standard_D4as_v5") == "x64"
+        assert detect_cpu_architecture("Standard_D4as_v6") == "x64"
+        assert detect_cpu_architecture("Standard_D8as_v5") == "x64"
+        assert detect_cpu_architecture("Standard_D4ads_v5") == "x64"
+
+    def test_detect_arm(self):
+        """Test detecting ARM VMs (letter 'p')."""
+        assert detect_cpu_architecture("Standard_D4ps_v5") == "arm"
+        assert detect_cpu_architecture("Standard_D8ps_v5") == "arm"
+        assert detect_cpu_architecture("Standard_E4pds_v5") == "arm"
+
+    def test_detect_subfamily_amd(self):
+        """Test detecting AMD x64 VMs with subfamily."""
+        assert detect_cpu_architecture("Standard_DC8ads_v5") == "x64"
+
+    def test_discover_x64_only(self):
+        """Test discovering only x64 VMs."""
+        skus = discover_skus(min_vcpu=4, min_ram=None, cpu_arch="x64")
+
+        assert len(skus) > 0
+        # All should be x64
+        for sku in skus:
+            assert detect_cpu_architecture(sku) == "x64"
+        # Should NOT contain any 'ps' (ARM) SKUs
+        assert not any("ps" in sku.lower() for sku in skus)
+
+    def test_discover_arm_only(self):
+        """Test discovering only ARM VMs."""
+        # Note: Our VM_SPECIFICATIONS may not have ARM VMs, so result might be empty
+        skus = discover_skus(min_vcpu=2, min_ram=None, cpu_arch="arm")
+
+        # All discovered SKUs should be ARM (if any exist)
+        for sku in skus:
+            assert detect_cpu_architecture(sku) == "arm"
+
+    def test_discover_no_arch_filter(self):
+        """Test discovering VMs without architecture filter returns both."""
+        all_skus = discover_skus(min_vcpu=4, min_ram=None, cpu_arch=None)
+        x64_skus = discover_skus(min_vcpu=4, min_ram=None, cpu_arch="x64")
+
+        # Without filter should return at least as many as with filter
+        assert len(all_skus) >= len(x64_skus)
