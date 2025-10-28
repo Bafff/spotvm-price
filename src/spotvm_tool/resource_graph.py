@@ -153,9 +153,10 @@ def _build_eviction_query(config: ToolConfig) -> str:
         "| where type =~ 'microsoft.compute/skuspotevictionrate/location'\n"
         f"| where sku.name in~ ({sku_list})\n"
         f"| {region_filter}\n"
+        # Note: Azure SpotResources API doesn't provide lastUpdatedTime for eviction rates
+        # See: https://learn.microsoft.com/en-us/azure/virtual-machines/spot-vms
         "| project skuName = tostring(sku.name), location = tostring(location),"
-        " spotEvictionRate = tostring(properties.evictionRate),"
-        " evictionLastUpdated = tostring(properties.lastUpdatedTime)"
+        " spotEvictionRate = tostring(properties.evictionRate)"
     )
 
 
@@ -213,9 +214,10 @@ def _extract_eviction(entry: Optional[dict]) -> tuple[Optional[float], Optional[
                 if match:
                     rate = _to_float(match.group(1))
 
-    timestamp = _parse_datetime_string(
-        entry.get("evictionLastUpdated") or entry.get("lastUpdatedTime")
-    )
+    # Azure SpotResources API doesn't provide lastUpdatedTime for eviction rates
+    # This is a known limitation - eviction rates are updated every ~30 minutes but
+    # the timestamp is not exposed in the API
+    timestamp = None
     return rate, timestamp
 
 

@@ -40,3 +40,6 @@ class CandidateInsight:
     notes: Optional[str] = None
     performance_relative: Optional[float] = None  # % relative to baseline
     price_per_performance: Optional[float] = None  # USD per performance unit
+    cpu_arch: Optional[str] = None  # "x64" or "arm"
+    coremark_score: Optional[int] = None  # CoreMark benchmark score
+    coremark_per_vcpu: Optional[float] = None  # CoreMark per vCPU (efficiency metric)
