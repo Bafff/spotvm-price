@@ -127,21 +127,76 @@ spotvm-tool \
 spotvm-tool --config config.sample.yaml --save-report reports/latest.json
 ```
 
+### Export to CSV for Excel/Google Sheets
+```bash
+spotvm-tool \
+  --subscription-id 00000000-0000-0000-0000-000000000000 \
+  --regions eastus westus centralus \
+  --sizes Standard_D2s_v4 Standard_D4s_v4 Standard_E4s_v5 \
+  --baseline-sku Standard_D4s_v4 \
+  --csv results/spot-analysis.csv
+```
+
+The `--csv` option exports results to a spreadsheet-compatible CSV file with:
+- Clean format without emojis for Excel compatibility
+- Numeric values without symbols ($, %) for proper sorting and charts
+- ISO datetime format
+- All columns: Rank, Region, Zone, VM Size, CPU Vendor, Placement Score, Quota, Price, Eviction Rate, Performance, Price/Performance, CoreMark Score, CoreMark per vCPU, Price Last Updated, and Notes
+
+**CSV Example:**
+```csv
+Rank,Region,Availability Zone,VM Size,CPU Vendor,Placement Score,Quota Available,Price (USD/hr),Eviction Rate (%),Performance (%),Price per Performance,CoreMark Score,CoreMark per vCPU,Price Last Updated,Notes
+1,eastus,,Standard_D4as_v5,AMD,High,Yes,0.0336,3.0,100,0.000336,72928,18232,2025-01-26,
+2,westus,2,Standard_E4s_v5,INTEL,Medium,No,0.0696,5.0,117,0.000597,65672,16418,2025-01-26,
+```
+
 The CLI prints an aligned ASCII table with the placement score, quota availability, latest spot price, and eviction rate for each combination. After sorting (High > Medium > Low, then by lowest eviction rate and price), it emits a short recommendation list and an optional JSON payload when requested.
 
 ### Example snippet
 ```
-Rank | Region | Zone | VM Size         | Placement | Quota | Price (USD/hr) | Eviction % | Perf % | Price/Perf | Price Updated     | Eviction Updated  | Notes
----- | ------ | ---- | --------------- | --------- | ----- | -------------- | ---------- | ------ | ---------- | ----------------- | ----------------- | -----
-1    | eastus |      | Standard_D2s_v4 | High      | Yes   | $0.0450        | 3.0%       | 100%   | $0.000450  | 2025-10-24T12:00  | 2025-10-20T08:00  |
-2    | westus | 2    | Standard_D4s_v4 | Medium    | No    | $0.0820        | 6.5%       | 200%   | $0.000410  | 2025-10-24T11:45  | 2025-10-19T21:15  | Data not found
+Rank | Region | Zone | VM Size          | CPU | Placement | Quota | Price (USD/hr) | Eviction % | Perf % | Price/Perf | CoreMark | CM/vCPU | Price Updated | Notes
+---- | ------ | ---- | ---------------- | --- | --------- | ----- | -------------- | ---------- | ------ | ---------- | -------- | ------- | ------------- | -----
+1    | eastus |      | Standard_D4as_v5 | 🟥  | High      | ✅ Yes| $0.0336        | 3.0%       | 100%   | $0.000336  | 72,928   | 18,232  | 2025-01-26    |
+2    | westus | 2    | Standard_E4s_v5  | 🟦  | Medium    | ❌ No | $0.0696        | 5.0%       | 117%   | $0.000597  | 65,672   | 16,418  | 2025-01-26    |
+3    | eastus | 1    | Standard_D4ps_v5 | 🟩  | Low       | ✅ Yes| $0.0280        | 1.5%       | 95%    | $0.000295  | -        | -       | 2025-01-26    |
 ```
-*(Perf % and Price/Perf columns shown when `--baseline-sku` is specified)*
+
+**CPU Vendor Legend:**
+- 🟦 = Intel Xeon
+- 🟥 = AMD EPYC
+- 🟩 = ARM (Ampere/Cobalt)
+
+*(When using `--no-color`: displays as "INTEL", "AMD", "ARM")*
+*(Perf %, Price/Perf, CoreMark, and CM/vCPU columns shown when `--baseline-sku` is specified)*
 
 ## Output artifacts
-- **Console table** – always emitted.
+- **Console table** – always emitted with color-coded risk indicators.
 - **Recommendations** – human-readable summary of the top three entries.
 - **JSON report** – optional structured output (includes timestamps, metrics, and notes) controllable via `--json` and `--save-report`.
+- **CSV export** – optional spreadsheet-compatible export for Excel/Google Sheets via `--csv <file>`.
+
+### Color-Coded Output
+
+The terminal output uses colors to highlight eviction risk levels and placement scores for quick visual assessment:
+
+**Eviction Rate Colors:**
+- 🔵 **Blue** (<5%): Excellent - very low eviction risk
+- 🟢 **Green** (5% to <10%): Good - low eviction risk
+- 🟡 **Yellow** (10% to <15%): Medium - moderate eviction risk
+- 🔴 **Red** (15% to <25%): High - high eviction risk
+- 🔴 **Bright Red** (≥25%): Critical - very high eviction risk
+
+**Placement Score Colors:**
+- 🟢 **Green** (High): Good capacity availability
+- 🟡 **Yellow** (Medium): Moderate capacity availability
+- 🔴 **Red** (Low): Limited capacity availability
+
+**Disable colors** for CI/CD or non-TTY environments:
+```bash
+spotvm-tool --no-color --subscription-id XXX --regions eastus --sizes Standard_D4as_v5
+```
+
+Colors are automatically disabled when output is redirected to a file or pipe.
 
 ## Recommendation Logic
 
@@ -186,6 +241,8 @@ spotvm-tool \
 **Output includes:**
 - `Perf %` - Performance relative to baseline (100% = baseline)
 - `Price/Perf` - Price per 1% of baseline performance
+- `CoreMark` - Absolute CoreMark benchmark score (CPU performance metric)
+- `CM/vCPU` - CoreMark per vCPU (CPU efficiency metric, higher = more efficient)
 
 **Performance calculation:**
 ```
@@ -212,11 +269,13 @@ Rank | VM Size          | Price   | Eviction | Perf % | Price/Perf
 **Notes:**
 - Performance formula weights CPU more heavily (100×) than RAM (5×)
 - Formula is simplified; real performance depends on workload type, CPU generation, I/O, etc.
-- **Why not use official Azure metrics?**
-  - **ACU (Azure Compute Units)**: [Deprecated 12/16/2024](https://learn.microsoft.com/en-us/azure/virtual-machines/acu). No longer published for ANY VM series.
-  - **CoreMark benchmarks**: Available for older generations (v2, v3, v4) but [no longer published](https://learn.microsoft.com/en-us/azure/virtual-machines/windows/compute-benchmark-scores) for newer generations (v5, v6+). See [GitHub Issue #84034](https://github.com/MicrosoftDocs/azure-docs/issues/84034).
+- **Official Azure performance metrics status:**
+  - **ACU (Azure Compute Units)**: Not published for v5/v6+ series. Microsoft is "reevaluating how they calculate Azure Compute Units weights for Virtual machine performance benchmarks to account for updates in processor architecture." Only v4 and older have ACU values.
+  - **CoreMark benchmarks**: **Available for v5 series** (D/E/F) with full data in this tool. **Not available for v6+ series** - Microsoft [no longer publishes](https://learn.microsoft.com/en-us/azure/virtual-machines/linux/compute-benchmark-scores) CoreMark for newest generations, stating: "Azure is no longer publishing CoreMark since the metric has limited ability to inform users of the expected performance."
+  - **v6 series (Standard_D4as_v6, etc.)**: ❌ No CoreMark data available - columns will show `-`
+  - **v5 series (Standard_D4as_v5, etc.)**: ✅ Full CoreMark data available
   - Microsoft recommends: *"Run your actual workload on target VMs for accurate performance assessment"*
-- Our vCPU + RAM formula provides a reasonable approximation until you can benchmark your specific workload
+- Our vCPU + RAM formula provides a reasonable approximation for SKUs without CoreMark data
 - Choose a baseline similar to your typical workload for most accurate relative comparison
 
 ## Filtering and Auto-Discovery
@@ -622,6 +681,7 @@ plt.show()
 - Cached responses are stored in `~/.cache/spotvm_tool` as small JSON blobs.
 - Clearing the cache can be forced with `--clear-cache`.
 - Any placement entry flagged `DataNotFoundOrStale` or similar is surfaced in the `Notes` column for transparency.
+- **Eviction rate timestamps:** Azure's SpotResources API does not expose `lastUpdatedTime` for eviction rate data. Eviction rates are updated approximately every 30 minutes, but the API does not provide when the last update occurred. Only price data includes update timestamps in the `Price Updated` column.
 
 ## Troubleshooting
 | Symptom | Guidance |

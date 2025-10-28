@@ -24,11 +24,11 @@
 
 ## 🚀 Planned Improvements
 
-### Phase 1: Essential Filters & Export ✅ IMPLEMENTED
-**Status:** Completed in v0.3.0
-**Actual time:** ~3 hours
+### Phase 1: Essential Filters & Export
+**Status:** In Progress
+**Actual time:** ~3.5 hours
 
-#### 1.1 Cost Filtering ✅ IMPLEMENTED
+#### 1.1 Cost Filtering ✅ IMPLEMENTED (v0.3.0)
 ```bash
 --max-price <float>           # Maximum price per hour (USD)
 --max-eviction <float>        # Maximum eviction rate (%)
@@ -39,13 +39,20 @@
 **Impact:** Immediately useful for budget-constrained scenarios
 **Complexity:** ⭐ Easy (30 min) - DONE
 
-#### 1.2 CSV Export
+#### 1.2 CSV Export ✅ IMPLEMENTED (v0.3.1)
 ```bash
 --csv <file>                  # Export to CSV for Excel/Google Sheets
 ```
 
+**Status:** ✅ Completed in v0.3.1
 **Impact:** Essential for non-technical stakeholders
-**Complexity:** ⭐ Easy (20 min)
+**Complexity:** ⭐ Easy (20 min) - DONE
+**Features:**
+- Clean CSV format without emojis for Excel compatibility
+- Numeric values without symbols ($, %) for proper sorting
+- ISO datetime format for international compatibility
+- All candidate data including performance metrics
+- Automatic header row generation
 
 #### 1.3 Cost Calculator
 ```
@@ -115,12 +122,22 @@ Savings vs on-demand: 72%
 **Impact:** Professional reports for management
 **Complexity:** ⭐⭐⭐ Complex (2 hours)
 
-#### 3.3 Colored Terminal Output
-- Red for high eviction (>15%)
-- Yellow for medium (5-15%)
-- Green for low (<5%)
+#### 3.3 Colored Terminal Output ✅ IMPLEMENTED (v0.3.1)
+```bash
+--no-color                    # Disable colored output for CI/CD
+```
 
-**Complexity:** ⭐ Easy (30 min)
+**Status:** ✅ Completed in v0.3.1
+**Complexity:** ⭐ Easy (30 min) - DONE
+**Features:**
+- Blue for excellent eviction rate (<5%)
+- Green for good eviction rate (5% to <10%)
+- Yellow for medium eviction rate (10% to <15%)
+- Red for high eviction rate (15% to <25%)
+- Bright Red for critical eviction rate (≥25%)
+- Green/Yellow/Red for High/Medium/Low placement scores
+- Auto-detection of TTY for CI/CD compatibility
+- `--no-color` flag to disable colors manually
 
 ---
 
