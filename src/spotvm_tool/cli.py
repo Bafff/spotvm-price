@@ -283,6 +283,9 @@ def main(argv: List[str] | None = None) -> int:
         if args.desired_count is not None:
             parser.error("--desired-count requires --placement-check")
 
+    if args.min_performance is not None and not args.baseline_sku:
+        parser.error("--min-performance requires --baseline-sku")
+
     config_data = merge_cli_overrides(base_config, overrides)
     try:
         config = ToolConfig.from_dict(config_data)
