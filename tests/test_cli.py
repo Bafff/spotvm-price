@@ -115,3 +115,22 @@ class TestMainWithMocks:
         captured = capsys.readouterr()
         # No ANSI escape codes in output
         assert "\033[" not in captured.out
+
+    @patch("spotvm_tool.cli.AzureAuthenticator")
+    @patch("spotvm_tool.cli.AzureRestClient")
+    @patch("spotvm_tool.cli.fetch_placement_scores")
+    @patch("spotvm_tool.cli.fetch_historical_metrics")
+    def test_placement_check_with_subscription(
+        self, mock_fetch_hist, mock_fetch_placement, mock_client_cls, mock_auth_cls, capsys
+    ):
+        mock_fetch_hist.return_value = []
+        mock_fetch_placement.return_value = []
+        rc = main([
+            "--subscription-id", "00000000-0000-0000-0000-000000000000",
+            "--regions", "centralus",
+            "--sizes", "Standard_D4s_v5",
+            "--placement-check",
+            "--no-color",
+        ])
+        assert rc == 0
+        mock_fetch_placement.assert_called_once()

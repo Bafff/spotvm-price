@@ -394,7 +394,8 @@ def _run_single_analysis(
         save_results: Whether to save results to disk
     """
     # Handle color output setting
-    if args.no_color:
+    _nc = args.no_color
+    if _nc:
         set_colors_enabled(False)
 
     authenticator = AzureAuthenticator()
@@ -442,7 +443,6 @@ def _run_single_analysis(
             results_dir=args.results_dir,
         )
         logger.info("Results saved to %s", saved_path)
-        _nc = args.no_color
         print(f"{'[OK]' if _nc else '✅'} Results saved to: {saved_path}\n")
 
     table = render_table(
