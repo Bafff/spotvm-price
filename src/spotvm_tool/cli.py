@@ -37,9 +37,9 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Quick start (pricing only, no subscription needed):\n"
-            "  spotvm-tool --regions eastus --sizes Standard_D4s_v5 Standard_E4s_v5\n\n"
+            "  spotvm-tool --regions centralus --sizes Standard_D4s_v5 Standard_E4s_v5\n\n"
             "With placement scores and quota checking:\n"
-            "  spotvm-tool --subscription-id <ID> --regions eastus --sizes Standard_D4s_v5 --placement-check --desired-count 10"
+            "  spotvm-tool --subscription-id <ID> --regions centralus --sizes Standard_D4s_v5 --placement-check --desired-count 10"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
