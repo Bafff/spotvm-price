@@ -90,6 +90,7 @@ class ToolConfig:
             "emit_json": self.emit_json,
             "enable_placement": self.enable_placement,
             "baseline_sku": self.baseline_sku,
+            "cpu_arch": self.cpu_arch,
         }
         return payload
 

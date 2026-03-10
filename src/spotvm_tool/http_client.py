@@ -15,9 +15,12 @@ class AzureRestClient:
     """Thin wrapper around requests for Azure management API calls."""
 
     authenticator: AzureAuthenticator
-    user_agent: str = "spotvm-tool/0.1"
+    user_agent: str = ""
 
     def __post_init__(self) -> None:
+        if not self.user_agent:
+            from . import __version__
+            self.user_agent = f"spotvm-tool/{__version__}"
         self._session = requests.Session()
         self._session.headers.update({
             "Content-Type": "application/json",
@@ -48,15 +51,6 @@ class AzureRestClient:
                 raise AzureHttpError(url, response.status_code, response.text)
             return response.json()
         raise AzureHttpError(url, response.status_code, response.text)
-
-    def post_json_raw(
-        self,
-        url: str,
-        payload: Dict[str, Any],
-        retry_attempts: int = 4,
-        retry_backoff_seconds: float = 2.0,
-    ) -> Dict[str, Any]:
-        return self.post_json(url, payload, retry_attempts, retry_backoff_seconds)
 
     def _retry_delay(self, response: requests.Response, backoff: float, attempt: int) -> float:
         retry_after = response.headers.get("Retry-After")

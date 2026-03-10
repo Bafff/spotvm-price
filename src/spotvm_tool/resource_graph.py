@@ -260,30 +260,3 @@ def _parse_datetime_string(value: Any) -> Optional[datetime]:
     return None
 
 
-def _get_tenant_id(client: AzureRestClient) -> Optional[str]:
-    """Get the tenant ID from the Azure account for tenant-scoped queries.
-
-    SpotResources table requires tenant-level scope instead of subscription scope.
-    """
-    try:
-        # Query the subscriptions endpoint to get tenant information
-        url = "https://management.azure.com/subscriptions?api-version=2020-01-01"
-        token = client.authenticator.get_token()
-        response = client._session.get(
-            url,
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=30,
-        )
-        if response.ok:
-            data = response.json()
-            # Get tenant ID from the first subscription if available
-            if data.get("value") and len(data["value"]) > 0:
-                tenant_id = data["value"][0].get("tenantId")
-                if tenant_id:
-                    logger.debug("Retrieved tenant ID: %s", tenant_id)
-                    return tenant_id
-        logger.warning("Could not retrieve tenant ID, will fall back to subscription scope")
-        return None
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to retrieve tenant ID: %s", exc)
-        return None
