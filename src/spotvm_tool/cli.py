@@ -497,11 +497,17 @@ def _run_single_analysis(
             )
             logger.info("Saved report to %s", config.save_report)
 
-    disclaimer = (
-        "Note: Azure Spot placement scores are point-in-time indicators and "
-        "do not guarantee successful allocation or avoidance of eviction."
-    )
-    print(f"\n{disclaimer}")
+    if config.enable_placement:
+        disclaimer = (
+            "Note: Azure Spot placement scores are point-in-time indicators and "
+            "do not guarantee successful allocation or avoidance of eviction."
+        )
+        print(f"\n{disclaimer}")
+    else:
+        print(
+            "\nNote: Spot VM pricing and eviction rates are historical estimates "
+            "and may change. Use --placement-check for capacity/quota data."
+        )
 
 
 def _build_report(candidates: List[Any]) -> Dict[str, Any]:
