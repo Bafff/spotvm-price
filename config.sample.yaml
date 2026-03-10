@@ -16,11 +16,12 @@ os_type: linux                    # linux or windows
 # Optional: performance baseline
 # baseline_sku: Standard_D4as_v6
 
-# Optional: filtering
+# Optional: filtering (config-supported)
 # cpu_arch: x64                   # x64 or arm
-# max_price: 0.10                 # USD/hr
-# max_eviction: 15                # percent
-# min_performance: 80             # percent (requires baseline_sku)
+
+# Note: max_price, max_eviction, min_performance are CLI-only flags
+# and cannot be set in the config file. Use them on the command line:
+#   --max-price 0.10 --max-eviction 15 --min-performance 80
 
 # Optional: output
 cache_ttl_minutes: 15
