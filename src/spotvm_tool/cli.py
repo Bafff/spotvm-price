@@ -277,6 +277,11 @@ def main(argv: List[str] | None = None) -> int:
     }
     if args.placement_check:
         overrides["enable_placement"] = True
+    else:
+        if args.availability_zones:
+            parser.error("--availability-zones requires --placement-check")
+        if args.desired_count is not None:
+            parser.error("--desired-count requires --placement-check")
 
     config_data = merge_cli_overrides(base_config, overrides)
     try:
