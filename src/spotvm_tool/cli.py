@@ -240,7 +240,7 @@ def main(argv: List[str] | None = None) -> int:
 
     # Auto-discover SKUs if not specified but requirements are
     sizes = args.sizes
-    if not sizes and (args.min_vcpu or args.min_ram or args.cpu_arch):
+    if not sizes and (args.min_vcpu is not None or args.min_ram is not None or args.cpu_arch is not None):
         requirements = []
         if args.min_vcpu:
             requirements.append(f"vCPU≥{args.min_vcpu}")
