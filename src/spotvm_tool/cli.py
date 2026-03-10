@@ -452,7 +452,12 @@ def _run_single_analysis(
 
     # Export to CSV if requested
     if args.csv:
-        export_to_csv(ranked, args.csv)
+        export_to_csv(
+            ranked,
+            args.csv,
+            show_placement=config.enable_placement,
+            show_baseline=config.baseline_sku is not None,
+        )
         logger.info("Results exported to CSV: %s", args.csv)
         print(f"✅ CSV exported to: {args.csv}\n")
 

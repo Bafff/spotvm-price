@@ -181,6 +181,21 @@ def render_table(
             "Notes": item.notes or "",
         }
         rows.append([all_cells[c] for c in columns])
+
+    # Auto-hide columns where every data row is empty or dash
+    if len(rows) > 1:
+        auto_hide = set()
+        for col_idx, col_name in enumerate(columns):
+            if all(
+                _strip_ansi(rows[row_idx][col_idx]).strip() in ("", "-")
+                for row_idx in range(1, len(rows))
+            ):
+                auto_hide.add(col_idx)
+        if auto_hide:
+            keep = [i for i in range(len(columns)) if i not in auto_hide]
+            columns = [columns[i] for i in keep]
+            rows = [[row[i] for i in keep] for row in rows]
+
     col_widths = _compute_widths(rows)
     lines = [
         _format_row(row, col_widths)
@@ -264,59 +279,85 @@ def _format_coremark_per_vcpu(value: float | None) -> str:
     return f"{value:,.0f}"
 
 
-def export_to_csv(candidates: Iterable[CandidateInsight], csv_path: Path) -> None:
-    """Export candidate insights to CSV file for Excel/Google Sheets.
+CSV_COLUMNS = [
+    "Rank",
+    "Region",
+    "Availability Zone",
+    "VM Size",
+    "CPU Vendor",
+    "Placement Score",
+    "Quota Available",
+    "Price (USD/hr)",
+    "Eviction Rate (%)",
+    "Performance (%)",
+    "Price per Performance",
+    "CoreMark Score",
+    "CoreMark per vCPU",
+    "Price Last Updated",
+    "Notes",
+]
 
-    Args:
-        candidates: List of candidate insights to export
-        csv_path: Path to output CSV file
-    """
-    # CSV column headers (text-only, no emojis for better Excel compatibility)
-    headers = [
-        "Rank",
-        "Region",
-        "Availability Zone",
-        "VM Size",
-        "CPU Vendor",
-        "Placement Score",
-        "Quota Available",
-        "Price (USD/hr)",
-        "Eviction Rate (%)",
-        "Performance (%)",
-        "Price per Performance",
-        "CoreMark Score",
-        "CoreMark per vCPU",
-        "Price Last Updated",
-        "Notes",
-    ]
+# Columns tied to specific modes
+_CSV_PLACEMENT_COLS = {"Placement Score", "Quota Available"}
+_CSV_BASELINE_COLS = {"Performance (%)", "Price per Performance"}
+
+
+def export_to_csv(
+    candidates: Iterable[CandidateInsight],
+    csv_path: Path,
+    show_placement: bool = True,
+    show_baseline: bool = True,
+) -> None:
+    """Export candidate insights to CSV file for Excel/Google Sheets."""
+    from .vm_specs import detect_cpu_vendor
+
+    hidden = set()
+    if not show_placement:
+        hidden |= _CSV_PLACEMENT_COLS
+    if not show_baseline:
+        hidden |= _CSV_BASELINE_COLS
+    columns = [c for c in CSV_COLUMNS if c not in hidden]
+
+    rows: List[List[str]] = []
+    for item in candidates:
+        vendor = detect_cpu_vendor(item.vm_size) if item.vm_size else ""
+        vendor_text = vendor.upper() if vendor else ""
+
+        all_cells = {
+            "Rank": str(item.recommendation_rank) if item.recommendation_rank is not None else "",
+            "Region": item.region or "",
+            "Availability Zone": item.availability_zone or "",
+            "VM Size": item.vm_size or "",
+            "CPU Vendor": vendor_text,
+            "Placement Score": item.placement_score or (item.notes or "N/A"),
+            "Quota Available": _csv_format_quota(item.quota_available),
+            "Price (USD/hr)": _csv_format_price(item.price_usd),
+            "Eviction Rate (%)": _csv_format_percentage(item.eviction_rate),
+            "Performance (%)": _csv_format_performance(item.performance_relative),
+            "Price per Performance": _csv_format_price_per_perf(item.price_per_performance),
+            "CoreMark Score": _csv_format_coremark(item.coremark_score),
+            "CoreMark per vCPU": _csv_format_coremark_per_vcpu(item.coremark_per_vcpu),
+            "Price Last Updated": _csv_format_datetime(item.price_last_updated),
+            "Notes": item.notes or "",
+        }
+        rows.append([all_cells[c] for c in columns])
+
+    # Auto-hide columns where every row is empty
+    if rows:
+        auto_hide = {
+            col_idx
+            for col_idx in range(len(columns))
+            if all(row[col_idx].strip() in ("", "-") for row in rows)
+        }
+        if auto_hide:
+            keep = [i for i in range(len(columns)) if i not in auto_hide]
+            columns = [columns[i] for i in keep]
+            rows = [[row[i] for i in keep] for row in rows]
 
     with csv_path.open("w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(headers)
-
-        for item in candidates:
-            # Get CPU vendor for CSV (always text, never emoji)
-            from .vm_specs import detect_cpu_vendor
-            vendor = detect_cpu_vendor(item.vm_size) if item.vm_size else ""
-            vendor_text = vendor.upper() if vendor and vendor != "arm" else (vendor.upper() if vendor else "")
-
-            row = [
-                item.recommendation_rank if item.recommendation_rank is not None else "",
-                item.region or "",
-                item.availability_zone or "",
-                item.vm_size or "",
-                vendor_text,  # Changed: use detected vendor instead of cpu_arch
-                item.placement_score or (item.notes or "N/A"),
-                _csv_format_quota(item.quota_available),
-                _csv_format_price(item.price_usd),
-                _csv_format_percentage(item.eviction_rate),
-                _csv_format_performance(item.performance_relative),
-                _csv_format_price_per_perf(item.price_per_performance),
-                _csv_format_coremark(item.coremark_score),
-                _csv_format_coremark_per_vcpu(item.coremark_per_vcpu),
-                _csv_format_datetime(item.price_last_updated),
-                item.notes or "",
-            ]
+        writer.writerow(columns)
+        for row in rows:
             writer.writerow(row)
 
 
