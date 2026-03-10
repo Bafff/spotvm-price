@@ -194,7 +194,7 @@ def filter_by_requirements(
     Returns:
         Filtered list of candidates meeting requirements
     """
-    if not min_vcpu and not min_ram and not cpu_arch:
+    if min_vcpu is None and min_ram is None and cpu_arch is None:
         return candidates
 
     filtered = []
@@ -213,7 +213,7 @@ def filter_by_requirements(
             continue
 
         # Check vCPU requirement
-        if min_vcpu and spec.vcpus < min_vcpu:
+        if min_vcpu is not None and spec.vcpus < min_vcpu:
             logger.debug(
                 f"Filtered {candidate.vm_size}: {spec.vcpus} vCPU < {min_vcpu} required"
             )
@@ -221,7 +221,7 @@ def filter_by_requirements(
             continue
 
         # Check RAM requirement
-        if min_ram and spec.ram_gb < min_ram:
+        if min_ram is not None and spec.ram_gb < min_ram:
             logger.debug(
                 f"Filtered {candidate.vm_size}: {spec.ram_gb} GB RAM < {min_ram} GB required"
             )
@@ -272,7 +272,7 @@ def filter_by_cost(
     Returns:
         Filtered list of candidates meeting cost constraints
     """
-    if not max_price and not max_eviction and not min_performance:
+    if max_price is None and max_eviction is None and min_performance is None:
         return candidates
 
     filtered = []
@@ -280,7 +280,7 @@ def filter_by_cost(
 
     for candidate in candidates:
         # Check price constraint
-        if max_price and candidate.price_usd and candidate.price_usd > max_price:
+        if max_price is not None and candidate.price_usd is not None and candidate.price_usd > max_price:
             logger.debug(
                 f"Filtered {candidate.vm_size} in {candidate.region}: "
                 f"price ${candidate.price_usd:.4f} > ${max_price} max"
@@ -289,7 +289,7 @@ def filter_by_cost(
             continue
 
         # Check eviction rate constraint
-        if max_eviction and candidate.eviction_rate and candidate.eviction_rate > max_eviction:
+        if max_eviction is not None and candidate.eviction_rate is not None and candidate.eviction_rate > max_eviction:
             logger.debug(
                 f"Filtered {candidate.vm_size} in {candidate.region}: "
                 f"eviction {candidate.eviction_rate:.1f}% > {max_eviction}% max"
@@ -298,7 +298,7 @@ def filter_by_cost(
             continue
 
         # Check performance constraint
-        if min_performance and candidate.performance_relative and candidate.performance_relative < min_performance:
+        if min_performance is not None and candidate.performance_relative is not None and candidate.performance_relative < min_performance:
             logger.debug(
                 f"Filtered {candidate.vm_size} in {candidate.region}: "
                 f"performance {candidate.performance_relative:.0f}% < {min_performance}% min"
