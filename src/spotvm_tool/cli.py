@@ -194,6 +194,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: List[str] | None = None) -> int:
     parser = build_parser()
+    # Show help when invoked with no arguments
+    if argv is not None and len(argv) == 0 or argv is None and len(sys.argv) <= 1:
+        parser.print_help()
+        return 0
     args = parser.parse_args(argv)
 
     logging.basicConfig(
