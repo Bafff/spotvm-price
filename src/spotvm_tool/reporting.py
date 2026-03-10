@@ -126,7 +126,10 @@ def _display_width(text: str) -> int:
     Strips ANSI color codes before calculation as they don't occupy visual space.
     """
     stripped = _strip_ansi(text)
-    return wcwidth.wcswidth(stripped)
+    width = wcwidth.wcswidth(stripped)
+    if width < 0:
+        return len(stripped)
+    return width
 
 
 TABLE_COLUMNS = [

@@ -254,7 +254,10 @@ def _parse_datetime_string(value: Any) -> Optional[datetime]:
     if isinstance(value, str):
         cleaned = value.rstrip("Z")
         try:
-            return datetime.fromisoformat(cleaned)
+            dt = datetime.fromisoformat(cleaned)
+            if dt.tzinfo is None and value.endswith("Z"):
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
         except ValueError:
             return None
     return None

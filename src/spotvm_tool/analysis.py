@@ -255,9 +255,16 @@ def filter_by_requirements(
         filtered.append(candidate)
 
     if filtered_count > 0:
+        parts = []
+        if min_vcpu is not None:
+            parts.append(f"vCPU≥{min_vcpu}")
+        if min_ram is not None:
+            parts.append(f"RAM≥{min_ram} GB")
+        if cpu_arch is not None:
+            parts.append(f"arch={cpu_arch}")
         logger.info(
             f"Filtered out {filtered_count} candidate(s) not meeting "
-            f"hardware requirements (vCPU≥{min_vcpu}, RAM≥{min_ram} GB)"
+            f"hardware requirements ({', '.join(parts)})"
         )
 
     return filtered
