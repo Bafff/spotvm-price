@@ -31,12 +31,29 @@ from .resource_graph import fetch_historical_metrics
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="spotvm-tool",
-        description="Analyze Azure Spot VM placement scores against historical metrics.",
+        description=(
+            "Compare Azure Spot VM pricing, eviction rates, and performance across regions and SKUs. "
+            "Add --placement with --subscription-id for capacity/quota scoring."
+        ),
+        epilog=(
+            "Quick start (pricing only, no subscription needed):\n"
+            "  spotvm-tool --regions eastus --sizes Standard_D4s_v5 Standard_E4s_v5\n\n"
+            "With placement scores and quota checking:\n"
+            "  spotvm-tool --subscription-id <ID> --regions eastus --sizes Standard_D4s_v5 --placement --desired-count 10"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--subscription-id", help="Azure subscription ID")
+    parser.add_argument(
+        "--subscription-id",
+        help="Azure subscription ID (only required with --placement)",
+    )
     parser.add_argument("--regions", nargs="*", help="List of Azure regions")
     parser.add_argument("--sizes", nargs="*", help="List of VM sizes (SKUs)")
-    parser.add_argument("--desired-count", type=int, help="Desired number of VMs")
+    parser.add_argument(
+        "--desired-count",
+        type=int,
+        help="Number of VMs you plan to deploy (used with --placement to assess capacity, default: 1)",
+    )
     parser.add_argument(
         "--os-type",
         choices=["linux", "windows"],
@@ -45,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--availability-zones",
         action="store_true",
-        help="Include availability zone-specific placement scores",
+        help="Break down placement scores by availability zone (requires placement scoring)",
     )
     parser.add_argument(
         "--config",
@@ -78,9 +95,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Clear cached responses before running",
     )
     parser.add_argument(
-        "--skip-placement",
+        "--placement",
         action="store_true",
-        help="Skip calling the Spot Placement Score API",
+        help="Enable Placement Score API queries for capacity and quota data "
+             "(requires --subscription-id). Useful for large-scale deployments",
     )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     parser.add_argument(
@@ -250,8 +268,8 @@ def main(argv: List[str] | None = None) -> int:
         "baseline_sku": args.baseline_sku,
         "cpu_arch": args.cpu_arch,
     }
-    if args.skip_placement:
-        overrides["enable_placement"] = False
+    if args.placement:
+        overrides["enable_placement"] = True
 
     config_data = merge_cli_overrides(base_config, overrides)
     try:
@@ -416,7 +434,7 @@ def _run_single_analysis(
         logger.info("Results saved to %s", saved_path)
         print(f"✅ Results saved to: {saved_path}\n")
 
-    table = render_table(ranked)
+    table = render_table(ranked, show_placement=config.enable_placement)
     print(table)
 
     # Export to CSV if requested
@@ -431,7 +449,7 @@ def _run_single_analysis(
         print("  Quota: Indicates if sufficient vCPU quota is available")
         print("    - Yes: Quota available for deployment")
         print("    - No:  Insufficient quota (increase quota or choose different region/size)")
-        print("    - Unknown: Quota data not available (using --skip-placement)")
+        print("    - Unknown: Quota data not available (use --placement to enable)")
     if config.baseline_sku:
         print(f"\nPerformance Baseline: {config.baseline_sku} = 100%")
         print("  Perf %: Relative computing power compared to baseline")
