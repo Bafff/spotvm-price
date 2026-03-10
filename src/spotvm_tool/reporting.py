@@ -148,28 +148,34 @@ TABLE_COLUMNS = [
 ]
 
 
-def render_table(candidates: Iterable[CandidateInsight]) -> str:
-    rows: List[List[str]] = [TABLE_COLUMNS]
+def render_table(
+    candidates: Iterable[CandidateInsight],
+    show_placement: bool = True,
+) -> str:
+    # Determine which columns to include
+    placement_cols = {"Placement", "Quota"}
+    columns = [c for c in TABLE_COLUMNS if show_placement or c not in placement_cols]
+
+    rows: List[List[str]] = [columns]
     for item in candidates:
-        rows.append(
-            [
-                _format_rank(item.recommendation_rank),
-                item.region or "",
-                item.availability_zone or "",
-                item.vm_size or "",
-                _format_cpu(item.vm_size),  # Changed: pass vm_size instead of cpu_arch
-                _colorize_placement(item.placement_score) if item.placement_score else (item.notes or "N/A"),
-                _format_quota(item.quota_available),
-                _format_price(item.price_usd),
-                _colorize_eviction(item.eviction_rate),
-                _format_performance(item.performance_relative),
-                _format_price_per_perf(item.price_per_performance),
-                _format_coremark(item.coremark_score),
-                _format_coremark_per_vcpu(item.coremark_per_vcpu),
-                _format_dt(item.price_last_updated),
-                item.notes or "",
-            ]
-        )
+        all_cells = {
+            "Rank": _format_rank(item.recommendation_rank),
+            "Region": item.region or "",
+            "Zone": item.availability_zone or "",
+            "VM Size": item.vm_size or "",
+            "CPU": _format_cpu(item.vm_size),
+            "Placement": _colorize_placement(item.placement_score) if item.placement_score else (item.notes or "N/A"),
+            "Quota": _format_quota(item.quota_available),
+            "Price (USD/hr)": _format_price(item.price_usd),
+            "Eviction %": _colorize_eviction(item.eviction_rate),
+            "Perf %": _format_performance(item.performance_relative),
+            "Price/Perf": _format_price_per_perf(item.price_per_performance),
+            "CoreMark": _format_coremark(item.coremark_score),
+            "CM/vCPU": _format_coremark_per_vcpu(item.coremark_per_vcpu),
+            "Price Updated": _format_dt(item.price_last_updated),
+            "Notes": item.notes or "",
+        }
+        rows.append([all_cells[c] for c in columns])
     col_widths = _compute_widths(rows)
     lines = [
         _format_row(row, col_widths)
