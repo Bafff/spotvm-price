@@ -57,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--os-type",
         choices=["linux", "windows"],
-        help="Operating system for price history queries",
+        help="Operating system for price history queries (default: linux)",
     )
     parser.add_argument(
         "--availability-zones",
@@ -309,9 +309,10 @@ def main(argv: List[str] | None = None) -> int:
             f"Starting unattended monitoring mode: running every {interval_minutes} minutes. "
             f"Press Ctrl+C to stop."
         )
-        print(f"🔄 Monitoring mode started (interval: {interval_minutes} min)")
-        print(f"📊 Results will be saved to: {args.results_dir}/runs/")
-        print(f"⏸️  Press Ctrl+C to stop\n")
+        _nc = args.no_color
+        print(f"{'[*]' if _nc else '🔄'} Monitoring mode started (interval: {interval_minutes} min)")
+        print(f"{'[>]' if _nc else '📊'} Results will be saved to: {args.results_dir}/runs/")
+        print(f"{'[!]' if _nc else '⏸️ '} Press Ctrl+C to stop\n")
 
         # Setup signal handler for graceful shutdown
         stop_requested = False
@@ -319,7 +320,7 @@ def main(argv: List[str] | None = None) -> int:
         def signal_handler(signum, frame):
             nonlocal stop_requested
             stop_requested = True
-            print("\n⏹️  Stop requested, finishing current run...")
+            print(f"\n{'[x]' if _nc else '⏹️ '} Stop requested, finishing current run...")
 
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
@@ -349,7 +350,7 @@ def main(argv: List[str] | None = None) -> int:
                 next_run = datetime.now() + timedelta(minutes=interval_minutes)
 
                 logger.info(f"Next run at {next_run.strftime('%H:%M:%S')}")
-                print(f"\n💤 Sleeping for {interval_minutes} minutes...")
+                print(f"\n{'[.]' if _nc else '💤'} Sleeping for {interval_minutes} minutes...")
                 print(f"   Next run at: {next_run.strftime('%H:%M:%S')}")
 
                 # Sleep in small intervals to allow quicker Ctrl+C response
@@ -359,7 +360,7 @@ def main(argv: List[str] | None = None) -> int:
                         break
                     time.sleep(1)
 
-        print(f"\n✅ Monitoring stopped after {run_count} run(s)")
+        print(f"\n{'[OK]' if _nc else '✅'} Monitoring stopped after {run_count} run(s)")
         return 0
 
     # Normal mode: run once
@@ -441,7 +442,8 @@ def _run_single_analysis(
             results_dir=args.results_dir,
         )
         logger.info("Results saved to %s", saved_path)
-        print(f"✅ Results saved to: {saved_path}\n")
+        _nc = args.no_color
+        print(f"{'[OK]' if _nc else '✅'} Results saved to: {saved_path}\n")
 
     table = render_table(
         ranked,
@@ -459,7 +461,7 @@ def _run_single_analysis(
             show_baseline=config.baseline_sku is not None,
         )
         logger.info("Results exported to CSV: %s", args.csv)
-        print(f"✅ CSV exported to: {args.csv}\n")
+        print(f"{'[OK]' if _nc else '✅'} CSV exported to: {args.csv}\n")
 
     # Print column explanations
     if config.enable_placement:
