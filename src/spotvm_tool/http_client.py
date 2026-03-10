@@ -49,16 +49,25 @@ class AzureRestClient:
                 continue
             if not response.ok:
                 raise AzureHttpError(url, response.status_code, response.text)
-            return response.json()
+            try:
+                return response.json()
+            except requests.exceptions.JSONDecodeError as exc:
+                raise AzureHttpError(
+                    url, response.status_code,
+                    f"Response was not valid JSON: {response.text[:200]}",
+                ) from exc
         raise AzureHttpError(url, response.status_code, response.text)
 
     def _retry_delay(self, response: requests.Response, backoff: float, attempt: int) -> float:
+        import logging
         retry_after = response.headers.get("Retry-After")
         if retry_after:
             try:
                 return float(retry_after)
             except ValueError:
-                pass
+                logging.getLogger(__name__).debug(
+                    "Ignoring non-numeric Retry-After header: %r", retry_after,
+                )
         return backoff * (2**attempt)
 
 
