@@ -182,6 +182,133 @@ def test_strip_ansi():
     assert '\x1b[' not in stripped
 
 
+def _candidate(**kwargs):
+    """Create a CandidateInsight with sensible defaults for required fields."""
+    defaults = dict(
+        region="eastus",
+        vm_size="Standard_D2s_v4",
+        placement_score=None,
+        quota_available=None,
+        price_usd=None,
+        price_last_updated=None,
+        eviction_rate=None,
+        eviction_last_updated=None,
+    )
+    defaults.update(kwargs)
+    return CandidateInsight(**defaults)
+
+
+def test_render_table_hides_placement_columns():
+    """Placement and Quota columns are omitted when show_placement=False."""
+    set_colors_enabled(False)
+    candidates = [
+        _candidate(placement_score="High", quota_available=True, price_usd=0.05,
+                   eviction_rate=3.0, recommendation_rank=1),
+    ]
+    table = render_table(candidates, show_placement=False)
+    assert "Placement" not in table
+    assert "Quota" not in table
+    assert "Region" in table
+    assert "Price" in table
+
+
+def test_render_table_hides_baseline_columns():
+    """Perf % and Price/Perf columns are omitted when show_baseline=False."""
+    set_colors_enabled(False)
+    candidates = [
+        _candidate(price_usd=0.05, eviction_rate=3.0, recommendation_rank=1,
+                   performance_relative=120.0, price_per_performance=0.0004),
+    ]
+    table_without = render_table(candidates, show_baseline=False)
+    assert "Perf %" not in table_without
+    assert "Price/Perf" not in table_without
+
+    table_with = render_table(candidates, show_baseline=True)
+    assert "Perf %" in table_with
+    assert "Price/Perf" in table_with
+
+
+def test_export_to_csv_hides_placement_columns(tmp_path):
+    """CSV omits Placement Score and Quota Available when show_placement=False."""
+    candidates = [
+        _candidate(placement_score="High", quota_available=True, price_usd=0.05,
+                   eviction_rate=3.0, recommendation_rank=1),
+    ]
+    csv_path = tmp_path / "no_placement.csv"
+    export_to_csv(candidates, csv_path, show_placement=False)
+
+    with csv_path.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        headers = reader.fieldnames
+        rows = list(reader)
+
+    assert "Placement Score" not in headers
+    assert "Quota Available" not in headers
+    assert "Region" in headers
+    assert len(rows) == 1
+
+
+def test_export_to_csv_hides_baseline_columns(tmp_path):
+    """CSV omits Performance and Price per Performance when show_baseline=False."""
+    candidates = [
+        _candidate(price_usd=0.05, eviction_rate=3.0, recommendation_rank=1,
+                   performance_relative=100.0, price_per_performance=0.0005),
+    ]
+    csv_path = tmp_path / "no_baseline.csv"
+    export_to_csv(candidates, csv_path, show_baseline=False)
+
+    with csv_path.open("r", encoding="utf-8") as f:
+        headers = csv.DictReader(f).fieldnames
+
+    assert "Performance (%)" not in headers
+    assert "Price per Performance" not in headers
+
+
+def test_render_table_auto_hides_empty_columns():
+    """Columns where every data row is empty or '-' are auto-hidden."""
+    set_colors_enabled(False)
+    candidates = [
+        _candidate(price_usd=0.05, eviction_rate=3.0, recommendation_rank=1),
+        _candidate(region="westus", vm_size="Standard_D4s_v4",
+                   price_usd=0.08, eviction_rate=5.0, recommendation_rank=2),
+    ]
+    table = render_table(candidates, show_placement=False, show_baseline=False)
+    # Zone should be auto-hidden (all empty)
+    assert "Zone" not in table
+    # Region should remain (has values)
+    assert "eastus" in table
+    assert "westus" in table
+
+
+def test_render_table_keeps_column_with_one_value():
+    """A column with at least one non-empty value is kept."""
+    set_colors_enabled(False)
+    candidates = [
+        _candidate(price_usd=0.05, eviction_rate=3.0, recommendation_rank=1,
+                   availability_zone="1"),
+        _candidate(region="westus", vm_size="Standard_D4s_v4",
+                   price_usd=0.08, eviction_rate=5.0, recommendation_rank=2),
+    ]
+    table = render_table(candidates, show_placement=False, show_baseline=False)
+    assert "Zone" in table
+
+
+def test_export_to_csv_auto_hides_empty_columns(tmp_path):
+    """CSV auto-hides columns where every row value is empty."""
+    candidates = [
+        _candidate(price_usd=0.05, eviction_rate=3.0, recommendation_rank=1),
+    ]
+    csv_path = tmp_path / "auto_hide.csv"
+    export_to_csv(candidates, csv_path, show_placement=False, show_baseline=False)
+
+    with csv_path.open("r", encoding="utf-8") as f:
+        headers = csv.DictReader(f).fieldnames
+
+    assert "Availability Zone" not in headers
+    assert "Notes" not in headers
+    assert "Region" in headers
+
+
 def test_eviction_none_handling():
     """Test that None eviction rates are handled gracefully."""
     result = _colorize_eviction(None)
