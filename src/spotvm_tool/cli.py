@@ -442,11 +442,8 @@ def _run_single_analysis(
     if config.result_limit:
         ranked = ranked[: config.result_limit]
 
-    if not ranked:
-        print("No candidates match the specified filters. Try relaxing constraints.")
-        return
-
-    # Save results for historical analysis if requested
+    # Save results for historical analysis if requested (even if empty,
+    # so automation/unattended monitoring records that a run completed)
     if save_results:
         from .history import save_run_results
 
@@ -458,14 +455,7 @@ def _run_single_analysis(
         logger.info("Results saved to %s", saved_path)
         print(f"{'[OK]' if _nc else '✅'} Results saved to: {saved_path}\n")
 
-    table = render_table(
-        ranked,
-        show_placement=config.enable_placement,
-        show_baseline=config.baseline_sku is not None,
-    )
-    print(table)
-
-    # Export to CSV if requested
+    # Export to CSV if requested (even if empty, so downstream tools see the run)
     if args.csv:
         export_to_csv(
             ranked,
@@ -475,6 +465,23 @@ def _run_single_analysis(
         )
         logger.info("Results exported to CSV: %s", args.csv)
         print(f"{'[OK]' if _nc else '✅'} CSV exported to: {args.csv}\n")
+
+    # Emit JSON / save report (even if empty)
+    if config.emit_json or config.save_report:
+        report_payload = _build_report(ranked)
+        if config.emit_json:
+            print("\nJSON Output:")
+            print(json.dumps(report_payload, indent=2, default=_json_serializer))
+        if config.save_report:
+            config.save_report.write_text(
+                json.dumps(report_payload, indent=2, default=_json_serializer),
+                encoding="utf-8",
+            )
+            logger.info("Saved report to %s", config.save_report)
+
+    if not ranked:
+        print("No candidates match the specified filters. Try relaxing constraints.")
+        return
 
     # Print column explanations
     if config.enable_placement:
@@ -507,18 +514,6 @@ def _run_single_analysis(
         print("\nRecommendations:")
         for line in summary_lines:
             print(f" - {line}")
-
-    if config.emit_json or config.save_report:
-        report_payload = _build_report(ranked)
-        if config.emit_json:
-            print("\nJSON Output:")
-            print(json.dumps(report_payload, indent=2, default=_json_serializer))
-        if config.save_report:
-            config.save_report.write_text(
-                json.dumps(report_payload, indent=2, default=_json_serializer),
-                encoding="utf-8",
-            )
-            logger.info("Saved report to %s", config.save_report)
 
     if config.enable_placement:
         disclaimer = (
