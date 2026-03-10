@@ -438,7 +438,11 @@ def _run_single_analysis(
         logger.info("Results saved to %s", saved_path)
         print(f"✅ Results saved to: {saved_path}\n")
 
-    table = render_table(ranked, show_placement=config.enable_placement)
+    table = render_table(
+        ranked,
+        show_placement=config.enable_placement,
+        show_baseline=config.baseline_sku is not None,
+    )
     print(table)
 
     # Export to CSV if requested

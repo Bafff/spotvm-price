@@ -151,10 +151,15 @@ TABLE_COLUMNS = [
 def render_table(
     candidates: Iterable[CandidateInsight],
     show_placement: bool = True,
+    show_baseline: bool = True,
 ) -> str:
-    # Determine which columns to include
-    placement_cols = {"Placement", "Quota"}
-    columns = [c for c in TABLE_COLUMNS if show_placement or c not in placement_cols]
+    # Determine which columns to hide based on mode
+    hidden = set()
+    if not show_placement:
+        hidden |= {"Placement", "Quota"}
+    if not show_baseline:
+        hidden |= {"Perf %", "Price/Perf"}
+    columns = [c for c in TABLE_COLUMNS if c not in hidden]
 
     rows: List[List[str]] = [columns]
     for item in candidates:
