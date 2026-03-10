@@ -108,7 +108,7 @@ emit_json: false
 - `cache_ttl_minutes`: Reuses identical placement/Resource Graph responses for the specified TTL to respect Azure guidance of avoiding duplicate calls within 15 minutes.[^placement-score]
 - `result_limit`: Optional maximum number of rows in the final ranked report.
 - `emit_json`: When `true`, prints a JSON representation in addition to the table (also useful when saving reports).
-- `enable_placement`: Set to `true` (or pass `--placement`) to query the Spot Placement Score API for capacity and quota data. Requires `subscription_id`. Defaults to `false`.
+- `enable_placement`: Set to `true` (or pass `--placement-check`) to query the Spot Placement Score API for capacity and quota data. Requires `subscription_id`. Defaults to `false`.
 
 ## Usage
 ### Direct arguments
@@ -210,11 +210,11 @@ Priority 3: Price/Performance ratio (lower is better value)
 ```
 
 ### How it works:
-1. **Placement Score** (when `--placement` is enabled)
+1. **Placement Score** (when `--placement-check` is enabled)
    - `High` (best) - Azure has strong capacity signals
    - `Medium` - Moderate availability
    - `Low` - Limited availability
-   - `N/A` - No placement data (default, without `--placement`)
+   - `N/A` - No placement data (default, without `--placement-check`)
 
 2. **Eviction Rate** - Historical eviction percentage
    - `5%` means 5% chance of eviction in the next hour
