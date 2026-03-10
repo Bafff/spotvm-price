@@ -240,7 +240,7 @@ def main(argv: List[str] | None = None) -> int:
 
     # Auto-discover SKUs if not specified but requirements are
     sizes = args.sizes
-    if not sizes and (args.min_vcpu or args.min_ram):
+    if not sizes and (args.min_vcpu or args.min_ram or args.cpu_arch):
         requirements = []
         if args.min_vcpu:
             requirements.append(f"vCPU≥{args.min_vcpu}")
@@ -277,16 +277,21 @@ def main(argv: List[str] | None = None) -> int:
     }
     if args.placement_check:
         overrides["enable_placement"] = True
-    else:
-        if args.availability_zones:
-            parser.error("--availability-zones requires --placement-check")
-        if args.desired_count is not None:
-            parser.error("--desired-count requires --placement-check")
-
-    if args.min_performance is not None and not args.baseline_sku:
-        parser.error("--min-performance requires --baseline-sku")
 
     config_data = merge_cli_overrides(base_config, overrides)
+
+    # Validate dependent flags against *merged* config (not just CLI args),
+    # so config-file values for enable_placement/baseline_sku are respected.
+    merged_placement = config_data.get("enable_placement", False)
+    merged_baseline = config_data.get("baseline_sku")
+    if not merged_placement:
+        if args.availability_zones:
+            parser.error("--availability-zones requires --placement-check (or enable_placement in config)")
+        if args.desired_count is not None:
+            parser.error("--desired-count requires --placement-check (or enable_placement in config)")
+    if args.min_performance is not None and not merged_baseline:
+        parser.error("--min-performance requires --baseline-sku (on CLI or in config)")
+
     try:
         config = ToolConfig.from_dict(config_data)
     except Exception as exc:  # noqa: BLE001 - surface configuration errors
@@ -411,11 +416,12 @@ def _run_single_analysis(
     candidates = merge_datasets(placement_scores, historical_metrics)
 
     # Filter by hardware requirements (before ranking to reduce dataset)
+    # Use config values so config-file settings (cpu_arch, etc.) are honored
     candidates = filter_by_requirements(
         candidates,
         min_vcpu=args.min_vcpu,
         min_ram=args.min_ram,
-        cpu_arch=args.cpu_arch,
+        cpu_arch=config.cpu_arch,
     )
 
     ranked = rank_candidates(candidates)
