@@ -21,10 +21,10 @@ VALID_CPU_ARCHS = {"x64", "arm"}
 class ToolConfig:
     """Runtime configuration for the Spot VM analysis tool."""
 
-    subscription_id: str
-    regions: List[str]
-    sizes: List[str]
-    desired_count: int
+    subscription_id: str = ""
+    regions: List[str] = field(default_factory=list)
+    sizes: List[str] = field(default_factory=list)
+    desired_count: int = 1
     os_type: str = DEFAULT_OS_TYPE
     availability_zones: bool = False
     cache_ttl_minutes: int = DEFAULT_CACHE_TTL_MINUTES
@@ -35,15 +35,18 @@ class ToolConfig:
     result_limit: Optional[int] = None
     save_report: Optional[Path] = None
     emit_json: bool = False
-    enable_placement: bool = True
+    enable_placement: bool = False
     baseline_sku: Optional[str] = None
     cpu_arch: Optional[str] = None  # "x64" or "arm"
 
     def __post_init__(self) -> None:
         self.regions = _clean_list(self.regions)
         self.sizes = _clean_list(self.sizes)
-        if not self.subscription_id:
-            raise ValueError("subscription_id is required")
+        if self.enable_placement and not self.subscription_id:
+            raise ValueError(
+                "subscription_id is required when --placement is enabled. "
+                "Provide --subscription-id or remove --placement."
+            )
         if not self.regions:
             raise ValueError("At least one region must be supplied")
         if not self.sizes:
