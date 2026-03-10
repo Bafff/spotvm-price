@@ -44,8 +44,8 @@ class ToolConfig:
         self.sizes = _clean_list(self.sizes)
         if self.enable_placement and not self.subscription_id:
             raise ValueError(
-                "subscription_id is required when --placement is enabled. "
-                "Provide --subscription-id or remove --placement."
+                "subscription_id is required when --placement-check is enabled. "
+                "Provide --subscription-id or remove --placement-check."
             )
         if not self.regions:
             raise ValueError("At least one region must be supplied")

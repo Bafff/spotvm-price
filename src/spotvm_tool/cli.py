@@ -33,26 +33,26 @@ def build_parser() -> argparse.ArgumentParser:
         prog="spotvm-tool",
         description=(
             "Compare Azure Spot VM pricing, eviction rates, and performance across regions and SKUs. "
-            "Add --placement with --subscription-id for capacity/quota scoring."
+            "Add --placement-check with --subscription-id for capacity/quota scoring."
         ),
         epilog=(
             "Quick start (pricing only, no subscription needed):\n"
             "  spotvm-tool --regions eastus --sizes Standard_D4s_v5 Standard_E4s_v5\n\n"
             "With placement scores and quota checking:\n"
-            "  spotvm-tool --subscription-id <ID> --regions eastus --sizes Standard_D4s_v5 --placement --desired-count 10"
+            "  spotvm-tool --subscription-id <ID> --regions eastus --sizes Standard_D4s_v5 --placement-check --desired-count 10"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--subscription-id",
-        help="Azure subscription ID (only required with --placement)",
+        help="Azure subscription ID (only required with --placement-check)",
     )
     parser.add_argument("--regions", nargs="*", help="List of Azure regions")
     parser.add_argument("--sizes", nargs="*", help="List of VM sizes (SKUs)")
     parser.add_argument(
         "--desired-count",
         type=int,
-        help="Number of VMs you plan to deploy (used with --placement to assess capacity, default: 1)",
+        help="Number of VMs you plan to deploy (used with --placement-check to assess capacity, default: 1)",
     )
     parser.add_argument(
         "--os-type",
@@ -95,7 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Clear cached responses before running",
     )
     parser.add_argument(
-        "--placement",
+        "--placement-check",
         action="store_true",
         help="Enable Placement Score API queries for capacity and quota data "
              "(requires --subscription-id). Useful for large-scale deployments",
@@ -272,7 +272,7 @@ def main(argv: List[str] | None = None) -> int:
         "baseline_sku": args.baseline_sku,
         "cpu_arch": args.cpu_arch,
     }
-    if args.placement:
+    if args.placement_check:
         overrides["enable_placement"] = True
 
     config_data = merge_cli_overrides(base_config, overrides)
@@ -457,7 +457,7 @@ def _run_single_analysis(
         print("  Quota: Indicates if sufficient vCPU quota is available")
         print("    - Yes: Quota available for deployment")
         print("    - No:  Insufficient quota (increase quota or choose different region/size)")
-        print("    - Unknown: Quota data not available (use --placement to enable)")
+        print("    - Unknown: Quota data not available (use --placement-check to enable)")
     if config.baseline_sku:
         print(f"\nPerformance Baseline: {config.baseline_sku} = 100%")
         print("  Perf %: Relative computing power compared to baseline")
