@@ -277,6 +277,63 @@ class TestFilterByCost:
         assert len(filtered) == 1
 
 
+class TestFilterByArchitecture:
+    """Tests for CPU architecture filtering in filter_by_requirements."""
+
+    def _make_candidate(self, vm_size, cpu_arch=None):
+        return CandidateInsight(
+            vm_size=vm_size,
+            region="eastus",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.05,
+            price_last_updated=datetime(2025, 1, 25, 14, 0),
+            eviction_rate=5.0,
+            eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+            cpu_arch=cpu_arch,
+        )
+
+    def test_filter_x64_keeps_intel_and_amd(self):
+        """x64 filter should keep Intel and AMD candidates."""
+        candidates = [
+            self._make_candidate("Standard_D4s_v5", cpu_arch="intel"),
+            self._make_candidate("Standard_D4as_v5", cpu_arch="amd"),
+            self._make_candidate("Standard_D4ps_v5", cpu_arch="arm"),
+        ]
+        filtered = filter_by_requirements(candidates, cpu_arch="x64")
+        assert len(filtered) == 2
+        assert all(c.vm_size != "Standard_D4ps_v5" for c in filtered)
+
+    def test_filter_arm_removes_x64(self):
+        """arm filter should remove Intel and AMD candidates."""
+        candidates = [
+            self._make_candidate("Standard_D4s_v5", cpu_arch="intel"),
+            self._make_candidate("Standard_D4ps_v5", cpu_arch="arm"),
+        ]
+        filtered = filter_by_requirements(candidates, cpu_arch="arm")
+        assert len(filtered) == 1
+        assert filtered[0].vm_size == "Standard_D4ps_v5"
+
+    def test_filter_fallback_to_vm_name_detection(self):
+        """When cpu_arch is None on candidate, detect from VM name."""
+        candidates = [
+            self._make_candidate("Standard_D4as_v5", cpu_arch=None),  # AMD x64
+            self._make_candidate("Standard_D4ps_v5", cpu_arch=None),  # ARM
+        ]
+        filtered = filter_by_requirements(candidates, cpu_arch="x64")
+        assert len(filtered) == 1
+        assert filtered[0].vm_size == "Standard_D4as_v5"
+
+    def test_filter_case_insensitive(self):
+        """Architecture filter should be case-insensitive."""
+        candidates = [
+            self._make_candidate("Standard_D4s_v5", cpu_arch="Intel"),
+            self._make_candidate("Standard_D4as_v5", cpu_arch="AMD"),
+        ]
+        filtered = filter_by_requirements(candidates, cpu_arch="X64")
+        assert len(filtered) == 2
+
+
 class TestCPUArchitecture:
     """Tests for CPU architecture detection and filtering."""
 

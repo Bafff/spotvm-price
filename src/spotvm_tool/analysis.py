@@ -203,12 +203,36 @@ def filter_by_requirements(
     for candidate in candidates:
         spec = get_vm_spec(candidate.vm_size)
 
+        # Check CPU architecture requirement (works even without spec data)
+        if cpu_arch:
+            candidate_arch = candidate.cpu_arch
+            # Fall back to detecting from VM name if cpu_arch not populated
+            if not candidate_arch and candidate.vm_size:
+                candidate_arch = detect_cpu_architecture(candidate.vm_size)
+            if not candidate_arch:
+                logger.warning(
+                    f"Cannot determine architecture for {candidate.vm_size}, excluding from results"
+                )
+                filtered_count += 1
+                continue
+            candidate_arch = candidate_arch.lower()
+            # Normalize: "intel", "amd" -> "x64"; "arm" stays "arm"
+            if candidate_arch in ("intel", "amd"):
+                candidate_arch = "x64"
+            if candidate_arch != cpu_arch.lower():
+                logger.debug(
+                    f"Filtered {candidate.vm_size}: arch {candidate_arch} != {cpu_arch}"
+                )
+                filtered_count += 1
+                continue
+
         if not spec:
-            # Unknown SKU - keep it but warn
-            logger.warning(
-                f"VM size {candidate.vm_size} not in specifications database, "
-                f"cannot verify hardware requirements"
-            )
+            if min_vcpu is not None or min_ram is not None:
+                # Unknown SKU - keep it but warn about unverifiable requirements
+                logger.warning(
+                    f"VM size {candidate.vm_size} not in specifications database, "
+                    f"cannot verify vCPU/RAM requirements"
+                )
             filtered.append(candidate)
             continue
 
@@ -227,19 +251,6 @@ def filter_by_requirements(
             )
             filtered_count += 1
             continue
-
-        # Check CPU architecture requirement
-        if cpu_arch and candidate.cpu_arch:
-            candidate_arch = candidate.cpu_arch.lower()
-            # Normalize: "intel", "amd" -> "x64"; "arm" stays "arm"
-            if candidate_arch in ("intel", "amd"):
-                candidate_arch = "x64"
-            if candidate_arch != cpu_arch.lower():
-                logger.debug(
-                    f"Filtered {candidate.vm_size}: arch {candidate.cpu_arch} != {cpu_arch}"
-                )
-                filtered_count += 1
-                continue
 
         filtered.append(candidate)
 
