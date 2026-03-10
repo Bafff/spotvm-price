@@ -475,9 +475,10 @@ def _run_single_analysis(
               f"{Fore.YELLOW}10-<15%{Style.RESET_ALL} | "
               f"{Fore.RED}15-<25%{Style.RESET_ALL} | "
               f"{Fore.RED}{Style.BRIGHT}≥25%{Style.RESET_ALL}")
-        print(f"  Placement:     {Fore.GREEN}High{Style.RESET_ALL} | "
-              f"{Fore.YELLOW}Medium{Style.RESET_ALL} | "
-              f"{Fore.RED}Low{Style.RESET_ALL}")
+        if config.enable_placement:
+            print(f"  Placement:     {Fore.GREEN}High{Style.RESET_ALL} | "
+                  f"{Fore.YELLOW}Medium{Style.RESET_ALL} | "
+                  f"{Fore.RED}Low{Style.RESET_ALL}")
 
     summary_lines = summarize_top_candidates(ranked)
     if summary_lines:
