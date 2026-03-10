@@ -177,21 +177,24 @@ def filter_by_requirements(
     candidates: List[CandidateInsight],
     min_vcpu: Optional[int] = None,
     min_ram: Optional[int] = None,
+    cpu_arch: Optional[str] = None,
 ) -> List[CandidateInsight]:
-    """Filter candidates by hardware requirements (vCPU and RAM).
+    """Filter candidates by hardware requirements (vCPU, RAM, CPU architecture).
 
-    Removes candidates that don't meet minimum vCPU or RAM requirements.
+    Removes candidates that don't meet minimum vCPU or RAM requirements,
+    or don't match the requested CPU architecture.
     SKUs not found in VM_SPECIFICATIONS are kept with a warning.
 
     Args:
         candidates: List of candidate insights to filter
         min_vcpu: Minimum vCPUs required (None = no filter)
         min_ram: Minimum RAM in GB required (None = no filter)
+        cpu_arch: CPU architecture filter, "x64" or "arm" (None = no filter)
 
     Returns:
         Filtered list of candidates meeting requirements
     """
-    if not min_vcpu and not min_ram:
+    if not min_vcpu and not min_ram and not cpu_arch:
         return candidates
 
     filtered = []
@@ -224,6 +227,19 @@ def filter_by_requirements(
             )
             filtered_count += 1
             continue
+
+        # Check CPU architecture requirement
+        if cpu_arch and candidate.cpu_arch:
+            candidate_arch = candidate.cpu_arch.lower()
+            # Normalize: "intel", "amd" -> "x64"; "arm" stays "arm"
+            if candidate_arch in ("intel", "amd"):
+                candidate_arch = "x64"
+            if candidate_arch != cpu_arch.lower():
+                logger.debug(
+                    f"Filtered {candidate.vm_size}: arch {candidate.cpu_arch} != {cpu_arch}"
+                )
+                filtered_count += 1
+                continue
 
         filtered.append(candidate)
 

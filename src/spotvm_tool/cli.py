@@ -420,6 +420,7 @@ def _run_single_analysis(
         candidates,
         min_vcpu=args.min_vcpu,
         min_ram=args.min_ram,
+        cpu_arch=args.cpu_arch,
     )
 
     ranked = rank_candidates(candidates)
