@@ -201,10 +201,13 @@ def main(argv: List[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
+        level=logging.DEBUG if args.verbose else logging.WARNING,
         format="%(asctime)s %(levelname)s %(message)s",
     )
     logger = logging.getLogger("spotvm-tool")
+    # Keep our own logger at INFO so our messages still appear
+    if not args.verbose:
+        logger.setLevel(logging.INFO)
 
     # Handle --analyze-history mode (separate from normal runs)
     if args.analyze_history:
