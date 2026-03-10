@@ -270,7 +270,7 @@ def main(argv: List[str] | None = None) -> int:
         "availability_zones": args.availability_zones or None,
         "cache_ttl_minutes": args.cache_ttl_minutes,
         "save_report": str(args.save_report) if args.save_report else None,
-        "emit_json": args.json,
+        "emit_json": args.json or None,
         "result_limit": args.limit,
         "baseline_sku": args.baseline_sku,
         "cpu_arch": args.cpu_arch,
@@ -438,6 +438,10 @@ def _run_single_analysis(
 
     if config.result_limit:
         ranked = ranked[: config.result_limit]
+
+    if not ranked:
+        print("No candidates match the specified filters. Try relaxing constraints.")
+        return
 
     # Save results for historical analysis if requested
     if save_results:

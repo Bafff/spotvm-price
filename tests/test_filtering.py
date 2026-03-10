@@ -277,6 +277,22 @@ class TestFilterByCost:
         assert len(filtered) == 1
 
 
+    def test_filter_zero_max_price(self, sample_candidates):
+        """Zero max_price should filter candidates with any positive price (not skip filter)."""
+        filtered = filter_by_cost(sample_candidates, max_price=0.0)
+        assert len(filtered) == 0  # All have positive prices
+
+    def test_filter_zero_max_eviction(self, sample_candidates):
+        """Zero max_eviction should filter candidates with any positive eviction."""
+        filtered = filter_by_cost(sample_candidates, max_eviction=0.0)
+        assert len(filtered) == 0  # All have positive eviction rates
+
+    def test_filter_zero_min_performance(self, sample_candidates):
+        """Zero min_performance should keep all candidates (0% is the floor)."""
+        filtered = filter_by_cost(sample_candidates, min_performance=0.0)
+        assert len(filtered) == len(sample_candidates)
+
+
 class TestFilterByArchitecture:
     """Tests for CPU architecture filtering in filter_by_requirements."""
 
