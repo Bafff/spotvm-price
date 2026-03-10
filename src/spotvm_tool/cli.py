@@ -6,7 +6,7 @@ import logging
 import signal
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -346,14 +346,7 @@ def main(argv: List[str] | None = None) -> int:
                 logger.info("Continuing despite error...")
 
             if not stop_requested:
-                next_run = datetime.now()
-                next_run = next_run.replace(
-                    minute=(next_run.minute + interval_minutes) % 60,
-                    second=0,
-                    microsecond=0,
-                )
-                if (next_run.minute + interval_minutes) >= 60:
-                    next_run = next_run.replace(hour=(next_run.hour + 1) % 24)
+                next_run = datetime.now() + timedelta(minutes=interval_minutes)
 
                 logger.info(f"Next run at {next_run.strftime('%H:%M:%S')}")
                 print(f"\n💤 Sleeping for {interval_minutes} minutes...")
