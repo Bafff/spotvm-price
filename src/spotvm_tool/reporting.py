@@ -111,7 +111,7 @@ def _format_cpu(vm_size: str | None) -> str:
             return vendor
     else:
         # Plain text for CSV/CI/CD/--no-color
-        return vendor.upper() if vendor != "arm" else "ARM"
+        return vendor.upper()
 
 
 def _strip_ansi(text: str) -> str:
