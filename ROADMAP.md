@@ -1,6 +1,6 @@
 # spotvm-tool Roadmap
 
-## 🎯 Current Status (v0.3.0)
+## 🎯 Current Status (v0.3.1)
 
 ### ✅ Implemented Features
 - Azure Spot VM placement score analysis
@@ -293,12 +293,12 @@ Interested in implementing any of these features? Check our [CONTRIBUTING.md](CO
 
 ## 📝 Version History
 
-- **v0.1.0** (Current) - Initial release with core functionality
-- **v0.2.0** (Planned) - Cost filtering, CSV export, cost calculator
-- **v0.3.0** (Planned) - Smart automation and historical analysis
+- **v0.1.0** - Initial release with core functionality
+- **v0.2.0** - Historical data tracking, trend analysis
+- **v0.3.0** - SKU auto-discovery, filtering, unattended monitoring
+- **v0.3.1** (Current) - CoreMark benchmarks, CPU architecture, colored output, CSV export, placement opt-in
 - **v0.4.0** (Planned) - Visual charts and reporting
 - **v0.5.0** (Planned) - Infrastructure integration
-- **v0.6.0+** (Future) - Advanced features and ML
 
 ---
 

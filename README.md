@@ -4,9 +4,9 @@ This project delivers a Python CLI that correlates Azure Spot Placement Score da
 
 ## Prerequisites
 - Python 3.10 or later.
-- An Azure subscription ID and credentials capable of acquiring an access token via `DefaultAzureCredential` (Azure CLI login, managed identity, or service principal).
-- The **Compute Recommendations** role assigned to the caller on the target subscription in order to invoke the Spot Placement Score API.[^placement-score]
+- Azure credentials capable of acquiring an access token via `DefaultAzureCredential` (Azure CLI login, managed identity, or service principal).
 - Read access to Azure Resource Graph (granted by default for most accounts) to query the `SpotResources` table.[^spotresources]
+- *(Only for `--placement-check`)*: An Azure subscription ID and the **Compute Recommendations** role on the target subscription.[^placement-score]
 
 [^placement-score]: Azure documentation: *Spot Placement Score* (REST) – https://learn.microsoft.com/azure/virtual-machine-scale-sets/spot-placement-score?tabs=rest-api
 [^spotresources]: Azure documentation: *Use Azure Spot Virtual Machines* – https://learn.microsoft.com/azure/virtual-machines/spot-vms
@@ -37,6 +37,7 @@ set +a
 pipx run --pip-args="--force-reinstall" --spec ./ spotvm-tool \
   --clear-cache \
   --subscription-id "$AZURE_SUBSCRIPTION_ID" \
+  --placement-check \
   --regions centralus \
   --sizes Standard_D2as_v6 \
   --desired-count 10 \
@@ -49,6 +50,7 @@ Alternatively, pass the subscription inline:
 pipx run --pip-args="--force-reinstall" --spec ./ spotvm-tool \
   --clear-cache \
   --subscription-id 2f929c0a-d1f4-480c-a610-f75d1862fd53 \
+  --placement-check \
   --regions centralus \
   --sizes Standard_D2as_v6 \
   --desired-count 10 \
@@ -87,11 +89,11 @@ emit_json: false
   **Example:**
   ```bash
   # Subscription A has 100 vCPU quota in eastus (80 used, 20 free)
-  spotvm-tool --subscription-id AAAA... --regions eastus --sizes Standard_D4as_v5
+  spotvm-tool --subscription-id AAAA... --placement-check --regions eastus --sizes Standard_D4as_v5
   # Result: Quota = ✅ Yes (4 vCPU needed, 20 available)
 
   # Subscription B has 10 vCPU quota in eastus (9 used, 1 free)
-  spotvm-tool --subscription-id BBBB... --regions eastus --sizes Standard_D4as_v5
+  spotvm-tool --subscription-id BBBB... --placement-check --regions eastus --sizes Standard_D4as_v5
   # Result: Quota = ❌ No (4 vCPU needed, only 1 available)
   ```
 
@@ -113,13 +115,17 @@ emit_json: false
 ## Usage
 ### Direct arguments
 ```bash
+# Pricing and eviction data (no subscription needed)
+spotvm-tool \
+  --regions eastus westus \
+  --sizes Standard_D2s_v4 Standard_D4s_v4
+
+# With placement scoring (requires subscription)
 spotvm-tool \
   --subscription-id 00000000-0000-0000-0000-000000000000 \
   --regions eastus westus \
   --sizes Standard_D2s_v4 Standard_D4s_v4 \
-  --desired-count 20 \
-  --os-type linux \
-  --json
+  --placement-check --desired-count 20
 ```
 
 ### With a configuration file
@@ -130,7 +136,6 @@ spotvm-tool --config config.sample.yaml --save-report reports/latest.json
 ### Export to CSV for Excel/Google Sheets
 ```bash
 spotvm-tool \
-  --subscription-id 00000000-0000-0000-0000-000000000000 \
   --regions eastus westus centralus \
   --sizes Standard_D2s_v4 Standard_D4s_v4 Standard_E4s_v5 \
   --baseline-sku Standard_D4s_v4 \
@@ -193,7 +198,7 @@ The terminal output uses colors to highlight eviction risk levels and placement 
 
 **Disable colors** for CI/CD or non-TTY environments:
 ```bash
-spotvm-tool --no-color --subscription-id XXX --regions eastus --sizes Standard_D4as_v5
+spotvm-tool --no-color --regions eastus --sizes Standard_D4as_v5
 ```
 
 Colors are automatically disabled when output is redirected to a file or pipe.
@@ -287,7 +292,6 @@ Filter VMs by minimum hardware requirements instead of manually specifying SKUs:
 ```bash
 # Auto-discover all VMs with at least 4 vCPUs and 32 GB RAM
 spotvm-tool \
-  --subscription-id XXX \
   --regions centralus eastus \
   --min-vcpu 4 \
   --min-ram 32 \
@@ -321,7 +325,6 @@ Apply maximum constraints on price, eviction rate, and performance:
 ```bash
 # Find VMs cheaper than $0.10/hr with low eviction risk
 spotvm-tool \
-  --subscription-id XXX \
   --regions centralus eastus westus \
   --sizes Standard_D4as_v5 Standard_D4as_v6 Standard_E4s_v5 \
   --baseline-sku Standard_D4as_v6 \
@@ -341,7 +344,6 @@ Find the cheapest Spot VM for your workload:
 
 ```bash
 spotvm-tool \
-  --subscription-id XXX \
   --regions centralus eastus \
   --min-vcpu 8 \          # At least 8 cores
   --min-ram 64 \          # At least 64 GB RAM
@@ -388,7 +390,6 @@ Add `--save-results` to any normal run to save a timestamped snapshot:
 
 ```bash
 spotvm-tool \
-  --subscription-id 00000000-0000-0000-0000-000000000000 \
   --regions centralus eastus \
   --sizes Standard_D4as_v5 Standard_D2as_v6 \
   --baseline-sku Standard_D4as_v6 \
@@ -501,7 +502,6 @@ For continuous data collection without setting up cron, use `--run-unattended`:
 ```bash
 # Run every hour (default), saving data automatically
 spotvm-tool \
-  --subscription-id XXX \
   --regions centralus eastus \
   --min-vcpu 4 \
   --min-ram 16 \
@@ -537,7 +537,6 @@ Run #2 at 2025-10-25 20:00:00
 ```bash
 # Run every 15 minutes
 spotvm-tool \
-  --subscription-id XXX \
   --regions centralus \
   --sizes Standard_D4as_v5 \
   --run-unattended 15
@@ -559,7 +558,6 @@ spotvm-tool \
 ```bash
 # 1. Start monitoring (let it run for several hours)
 spotvm-tool \
-  --subscription-id XXX \
   --regions centralus \
   --min-vcpu 4 \
   --min-ram 16 \
