@@ -259,7 +259,9 @@ def _parse_datetime_string(value: Any) -> Optional[datetime]:
                 dt = dt.replace(tzinfo=timezone.utc)
             return dt
         except ValueError:
+            logger.debug("Could not parse datetime string: %r", value)
             return None
+    logger.debug("Unsupported datetime type %s: %r", type(value).__name__, value)
     return None
 
 
