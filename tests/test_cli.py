@@ -81,6 +81,39 @@ class TestBuildParser:
         assert args.max_eviction == 10.0
 
 
+class TestToolConfigValidation:
+    """Tests for ToolConfig validation logic."""
+
+    def test_no_subscription_without_placement_succeeds(self):
+        from spotvm_tool.config import ToolConfig
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+        assert config.subscription_id == ""
+        assert config.enable_placement is False
+
+    def test_placement_without_subscription_fails(self):
+        from spotvm_tool.config import ToolConfig
+        with pytest.raises(ValueError, match="subscription_id is required"):
+            ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], enable_placement=True)
+
+    def test_placement_with_subscription_succeeds(self):
+        from spotvm_tool.config import ToolConfig
+        config = ToolConfig(
+            regions=["centralus"], sizes=["Standard_D4s_v5"],
+            enable_placement=True, subscription_id="abc-123",
+        )
+        assert config.enable_placement is True
+
+    def test_invalid_cpu_arch_fails(self):
+        from spotvm_tool.config import ToolConfig
+        with pytest.raises(ValueError, match="cpu_arch"):
+            ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], cpu_arch="mips")
+
+    def test_valid_cpu_arch_normalizes(self):
+        from spotvm_tool.config import ToolConfig
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], cpu_arch="X64")
+        assert config.cpu_arch == "x64"
+
+
 class TestMainWithMocks:
     """Tests for main() with mocked Azure API calls."""
 
