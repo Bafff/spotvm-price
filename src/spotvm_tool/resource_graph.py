@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 from . import cache
@@ -250,7 +250,7 @@ def _parse_datetime_string(value: Any) -> Optional[datetime]:
     if not value:
         return None
     if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(value)
+        return datetime.fromtimestamp(value, tz=timezone.utc)
     if isinstance(value, str):
         cleaned = value.rstrip("Z")
         try:

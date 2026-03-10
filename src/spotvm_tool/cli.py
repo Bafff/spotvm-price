@@ -6,7 +6,7 @@ import logging
 import signal
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -515,7 +515,7 @@ def _run_single_analysis(
 
 def _build_report(candidates: List[Any]) -> Dict[str, Any]:
     return {
-        "generatedAt": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "candidates": [
             {
                 "rank": item.recommendation_rank,
