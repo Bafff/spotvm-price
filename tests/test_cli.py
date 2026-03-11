@@ -3,12 +3,28 @@
 from __future__ import annotations
 
 import json
+import logging
 from types import SimpleNamespace
 import pytest
 from unittest.mock import patch, MagicMock
 
 from spotvm_tool.cli import build_parser, main, _run_single_analysis
 from spotvm_tool.config import ToolConfig
+
+
+def _analysis_args(**overrides):
+    defaults = dict(
+        no_color=True,
+        min_vcpu=None,
+        min_ram=None,
+        max_price=None,
+        max_eviction=None,
+        min_performance=None,
+        csv=None,
+        results_dir=None,
+    )
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
 
 
 class TestBuildParser:
@@ -137,6 +153,23 @@ class TestMainWithMocks:
 
     @patch("spotvm_tool.cli.AzureAuthenticator")
     @patch("spotvm_tool.cli.AzureRestClient")
+    @patch("spotvm_tool.cli.fetch_placement_scores")
+    @patch("spotvm_tool.cli.fetch_historical_metrics")
+    def test_placement_not_called_without_flag(
+        self, mock_fetch_hist, mock_fetch_placement, mock_client_cls, mock_auth_cls, capsys
+    ):
+        mock_fetch_hist.return_value = []
+        rc = main([
+            "--regions", "centralus",
+            "--sizes", "Standard_D4s_v5",
+            "--no-color",
+        ])
+        assert rc == 0
+        mock_fetch_hist.assert_called_once()
+        mock_fetch_placement.assert_not_called()
+
+    @patch("spotvm_tool.cli.AzureAuthenticator")
+    @patch("spotvm_tool.cli.AzureRestClient")
     @patch("spotvm_tool.cli.fetch_historical_metrics")
     def test_no_color_flag_works(
         self, mock_fetch_hist, mock_client_cls, mock_auth_cls, capsys
@@ -208,16 +241,7 @@ class TestMainWithMocks:
         mock_summarize.return_value = []
         mock_render_table.return_value = "RANKED TABLE"
 
-        args = SimpleNamespace(
-            no_color=True,
-            min_vcpu=None,
-            min_ram=None,
-            max_price=None,
-            max_eviction=None,
-            min_performance=None,
-            csv=None,
-            results_dir=None,
-        )
+        args = _analysis_args()
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
 
         _run_single_analysis(
@@ -266,3 +290,258 @@ class TestMainWithMocks:
         config = mock_run_single_analysis.call_args.kwargs["config"]
         assert config.sizes == ["Standard_D4ps_v5"]
         assert config.cpu_arch == "arm"
+
+    @patch("spotvm_tool.cli._run_single_analysis")
+    @patch("spotvm_tool.cli.discover_skus")
+    def test_config_cpu_arch_triggers_auto_discovery(
+        self,
+        mock_discover_skus,
+        mock_run_single_analysis,
+        tmp_path,
+    ):
+        config_path = tmp_path / "spotvm.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "regions": ["centralus"],
+                    "cpu_arch": "arm",
+                }
+            ),
+            encoding="utf-8",
+        )
+        mock_discover_skus.return_value = ["Standard_D2ps_v5"]
+
+        rc = main([
+            "--config", str(config_path),
+            "--no-color",
+        ])
+
+        assert rc == 0
+        mock_discover_skus.assert_called_once_with(
+            min_vcpu=None,
+            min_ram=None,
+            cpu_arch="arm",
+        )
+        config = mock_run_single_analysis.call_args.kwargs["config"]
+        assert config.sizes == ["Standard_D2ps_v5"]
+        assert config.cpu_arch == "arm"
+
+    @patch("spotvm_tool.cli.MAX_UNATTENDED_FAILURES", 1)
+    @patch("spotvm_tool.cli.time.sleep")
+    @patch("spotvm_tool.cli.signal.signal")
+    @patch("spotvm_tool.cli._run_single_analysis", side_effect=RuntimeError("boom"))
+    def test_unattended_mode_stops_after_unexpected_failure_threshold(
+        self,
+        mock_run_single_analysis,
+        mock_signal,
+        mock_sleep,
+        caplog,
+        capsys,
+    ):
+        with caplog.at_level(logging.ERROR, logger="spotvm-tool"):
+            rc = main([
+                "--regions", "centralus",
+                "--sizes", "Standard_D4s_v5",
+                "--run-unattended", "1",
+                "--no-color",
+            ])
+
+        assert rc == 1
+        assert mock_run_single_analysis.call_count == 1
+        mock_sleep.assert_not_called()
+        assert "Unexpected error in unattended run (1/1)" in caplog.text
+        assert "Stopping unattended mode after 1 consecutive unexpected errors" in caplog.text
+        captured = capsys.readouterr()
+        assert "Stopping monitoring after 1 consecutive unexpected errors" in captured.out
+
+    @patch("spotvm_tool.cli.AzureAuthenticator")
+    @patch("spotvm_tool.cli.AzureRestClient")
+    @patch("spotvm_tool.cli.fetch_historical_metrics")
+    @patch("spotvm_tool.cli.export_to_csv", side_effect=PermissionError("disk full"))
+    @patch("spotvm_tool.cli.filter_by_cost")
+    @patch("spotvm_tool.cli.enrich_with_coremark")
+    @patch("spotvm_tool.cli.enrich_with_performance")
+    @patch("spotvm_tool.cli.rank_candidates")
+    @patch("spotvm_tool.cli.filter_by_requirements")
+    @patch("spotvm_tool.cli.merge_datasets")
+    @patch("spotvm_tool.cli.summarize_top_candidates")
+    @patch("spotvm_tool.cli.render_table")
+    def test_csv_export_failure_does_not_suppress_console_output(
+        self,
+        mock_render_table,
+        mock_summarize,
+        mock_merge,
+        mock_filter_requirements,
+        mock_rank,
+        mock_enrich_performance,
+        mock_enrich_coremark,
+        mock_filter_cost,
+        mock_export_csv,
+        mock_fetch_hist,
+        mock_client_cls,
+        mock_auth_cls,
+        capsys,
+    ):
+        candidate = object()
+        mock_fetch_hist.return_value = []
+        mock_merge.return_value = [candidate]
+        mock_filter_requirements.return_value = [candidate]
+        mock_rank.return_value = [candidate]
+        mock_enrich_performance.return_value = [candidate]
+        mock_enrich_coremark.return_value = [candidate]
+        mock_filter_cost.return_value = [candidate]
+        mock_summarize.return_value = []
+        mock_render_table.return_value = "RANKED TABLE"
+
+        args = SimpleNamespace(
+            no_color=True,
+            min_vcpu=None,
+            min_ram=None,
+            max_price=None,
+            max_eviction=None,
+            min_performance=None,
+            csv="results.csv",
+            results_dir=None,
+        )
+        logger = MagicMock()
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+
+        _run_single_analysis(
+            args=args,
+            config=config,
+            logger=logger,
+            save_results=False,
+        )
+
+        captured = capsys.readouterr()
+        assert "Failed to export CSV" in captured.out
+        assert "RANKED TABLE" in captured.out
+        logger.error.assert_called()
+
+    @patch("spotvm_tool.cli.AzureAuthenticator")
+    @patch("spotvm_tool.cli.AzureRestClient")
+    @patch("spotvm_tool.cli.fetch_historical_metrics")
+    @patch("spotvm_tool.cli.filter_by_cost")
+    @patch("spotvm_tool.cli.enrich_with_coremark")
+    @patch("spotvm_tool.cli.enrich_with_performance")
+    @patch("spotvm_tool.cli.rank_candidates")
+    @patch("spotvm_tool.cli.filter_by_requirements")
+    @patch("spotvm_tool.cli.merge_datasets")
+    @patch("spotvm_tool.cli.summarize_top_candidates")
+    @patch("spotvm_tool.cli.render_table")
+    def test_report_write_failure_does_not_suppress_console_output(
+        self,
+        mock_render_table,
+        mock_summarize,
+        mock_merge,
+        mock_filter_requirements,
+        mock_rank,
+        mock_enrich_performance,
+        mock_enrich_coremark,
+        mock_filter_cost,
+        mock_fetch_hist,
+        mock_client_cls,
+        mock_auth_cls,
+        capsys,
+    ):
+        candidate = SimpleNamespace(
+            recommendation_rank=1,
+            region="centralus",
+            availability_zone=None,
+            vm_size="Standard_D4s_v5",
+            cpu_arch="x64",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.01,
+            price_last_updated=None,
+            eviction_rate=1.0,
+            performance_relative=None,
+            price_per_performance=None,
+            coremark_score=None,
+            coremark_per_vcpu=None,
+            notes=None,
+        )
+        mock_fetch_hist.return_value = []
+        mock_merge.return_value = [candidate]
+        mock_filter_requirements.return_value = [candidate]
+        mock_rank.return_value = [candidate]
+        mock_enrich_performance.return_value = [candidate]
+        mock_enrich_coremark.return_value = [candidate]
+        mock_filter_cost.return_value = [candidate]
+        mock_summarize.return_value = []
+        mock_render_table.return_value = "RANKED TABLE"
+
+        args = SimpleNamespace(
+            no_color=True,
+            min_vcpu=None,
+            min_ram=None,
+            max_price=None,
+            max_eviction=None,
+            min_performance=None,
+            csv=None,
+            results_dir=None,
+        )
+        logger = MagicMock()
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+        config.save_report = MagicMock()
+        config.save_report.write_text.side_effect = PermissionError("read only file system")
+
+        _run_single_analysis(
+            args=args,
+            config=config,
+            logger=logger,
+            save_results=False,
+        )
+
+        captured = capsys.readouterr()
+        assert "Failed to save report" in captured.out
+        assert "RANKED TABLE" in captured.out
+        logger.error.assert_called()
+
+    @patch("spotvm_tool.cli.AzureAuthenticator")
+    @patch("spotvm_tool.cli.AzureRestClient")
+    @patch("spotvm_tool.cli.fetch_historical_metrics")
+    @patch("spotvm_tool.cli.filter_by_cost", return_value=[])
+    @patch("spotvm_tool.cli.enrich_with_coremark", return_value=[])
+    @patch("spotvm_tool.cli.enrich_with_performance", return_value=[])
+    @patch("spotvm_tool.cli.rank_candidates", return_value=[])
+    @patch("spotvm_tool.cli.filter_by_requirements", return_value=[])
+    @patch("spotvm_tool.cli.merge_datasets", return_value=[])
+    @patch("spotvm_tool.cli.render_table")
+    def test_empty_ranked_results_print_message(
+        self,
+        mock_render_table,
+        mock_merge,
+        mock_filter_requirements,
+        mock_rank,
+        mock_enrich_performance,
+        mock_enrich_coremark,
+        mock_filter_cost,
+        mock_fetch_hist,
+        mock_client_cls,
+        mock_auth_cls,
+        capsys,
+    ):
+        mock_fetch_hist.return_value = []
+
+        args = SimpleNamespace(
+            no_color=True,
+            min_vcpu=None,
+            min_ram=None,
+            max_price=None,
+            max_eviction=None,
+            min_performance=None,
+            csv=None,
+            results_dir=None,
+        )
+
+        _run_single_analysis(
+            args=args,
+            config=ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"]),
+            logger=MagicMock(),
+            save_results=False,
+        )
+
+        captured = capsys.readouterr()
+        assert "No candidates match the specified filters" in captured.out
+        mock_render_table.assert_not_called()

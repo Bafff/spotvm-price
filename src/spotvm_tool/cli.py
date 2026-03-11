@@ -27,6 +27,8 @@ from .placement_score import fetch_placement_scores
 from .reporting import render_table, export_to_csv, set_colors_enabled
 from .resource_graph import fetch_historical_metrics
 
+MAX_UNATTENDED_FAILURES = 3
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -239,8 +241,7 @@ def main(argv: List[str] | None = None) -> int:
         base_config = load_config_file(args.config)
 
     # Auto-discover SKUs only when neither CLI nor config specifies sizes.
-    # This preserves config-driven SKU lists while still allowing a config like
-    # {"regions": ["eastus"], "cpu_arch": "arm"} to trigger discovery.
+    # cpu_arch can come from config here; min_vcpu/min_ram are still CLI-only.
     sizes = args.sizes if args.sizes is not None else base_config.get("sizes")
     effective_cpu_arch = args.cpu_arch if args.cpu_arch is not None else base_config.get("cpu_arch")
     if not sizes and (args.min_vcpu is not None or args.min_ram is not None or effective_cpu_arch is not None):
@@ -334,6 +335,7 @@ def main(argv: List[str] | None = None) -> int:
         signal.signal(signal.SIGTERM, signal_handler)
 
         run_count = 0
+        unexpected_error_count = 0
         while not stop_requested:
             run_count += 1
             print(f"\n{'='*60}")
@@ -347,11 +349,28 @@ def main(argv: List[str] | None = None) -> int:
                     logger=logger,
                     save_results=save_results_enabled,
                 )
+                unexpected_error_count = 0
             except AzureHttpError as exc:
+                unexpected_error_count = 0
                 logger.error(f"Azure API request failed: {exc}")
                 logger.info("Continuing despite error...")
             except Exception as exc:  # noqa: BLE001
-                logger.error(f"Unexpected error: {exc}")
+                unexpected_error_count += 1
+                logger.exception(
+                    "Unexpected error in unattended run (%d/%d)",
+                    unexpected_error_count,
+                    MAX_UNATTENDED_FAILURES,
+                )
+                if unexpected_error_count >= MAX_UNATTENDED_FAILURES:
+                    logger.error(
+                        "Stopping unattended mode after %d consecutive unexpected errors",
+                        MAX_UNATTENDED_FAILURES,
+                    )
+                    print(
+                        f"\n{'[x]' if _nc else '❌'} Stopping monitoring after "
+                        f"{MAX_UNATTENDED_FAILURES} consecutive unexpected errors."
+                    )
+                    return 1
                 logger.info("Continuing despite error...")
 
             if not stop_requested:
@@ -457,14 +476,19 @@ def _run_single_analysis(
 
     # Export to CSV if requested (even if empty, so downstream tools see the run)
     if args.csv:
-        export_to_csv(
-            ranked,
-            args.csv,
-            show_placement=config.enable_placement,
-            show_baseline=config.baseline_sku is not None,
-        )
-        logger.info("Results exported to CSV: %s", args.csv)
-        print(f"{'[OK]' if _nc else '✅'} CSV exported to: {args.csv}\n")
+        try:
+            export_to_csv(
+                ranked,
+                args.csv,
+                show_placement=config.enable_placement,
+                show_baseline=config.baseline_sku is not None,
+            )
+        except OSError as exc:
+            logger.error("Failed to export CSV to %s: %s", args.csv, exc)
+            print(f"{'[x]' if _nc else '❌'} Failed to export CSV to: {args.csv} ({exc})\n")
+        else:
+            logger.info("Results exported to CSV: %s", args.csv)
+            print(f"{'[OK]' if _nc else '✅'} CSV exported to: {args.csv}\n")
 
     # Emit JSON / save report (even if empty)
     if config.emit_json or config.save_report:
@@ -473,11 +497,16 @@ def _run_single_analysis(
             print("\nJSON Output:")
             print(json.dumps(report_payload, indent=2, default=_json_serializer))
         if config.save_report:
-            config.save_report.write_text(
-                json.dumps(report_payload, indent=2, default=_json_serializer),
-                encoding="utf-8",
-            )
-            logger.info("Saved report to %s", config.save_report)
+            try:
+                config.save_report.write_text(
+                    json.dumps(report_payload, indent=2, default=_json_serializer),
+                    encoding="utf-8",
+                )
+            except OSError as exc:
+                logger.error("Failed to save report to %s: %s", config.save_report, exc)
+                print(f"{'[x]' if _nc else '❌'} Failed to save report to: {config.save_report} ({exc})\n")
+            else:
+                logger.info("Saved report to %s", config.save_report)
 
     if not ranked:
         print("No candidates match the specified filters. Try relaxing constraints.")
@@ -497,7 +526,7 @@ def _run_single_analysis(
         print("  Quota: Indicates if sufficient vCPU quota is available")
         print("    - Yes: Quota available for deployment")
         print("    - No:  Insufficient quota (increase quota or choose different region/size)")
-        print("    - Unknown: Quota data not available (use --placement-check to enable)")
+        print("    - Unknown: Quota data not returned by Azure for this SKU/region")
     if config.baseline_sku:
         print(f"\nPerformance Baseline: {config.baseline_sku} = 100%")
         print("  Perf %: Relative computing power compared to baseline")
