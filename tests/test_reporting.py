@@ -3,6 +3,7 @@ from datetime import datetime
 from pathlib import Path
 
 from spotvm_tool.models import CandidateInsight
+from spotvm_tool import reporting
 from spotvm_tool.reporting import (
     render_table,
     export_to_csv,
@@ -11,6 +12,8 @@ from spotvm_tool.reporting import (
     _strip_ansi,
     set_colors_enabled,
 )
+
+INITIAL_COLOR_STATE = reporting._COLORS_ENABLED
 
 
 def test_render_table_formats_columns():
@@ -313,3 +316,13 @@ def test_eviction_none_handling():
     """Test that None eviction rates are handled gracefully."""
     result = _colorize_eviction(None)
     assert result == "-"  # Default formatting for None
+
+
+def test_color_state_can_change_within_a_test():
+    original = reporting._COLORS_ENABLED
+    set_colors_enabled(not original)
+    assert reporting._COLORS_ENABLED is (not original)
+
+
+def test_color_state_is_reset_between_tests():
+    assert reporting._COLORS_ENABLED is INITIAL_COLOR_STATE

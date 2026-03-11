@@ -1,6 +1,7 @@
 """Tests for filtering and auto-discovery functionality."""
 
 from datetime import datetime
+import logging
 
 import pytest
 
@@ -291,6 +292,14 @@ class TestFilterByCost:
         """Zero min_performance should keep all candidates (0% is the floor)."""
         filtered = filter_by_cost(sample_candidates, min_performance=0.0)
         assert len(filtered) == len(sample_candidates)
+
+    def test_filter_by_cost_logs_only_active_constraints(self, sample_candidates, caplog):
+        with caplog.at_level(logging.INFO):
+            filter_by_cost(sample_candidates, max_price=0.05)
+
+        assert "price<=$0.05" in caplog.text
+        assert "eviction<=" not in caplog.text
+        assert "performance>=" not in caplog.text
 
 
 class TestFilterByArchitecture:
