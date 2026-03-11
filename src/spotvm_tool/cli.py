@@ -21,7 +21,7 @@ from .analysis import (
 )
 from .vm_specs import discover_skus
 from .auth import AzureAuthenticator
-from .config import ToolConfig, load_config_file, merge_cli_overrides
+from .config import VALID_CPU_ARCHS, ToolConfig, load_config_file, merge_cli_overrides
 from .http_client import AzureRestClient, AzureHttpError
 from .placement_score import fetch_placement_scores
 from .reporting import render_table, export_to_csv, set_colors_enabled
@@ -244,6 +244,12 @@ def main(argv: List[str] | None = None) -> int:
     # cpu_arch can come from config here; min_vcpu/min_ram are still CLI-only.
     sizes = args.sizes if args.sizes is not None else base_config.get("sizes")
     effective_cpu_arch = args.cpu_arch if args.cpu_arch is not None else base_config.get("cpu_arch")
+    if effective_cpu_arch is not None:
+        if not isinstance(effective_cpu_arch, str):
+            parser.error(f"cpu_arch must be one of {sorted(VALID_CPU_ARCHS)}")
+        effective_cpu_arch = effective_cpu_arch.lower()
+        if effective_cpu_arch not in VALID_CPU_ARCHS:
+            parser.error(f"cpu_arch must be one of {sorted(VALID_CPU_ARCHS)}")
     if not sizes and (args.min_vcpu is not None or args.min_ram is not None or effective_cpu_arch is not None):
         requirements = []
         if args.min_vcpu is not None:
@@ -289,9 +295,9 @@ def main(argv: List[str] | None = None) -> int:
     merged_placement = config_data.get("enable_placement", False)
     merged_baseline = config_data.get("baseline_sku")
     if not merged_placement:
-        if args.availability_zones:
+        if config_data.get("availability_zones"):
             parser.error("--availability-zones requires --placement-check (or enable_placement in config)")
-        if args.desired_count is not None:
+        if config_data.get("desired_count") is not None:
             parser.error("--desired-count requires --placement-check (or enable_placement in config)")
     if args.min_performance is not None and not merged_baseline:
         parser.error("--min-performance requires --baseline-sku (on CLI or in config)")
