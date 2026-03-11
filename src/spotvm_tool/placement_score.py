@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 from typing import Iterable, List
 
 from . import cache
 from .config import ToolConfig
 from .http_client import AzureRestClient
 from .models import PlacementScoreResult
+
+logger = logging.getLogger("spotvm-tool")
 
 PLACEMENT_API_VERSION = "2025-06-05"
 PLACEMENT_ENDPOINT_TEMPLATE = (
@@ -65,6 +68,7 @@ def _parse_response(payload: dict) -> List[PlacementScoreResult]:
     for item in placement_scores:
         vm_size = item.get("sku") or item.get("vmSize") or item.get("name")
         if not vm_size:
+            logger.debug("Skipping placement score item without VM size: %r", item)
             continue
         scores = item.get("scoresByLocation")
         if scores:
