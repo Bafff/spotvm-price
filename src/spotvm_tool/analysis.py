@@ -6,7 +6,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
 from .vm_specs import calculate_relative_performance, get_vm_spec, detect_cpu_architecture
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("spotvm-tool")
 
 PLACEMENT_ORDER = {"high": 3, "medium": 2, "low": 1}
 
@@ -183,7 +183,9 @@ def filter_by_requirements(
 
     Removes candidates that don't meet minimum vCPU or RAM requirements,
     or don't match the requested CPU architecture.
-    SKUs not found in VM_SPECIFICATIONS are kept with a warning.
+    SKUs not found in VM_SPECIFICATIONS are kept with a warning for vCPU/RAM
+    checks, but candidates with unknown architecture are excluded when
+    cpu_arch is specified.
 
     Args:
         candidates: List of candidate insights to filter
@@ -327,9 +329,16 @@ def filter_by_cost(
         filtered.append(candidate)
 
     if filtered_count > 0:
+        parts = []
+        if max_price is not None:
+            parts.append(f"price<=${max_price}")
+        if max_eviction is not None:
+            parts.append(f"eviction<={max_eviction}%")
+        if min_performance is not None:
+            parts.append(f"performance>={min_performance}%")
         logger.info(
             f"Filtered out {filtered_count} candidate(s) not meeting cost constraints "
-            f"(price≤${max_price}, eviction≤{max_eviction}%, performance≥{min_performance}%)"
+            f"({', '.join(parts)})"
         )
 
     return filtered
