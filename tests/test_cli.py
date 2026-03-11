@@ -77,6 +77,37 @@ class TestBuildParser:
                 "--min-performance", "80",
             ])
 
+    @pytest.mark.parametrize(
+        ("config_payload", "error_text"),
+        [
+            (
+                {
+                    "regions": ["centralus"],
+                    "sizes": ["Standard_D4s_v5"],
+                    "desired_count": 5,
+                },
+                "--desired-count requires --placement-check",
+            ),
+            (
+                {
+                    "regions": ["centralus"],
+                    "sizes": ["Standard_D4s_v5"],
+                    "availability_zones": True,
+                },
+                "--availability-zones requires --placement-check",
+            ),
+        ],
+    )
+    def test_config_placement_fields_require_placement_mode(self, tmp_path, config_payload, error_text, capsys):
+        config_path = tmp_path / "spotvm.json"
+        config_path.write_text(json.dumps(config_payload), encoding="utf-8")
+
+        with pytest.raises(SystemExit):
+            main(["--config", str(config_path)])
+
+        captured = capsys.readouterr()
+        assert error_text in captured.err
+
     def test_parser_accepts_all_documented_args(self):
         parser = build_parser()
         args = parser.parse_args([
@@ -324,6 +355,40 @@ class TestMainWithMocks:
         )
         config = mock_run_single_analysis.call_args.kwargs["config"]
         assert config.sizes == ["Standard_D2ps_v5"]
+        assert config.cpu_arch == "arm"
+
+    @patch("spotvm_tool.cli._run_single_analysis")
+    @patch("spotvm_tool.cli.discover_skus")
+    def test_config_cpu_arch_is_normalized_before_auto_discovery(
+        self,
+        mock_discover_skus,
+        mock_run_single_analysis,
+        tmp_path,
+    ):
+        config_path = tmp_path / "spotvm.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "regions": ["centralus"],
+                    "cpu_arch": "ARM",
+                }
+            ),
+            encoding="utf-8",
+        )
+        mock_discover_skus.return_value = ["Standard_D2ps_v5"]
+
+        rc = main([
+            "--config", str(config_path),
+            "--no-color",
+        ])
+
+        assert rc == 0
+        mock_discover_skus.assert_called_once_with(
+            min_vcpu=None,
+            min_ram=None,
+            cpu_arch="arm",
+        )
+        config = mock_run_single_analysis.call_args.kwargs["config"]
         assert config.cpu_arch == "arm"
 
     @patch("spotvm_tool.cli.MAX_UNATTENDED_FAILURES", 1)
