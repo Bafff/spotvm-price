@@ -238,10 +238,10 @@ def main(argv: List[str] | None = None) -> int:
     if args.config:
         base_config = load_config_file(args.config)
 
-    # Auto-discover SKUs if not specified but requirements are.
-    # Check both CLI args and config-file values so a config like
-    # {"regions": ["eastus"], "cpu_arch": "arm"} triggers discovery.
-    sizes = args.sizes
+    # Auto-discover SKUs only when neither CLI nor config specifies sizes.
+    # This preserves config-driven SKU lists while still allowing a config like
+    # {"regions": ["eastus"], "cpu_arch": "arm"} to trigger discovery.
+    sizes = args.sizes if args.sizes is not None else base_config.get("sizes")
     effective_cpu_arch = args.cpu_arch if args.cpu_arch is not None else base_config.get("cpu_arch")
     if not sizes and (args.min_vcpu is not None or args.min_ram is not None or effective_cpu_arch is not None):
         requirements = []
@@ -482,6 +482,14 @@ def _run_single_analysis(
     if not ranked:
         print("No candidates match the specified filters. Try relaxing constraints.")
         return
+
+    print(
+        render_table(
+            ranked,
+            show_placement=config.enable_placement,
+            show_baseline=config.baseline_sku is not None,
+        )
+    )
 
     # Print column explanations
     if config.enable_placement:
