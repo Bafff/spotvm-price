@@ -181,8 +181,10 @@ def _extract_latest_price(entry: Optional[dict]) -> tuple[Optional[float], Optio
         try:
             latest = json.loads(latest)
         except json.JSONDecodeError:
+            logger.debug("Failed to decode spotPrices JSON: %r", latest)
             return None, None
     if not isinstance(latest, dict):
+        logger.debug("Latest spot price entry is not an object: %r", latest)
         return None, None
     price = _to_float(latest.get("priceUSD"))
     # Field is called effectiveDate, not dateTime
@@ -228,9 +230,11 @@ def _ensure_list(value: Any) -> list:
         try:
             parsed = json.loads(value)
         except json.JSONDecodeError:
+            logger.debug("Failed to decode list JSON: %r", value)
             return []
         if isinstance(parsed, list):
             return parsed
+        logger.debug("Decoded JSON value is not a list: %r", parsed)
         return []
     if isinstance(value, list):
         return value
@@ -263,5 +267,4 @@ def _parse_datetime_string(value: Any) -> Optional[datetime]:
             return None
     logger.debug("Unsupported datetime type %s: %r", type(value).__name__, value)
     return None
-
 
