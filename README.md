@@ -29,8 +29,8 @@ All three commands read `pyproject.toml`, create an isolated environment, instal
 
 ### Breaking Rename Note
 - The package name, import path, and CLI entry point are now `spotvm`.
-- The old `spotvm-tool` / `spotvm_tool` names are intentionally unsupported in this branch.
-- Existing cache data under `~/.cache/spotvm_tool` is not migrated automatically. It is safe to delete manually if you no longer need it.
+- Legacy CLI and import names are intentionally unsupported in this branch.
+- Existing cache data under the previous cache directory in `~/.cache` is not migrated automatically. It is safe to delete manually if you no longer need it.
 
 ### Complete pipx example
 If you keep your subscription ID in `.env` (for example `AZURE_SUBSCRIPTION_ID=2f929c0a-d1f4-480c-a610-f75d1862fd53`), load it and execute:
