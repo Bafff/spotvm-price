@@ -292,13 +292,12 @@ def main(argv: List[str] | None = None) -> int:
 
     # Validate dependent flags against *merged* config (not just CLI args),
     # so config-file values for enable_placement/baseline_sku are respected.
-    config_desired_count_provided = "desired_count" in base_config and base_config.get("desired_count") is not None
     merged_placement = config_data.get("enable_placement", False)
     merged_baseline = config_data.get("baseline_sku")
     if not merged_placement:
         if config_data.get("availability_zones"):
             parser.error("--availability-zones requires --placement-check (or enable_placement in config)")
-        if args.desired_count is not None or config_desired_count_provided:
+        if config_data.get("desired_count") is not None:
             parser.error("--desired-count requires --placement-check (or enable_placement in config)")
     if args.min_performance is not None and not merged_baseline:
         parser.error("--min-performance requires --baseline-sku (on CLI or in config)")

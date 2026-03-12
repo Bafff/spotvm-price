@@ -67,6 +67,7 @@ def sample_config():
         subscription_id="test-subscription-id",
         regions=["centralus", "eastus"],
         sizes=["Standard_D4as_v5", "Standard_D2as_v6"],
+        enable_placement=True,
         desired_count=10,
         baseline_sku="Standard_D4as_v6",
     )
