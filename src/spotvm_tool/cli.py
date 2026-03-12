@@ -118,12 +118,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--min-vcpu",
         type=int,
-        help="Minimum vCPUs required (filters SKUs with fewer cores)",
+        help="Minimum vCPUs required. By default, discovery/filtering keeps the next three distinct known vCPU tiers from the specs database. Use --no-max-limit to disable.",
     )
     parser.add_argument(
         "--min-ram",
         type=int,
-        help="Minimum RAM required in GB (filters SKUs with less memory)",
+        help="Minimum RAM required in GB. By default, discovery/filtering keeps the next three distinct known RAM tiers from the specs database. Use --no-max-limit to disable.",
+    )
+    parser.add_argument(
+        "--no-max-limit",
+        action="store_true",
+        help="Disable bounded hardware windows for --min-vcpu/--min-ram and keep unbounded minimum filtering",
     )
     parser.add_argument(
         "--cpu-arch",
@@ -243,6 +248,7 @@ def main(argv: List[str] | None = None) -> int:
     # Auto-discover SKUs only when neither CLI nor config specifies sizes.
     # cpu_arch can come from config here; min_vcpu/min_ram are still CLI-only.
     sizes = args.sizes if args.sizes is not None else base_config.get("sizes")
+    args.explicit_sizes = bool(sizes)
     effective_cpu_arch = args.cpu_arch if args.cpu_arch is not None else base_config.get("cpu_arch")
     if effective_cpu_arch is not None:
         if not isinstance(effective_cpu_arch, str):
@@ -261,11 +267,14 @@ def main(argv: List[str] | None = None) -> int:
         logger.info(
             f"No --sizes specified, auto-discovering SKUs matching requirements ({', '.join(requirements)})"
         )
-        sizes = discover_skus(
+        discover_kwargs = dict(
             min_vcpu=args.min_vcpu,
             min_ram=args.min_ram,
             cpu_arch=effective_cpu_arch,
         )
+        if args.no_max_limit:
+            discover_kwargs["no_max_limit"] = True
+        sizes = discover_skus(**discover_kwargs)
         if not sizes:
             logger.error("No SKUs found matching specified requirements")
             return 1
@@ -445,12 +454,24 @@ def _run_single_analysis(
 
     # Filter by hardware requirements (before ranking to reduce dataset)
     # Use config values so config-file settings (cpu_arch, etc.) are honored
-    candidates = filter_by_requirements(
-        candidates,
-        min_vcpu=args.min_vcpu,
-        min_ram=args.min_ram,
-        cpu_arch=config.cpu_arch,
+    effective_no_max_limit = (
+        getattr(args, "no_max_limit", False) or getattr(args, "explicit_sizes", False)
     )
+    if effective_no_max_limit:
+        candidates = filter_by_requirements(
+            candidates,
+            min_vcpu=args.min_vcpu,
+            min_ram=args.min_ram,
+            cpu_arch=config.cpu_arch,
+            no_max_limit=True,
+        )
+    else:
+        candidates = filter_by_requirements(
+            candidates,
+            min_vcpu=args.min_vcpu,
+            min_ram=args.min_ram,
+            cpu_arch=config.cpu_arch,
+        )
 
     ranked = rank_candidates(candidates)
     ranked = enrich_with_performance(ranked, config.baseline_sku)

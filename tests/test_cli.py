@@ -17,6 +17,8 @@ def _analysis_args(**overrides):
         no_color=True,
         min_vcpu=None,
         min_ram=None,
+        no_max_limit=False,
+        explicit_sizes=False,
         max_price=None,
         max_eviction=None,
         min_performance=None,
@@ -146,6 +148,7 @@ class TestBuildParser:
             "--baseline-sku", "Standard_D4as_v6",
             "--min-vcpu", "4",
             "--min-ram", "8",
+            "--no-max-limit",
             "--cpu-arch", "x64",
             "--max-price", "0.10",
             "--max-eviction", "10",
@@ -155,8 +158,17 @@ class TestBuildParser:
         assert args.regions == ["centralus"]
         assert args.sizes == ["Standard_D4s_v5"]
         assert args.cpu_arch == "x64"
+        assert args.no_max_limit is True
         assert args.max_price == 0.10
         assert args.max_eviction == 10.0
+
+    def test_help_describes_bounded_hardware_windows_and_escape_hatch(self):
+        parser = build_parser()
+        help_text = parser.format_help()
+
+        assert "--no-max-limit" in help_text
+        assert "next three distinct" in help_text
+        assert "specs database" in help_text
 
 
 class TestToolConfigValidation:
@@ -329,10 +341,73 @@ class TestMainWithMocks:
 
         captured = capsys.readouterr()
         assert "RANKED TABLE" in captured.out
+        mock_filter_requirements.assert_called_once_with(
+            [candidate],
+            min_vcpu=None,
+            min_ram=None,
+            cpu_arch=None,
+        )
         mock_render_table.assert_called_once_with(
             [candidate],
             show_placement=False,
             show_baseline=False,
+        )
+
+    @patch("spotvm_tool.cli.AzureAuthenticator")
+    @patch("spotvm_tool.cli.AzureRestClient")
+    @patch("spotvm_tool.cli.fetch_historical_metrics")
+    @patch("spotvm_tool.cli.filter_by_cost")
+    @patch("spotvm_tool.cli.enrich_with_coremark")
+    @patch("spotvm_tool.cli.enrich_with_performance")
+    @patch("spotvm_tool.cli.rank_candidates")
+    @patch("spotvm_tool.cli.filter_by_requirements")
+    @patch("spotvm_tool.cli.merge_datasets")
+    @patch("spotvm_tool.cli.summarize_top_candidates")
+    @patch("spotvm_tool.cli.render_table")
+    def test_explicit_sizes_bypass_bounded_hardware_window(
+        self,
+        mock_render_table,
+        mock_summarize,
+        mock_merge,
+        mock_filter_requirements,
+        mock_rank,
+        mock_enrich_performance,
+        mock_enrich_coremark,
+        mock_filter_cost,
+        mock_fetch_hist,
+        mock_client_cls,
+        mock_auth_cls,
+        capsys,
+    ):
+        candidate = object()
+        mock_fetch_hist.return_value = []
+        mock_merge.return_value = [candidate]
+        mock_filter_requirements.return_value = [candidate]
+        mock_rank.return_value = [candidate]
+        mock_enrich_performance.return_value = [candidate]
+        mock_enrich_coremark.return_value = [candidate]
+        mock_filter_cost.return_value = [candidate]
+        mock_summarize.return_value = []
+        mock_render_table.return_value = "RANKED TABLE"
+
+        args = _analysis_args(min_vcpu=4, min_ram=16, explicit_sizes=True)
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D64s_v5"])
+
+        _run_single_analysis(
+            args=args,
+            config=config,
+            logger=MagicMock(),
+            save_results=False,
+        )
+
+        captured = capsys.readouterr()
+        assert "RANKED TABLE" in captured.out
+        mock_filter_requirements.assert_called_once_with(
+            [candidate],
+            min_vcpu=4,
+            min_ram=16,
+            cpu_arch=None,
+            no_max_limit=True,
         )
 
     @patch("spotvm_tool.cli._run_single_analysis")
@@ -363,9 +438,28 @@ class TestMainWithMocks:
 
         assert rc == 0
         mock_discover_skus.assert_not_called()
+        args = mock_run_single_analysis.call_args.kwargs["args"]
+        assert args.explicit_sizes is True
         config = mock_run_single_analysis.call_args.kwargs["config"]
         assert config.sizes == ["Standard_D4ps_v5"]
         assert config.cpu_arch == "arm"
+
+    @patch("spotvm_tool.cli._run_single_analysis")
+    def test_cli_sizes_mark_run_as_explicit_for_hardware_window(
+        self,
+        mock_run_single_analysis,
+    ):
+        rc = main([
+            "--regions", "centralus",
+            "--sizes", "Standard_D64s_v5",
+            "--min-vcpu", "4",
+            "--min-ram", "16",
+            "--no-color",
+        ])
+
+        assert rc == 0
+        args = mock_run_single_analysis.call_args.kwargs["args"]
+        assert args.explicit_sizes is True
 
     @patch("spotvm_tool.cli._run_single_analysis")
     @patch("spotvm_tool.cli.discover_skus")

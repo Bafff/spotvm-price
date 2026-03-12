@@ -295,10 +295,10 @@ Rank | VM Size          | Price   | Eviction | Perf % | Price/Perf
 
 ### Requirements-Based Filtering
 
-Filter VMs by minimum hardware requirements instead of manually specifying SKUs:
+Filter VMs by hardware requirements instead of manually specifying SKUs:
 
 ```bash
-# Auto-discover all VMs with at least 4 vCPUs and 32 GB RAM
+# Auto-discover right-sized VMs near your requested shape
 spotvm-tool \
   --regions centralus eastus \
   --min-vcpu 4 \
@@ -309,10 +309,30 @@ spotvm-tool \
 
 **What happens:**
 1. Tool scans all known SKUs in specifications database
-2. Filters for `vCPU ≥ 4` AND `RAM ≥ 32 GB`
-3. Queries Azure for those SKUs only
-4. Applies cost filtering
-5. Returns top 5 results
+2. Builds bounded windows from the next three distinct hardware tiers in the bundled specs database
+3. Keeps only SKUs that satisfy both windows
+4. Queries Azure for those SKUs only
+5. Applies cost filtering
+6. Returns top 5 results
+
+**Default bounded behavior:**
+- `--min-vcpu 4` means the next known vCPU tiers `4`, `8`, and `16`
+- `--min-vcpu 6` means the next known vCPU tiers `8`, `16`, and `32`
+- RAM windows follow the same rule using distinct known RAM sizes from the specs database
+- When both are set, the tool uses the intersection of both windows
+- Unknown SKUs are excluded in bounded mode because their hardware cannot be verified
+
+**Disable the bound:**
+
+```bash
+# Restore open-ended minimum filtering
+spotvm-tool \
+  --regions centralus eastus \
+  --min-vcpu 4 \
+  --min-ram 32 \
+  --no-max-limit \
+  --limit 5
+```
 
 **Output example:**
 ```
@@ -363,9 +383,9 @@ spotvm-tool \
 ```
 
 **Workflow:**
-1. **Auto-discovery:** Finds all SKUs with ≥8 vCPU and ≥64 GB RAM
+1. **Auto-discovery:** Finds SKUs in the next three distinct known CPU and RAM tiers above your minimums
 2. **Azure query:** Fetches placement scores and pricing for discovered SKUs
-3. **Hardware filter:** Re-validates vCPU/RAM (handles unknown SKUs)
+3. **Hardware filter:** Re-validates vCPU/RAM against the same bounded windows
 4. **Ranking:** Sorts by placement score → eviction → price/performance
 5. **Performance calc:** Computes relative to Standard_D8as_v6
 6. **Cost filter:** Removes VMs exceeding price/eviction/performance limits
@@ -374,8 +394,9 @@ spotvm-tool \
 ### Filter Parameters Reference
 
 **Hardware Requirements** (applied before ranking):
-- `--min-vcpu <int>` - Minimum vCPUs required
-- `--min-ram <int>` - Minimum RAM in GB
+- `--min-vcpu <int>` - Minimum vCPUs required; defaults to the next three distinct known vCPU tiers
+- `--min-ram <int>` - Minimum RAM in GB; defaults to the next three distinct known RAM tiers
+- `--no-max-limit` - Disable bounded windows and restore open-ended minimum filtering
 
 **Cost Constraints** (applied after ranking):
 - `--max-price <float>` - Maximum price per hour (USD)
@@ -383,7 +404,8 @@ spotvm-tool \
 - `--min-performance <float>` - Minimum performance vs baseline (percentage, requires `--baseline-sku`)
 
 **Notes:**
-- SKUs not in specifications database are kept with warnings
+- Unknown SKUs are excluded in bounded mode and kept with warnings only when `--no-max-limit` is used
+- Explicit `--sizes` keep the requested SKU list intact; bounded windows only guide auto-discovery
 - Filters are optional - omit to see all candidates
 - Combine multiple filters for precise requirements
 - Verbose logging shows filtered count: `--verbose`
