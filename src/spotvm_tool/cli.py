@@ -84,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Emit JSON output in addition to the table",
+        help="Emit machine-readable JSON to stdout and suppress human-readable console output",
     )
     parser.add_argument(
         "--limit",
@@ -467,6 +467,14 @@ def _run_single_analysis(
     if config.result_limit:
         ranked = ranked[: config.result_limit]
 
+    def emit(*values: Any, **kwargs: Any) -> None:
+        if config.emit_json:
+            return
+        print(*values, file=sys.stdout, **kwargs)
+
+    def emit_error(*values: Any, **kwargs: Any) -> None:
+        print(*values, file=sys.stderr, **kwargs)
+
     # Save results for historical analysis if requested (even if empty,
     # so automation/unattended monitoring records that a run completed)
     if save_results:
@@ -478,7 +486,7 @@ def _run_single_analysis(
             results_dir=args.results_dir,
         )
         logger.info("Results saved to %s", saved_path)
-        print(f"{'[OK]' if _nc else '✅'} Results saved to: {saved_path}\n")
+        emit(f"{'[OK]' if _nc else '✅'} Results saved to: {saved_path}\n")
 
     # Export to CSV if requested (even if empty, so downstream tools see the run)
     if args.csv:
@@ -491,17 +499,16 @@ def _run_single_analysis(
             )
         except OSError as exc:
             logger.error("Failed to export CSV to %s: %s", args.csv, exc)
-            print(f"{'[x]' if _nc else '❌'} Failed to export CSV to: {args.csv} ({exc})\n")
+            emit_error(f"{'[x]' if _nc else '❌'} Failed to export CSV to: {args.csv} ({exc})\n")
         else:
             logger.info("Results exported to CSV: %s", args.csv)
-            print(f"{'[OK]' if _nc else '✅'} CSV exported to: {args.csv}\n")
+            emit(f"{'[OK]' if _nc else '✅'} CSV exported to: {args.csv}\n")
 
     # Emit JSON / save report (even if empty)
     if config.emit_json or config.save_report:
         report_payload = _build_report(ranked)
         if config.emit_json:
-            print("\nJSON Output:")
-            print(json.dumps(report_payload, indent=2, default=_json_serializer))
+            print(json.dumps(report_payload, indent=2, default=_json_serializer), file=sys.stdout)
         if config.save_report:
             try:
                 config.save_report.write_text(
@@ -510,15 +517,17 @@ def _run_single_analysis(
                 )
             except OSError as exc:
                 logger.error("Failed to save report to %s: %s", config.save_report, exc)
-                print(f"{'[x]' if _nc else '❌'} Failed to save report to: {config.save_report} ({exc})\n")
+                emit_error(f"{'[x]' if _nc else '❌'} Failed to save report to: {config.save_report} ({exc})\n")
             else:
                 logger.info("Saved report to %s", config.save_report)
+        if config.emit_json:
+            return
 
     if not ranked:
-        print("No candidates match the specified filters. Try relaxing constraints.")
+        emit("No candidates match the specified filters. Try relaxing constraints.")
         return
 
-    print(
+    emit(
         render_table(
             ranked,
             show_placement=config.enable_placement,
@@ -528,44 +537,44 @@ def _run_single_analysis(
 
     # Print column explanations
     if config.enable_placement:
-        print("\nColumn Descriptions:")
-        print("  Quota: Indicates if sufficient vCPU quota is available")
-        print("    - Yes: Quota available for deployment")
-        print("    - No:  Insufficient quota (increase quota or choose different region/size)")
-        print("    - Unknown: Quota data not returned by Azure for this SKU/region")
+        emit("\nColumn Descriptions:")
+        emit("  Quota: Indicates if sufficient vCPU quota is available")
+        emit("    - Yes: Quota available for deployment")
+        emit("    - No:  Insufficient quota (increase quota or choose different region/size)")
+        emit("    - Unknown: Quota data not returned by Azure for this SKU/region")
     if config.baseline_sku:
-        print(f"\nPerformance Baseline: {config.baseline_sku} = 100%")
-        print("  Perf %: Relative computing power compared to baseline")
-        print("  Price/Perf: Price per performance unit (lower is better value)")
+        emit(f"\nPerformance Baseline: {config.baseline_sku} = 100%")
+        emit("  Perf %: Relative computing power compared to baseline")
+        emit("  Price/Perf: Price per performance unit (lower is better value)")
 
     # Print color legend if colors are enabled
     if not args.no_color:
         from colorama import Fore, Style
-        print("\nColor Legend:")
-        print(f"  Eviction Rate: {Fore.BLUE}<5%{Style.RESET_ALL} | "
-              f"{Fore.GREEN}5-<10%{Style.RESET_ALL} | "
-              f"{Fore.YELLOW}10-<15%{Style.RESET_ALL} | "
-              f"{Fore.RED}15-<25%{Style.RESET_ALL} | "
-              f"{Fore.RED}{Style.BRIGHT}≥25%{Style.RESET_ALL}")
+        emit("\nColor Legend:")
+        emit(f"  Eviction Rate: {Fore.BLUE}<5%{Style.RESET_ALL} | "
+             f"{Fore.GREEN}5-<10%{Style.RESET_ALL} | "
+             f"{Fore.YELLOW}10-<15%{Style.RESET_ALL} | "
+             f"{Fore.RED}15-<25%{Style.RESET_ALL} | "
+             f"{Fore.RED}{Style.BRIGHT}≥25%{Style.RESET_ALL}")
         if config.enable_placement:
-            print(f"  Placement:     {Fore.GREEN}High{Style.RESET_ALL} | "
-                  f"{Fore.YELLOW}Medium{Style.RESET_ALL} | "
-                  f"{Fore.RED}Low{Style.RESET_ALL}")
+            emit(f"  Placement:     {Fore.GREEN}High{Style.RESET_ALL} | "
+                 f"{Fore.YELLOW}Medium{Style.RESET_ALL} | "
+                 f"{Fore.RED}Low{Style.RESET_ALL}")
 
     summary_lines = summarize_top_candidates(ranked)
     if summary_lines:
-        print("\nRecommendations:")
+        emit("\nRecommendations:")
         for line in summary_lines:
-            print(f" - {line}")
+            emit(f" - {line}")
 
     if config.enable_placement:
         disclaimer = (
             "Note: Azure Spot placement scores are point-in-time indicators and "
             "do not guarantee successful allocation or avoidance of eviction."
         )
-        print(f"\n{disclaimer}")
+        emit(f"\n{disclaimer}")
     else:
-        print(
+        emit(
             "\nNote: Spot VM pricing and eviction rates are historical estimates "
             "and may change. Use --placement-check for capacity/quota data."
         )
@@ -588,13 +597,23 @@ def _build_report(candidates: List[Any]) -> Dict[str, Any]:
                 "evictionRatePercent": item.eviction_rate,
                 "performanceRelativePercent": item.performance_relative,
                 "pricePerPerformance": item.price_per_performance,
+                "performanceBasis": getattr(item, "performance_basis", None),
+                "performanceNote": getattr(item, "performance_note", None),
                 "coremarkScore": item.coremark_score,
                 "coremarkPerVCPU": item.coremark_per_vcpu,
-                "notes": item.notes,
+                "notes": _merge_notes(item.notes, getattr(item, "performance_note", None)),
             }
             for item in candidates
         ],
     }
+
+
+def _merge_notes(*notes: Any) -> Any:
+    parts: List[str] = []
+    for note in notes:
+        if isinstance(note, str) and note and note not in parts:
+            parts.append(note)
+    return "; ".join(parts) or None
 
 
 def _json_serializer(value: Any) -> Any:
