@@ -12,18 +12,28 @@ This project delivers a Python CLI that correlates Azure Spot Placement Score da
 [^spotresources]: Azure documentation: *Use Azure Spot Virtual Machines* – https://learn.microsoft.com/azure/virtual-machines/spot-vms
 
 ## Installation
+
+### Preferred: `uv`
+For local development, the preferred workflow is `uv`.
+
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install .  # installs the CLI entry point `spotvm`
-# For development or running tests:
-pip install -e .[dev]
+uv tool install --editable .
+# Re-run after changing pyproject metadata or dependencies:
+uv tool install --editable --force .
+```
+
+This installs `spotvm` as a global CLI while keeping it linked to the current checkout, so Python code changes under `src/spotvm/` are picked up without reinstalling.
+
+For a project-local development environment and tests:
+```bash
+uv sync --extra dev
+uv run spotvm --help
 ```
 
 ### One-command execution options
+- **uv from GitHub:** `uvx --from git+https://github.com/Bafff/spotvm-price.git spotvm -- --help`
 - **pipx from local checkout:** `pipx run --spec ./ spotvm -- --help`
 - **pipx from GitHub:** `pipx run git+https://github.com/Bafff/spotvm-price.git -- --help`
-- **uv (if installed):** `uvx --from git+https://github.com/Bafff/spotvm-price.git spotvm -- --help`
 
 All three commands read `pyproject.toml`, create an isolated environment, install dependencies, and directly execute the CLI without permanently installing the package.
 
@@ -32,14 +42,15 @@ All three commands read `pyproject.toml`, create an isolated environment, instal
 - Legacy CLI and import names are intentionally unsupported in this branch.
 - Existing cache data under the previous cache directory in `~/.cache` is not migrated automatically. It is safe to delete manually if you no longer need it.
 
-### Complete pipx example
+### Complete `uv` example
 If you keep your subscription ID in `.env` (for example `AZURE_SUBSCRIPTION_ID=2f929c0a-d1f4-480c-a610-f75d1862fd53`), load it and execute:
 
 ```bash
+uv sync --extra dev
 set -a
 source .env
 set +a
-pipx run --pip-args="--force-reinstall" --spec ./ spotvm \
+uv run spotvm \
   --clear-cache \
   --subscription-id "$AZURE_SUBSCRIPTION_ID" \
   --placement-check \
@@ -52,7 +63,7 @@ pipx run --pip-args="--force-reinstall" --spec ./ spotvm \
 Alternatively, pass the subscription inline:
 
 ```bash
-pipx run --pip-args="--force-reinstall" --spec ./ spotvm \
+uv run spotvm \
   --clear-cache \
   --subscription-id 2f929c0a-d1f4-480c-a610-f75d1862fd53 \
   --placement-check \
@@ -62,7 +73,18 @@ pipx run --pip-args="--force-reinstall" --spec ./ spotvm \
   --json
 ```
 
-`--clear-cache` ensures the run fetches fresh placement/Resource Graph data, while `--pip-args="--force-reinstall"` makes pipx rebuild the package from the current checkout before executing it.
+`--clear-cache` ensures the run fetches fresh placement/Resource Graph data. If you prefer not to create a project-local environment, use the `uvx` or `pipx` one-command options above instead.
+
+### `pip` / `pipx` fallback
+If you do not want to use `uv`, the project still works with standard Python packaging tools:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install .  # installs the CLI entry point `spotvm`
+# For development or running tests:
+pip install -e .[dev]
+```
 
 ## Configuration
 You can supply parameters directly via CLI arguments or load them from a JSON/YAML file. The sample below mirrors `config.sample.yaml` in the repository:
@@ -742,11 +764,14 @@ plt.show()
 | CLI exits with `No module named spotvm` when running from source | Set `PYTHONPATH=src` when invoking via `python -m spotvm.cli`. |
 
 ## Testing
-Install the development extras and execute `pytest` (requires an environment with Pytest available):
+The preferred test workflow uses `uv`:
+
 ```bash
-pip install -e .[dev]
-PYTHONPATH=src pytest
+uv sync --extra dev
+uv run pytest
 ```
+
+If you are using a traditional virtualenv instead, `pip install -e .[dev]` and `PYTHONPATH=src pytest` still work.
 
 ## Roadmap pointers
 The PRD outlines potential enhancements such as visualisations, extended scheduling support, and automated discovery of alternative SKUs. The current implementation focuses on the ASCII reporting workflow and lays modular foundations for future iteration (separate modules for placement, historical metrics, and reporting).
