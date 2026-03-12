@@ -43,6 +43,8 @@ Expected: PASS
 
 **Step 5: Commit**
 
+At this point in the plan Task 2 has not happened yet, so these paths still live under `src/spotvm_tool/`.
+
 ```bash
 git add tests/test_cli.py tests/test_cache.py tests/test_history.py tests/test_resource_graph.py \
     src/spotvm_tool/cli.py src/spotvm_tool/cache.py src/spotvm_tool/history.py \

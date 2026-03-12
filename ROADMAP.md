@@ -1,6 +1,6 @@
 # spotvm Roadmap
 
-## 🎯 Current Status (v0.3.1)
+## 🎯 Current Status (v0.4.0)
 
 ### ✅ Implemented Features
 - Azure Spot VM placement score analysis
@@ -103,7 +103,7 @@ Savings vs on-demand: 72%
 
 ---
 
-### Phase 3: Visual & Reporting (v0.4.0)
+### Phase 3: Visual & Reporting (v0.5.0)
 **Timeline:** 6-8 hours development
 **Priority:** 🟢 LOW-MEDIUM
 
@@ -141,7 +141,7 @@ Savings vs on-demand: 72%
 
 ---
 
-### Phase 4: Infrastructure Integration (v0.5.0)
+### Phase 4: Infrastructure Integration (v0.6.0)
 **Timeline:** 8-12 hours development
 **Priority:** 🟢 LOW
 
@@ -187,7 +187,7 @@ resource "azurerm_linux_virtual_machine" "spot" {
 
 ---
 
-### Phase 5: Advanced Features (v0.6.0+)
+### Phase 5: Advanced Features (v0.7.0+)
 **Timeline:** 20+ hours development
 **Priority:** 💡 NICE TO HAVE
 
@@ -296,9 +296,10 @@ Interested in implementing any of these features? Check our [CONTRIBUTING.md](CO
 - **v0.1.0** - Initial release with core functionality
 - **v0.2.0** - Historical data tracking, trend analysis
 - **v0.3.0** - SKU auto-discovery, filtering, unattended monitoring
-- **v0.3.1** (Current) - CoreMark benchmarks, CPU architecture, colored output, CSV export, placement opt-in
-- **v0.4.0** (Planned) - Visual charts and reporting
-- **v0.5.0** (Planned) - Infrastructure integration
+- **v0.3.1** - CoreMark benchmarks, CPU architecture, colored output, CSV export, placement opt-in
+- **v0.4.0** (Current) - Breaking rename to `spotvm`, packaging cleanup, updated installation/docs
+- **v0.5.0** (Planned) - Visual charts and reporting
+- **v0.6.0** (Planned) - Infrastructure integration
 
 ---
 
