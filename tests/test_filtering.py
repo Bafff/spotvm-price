@@ -91,7 +91,7 @@ class TestAutoDiscovery:
         skus = discover_skus(min_vcpu=6)
 
         assert len(skus) > 0
-        assert all((spec := get_vm_spec(sku)) is not None and spec.vcpus in {8, 16, 32} for sku in skus)
+        assert all((spec := get_vm_spec(sku)) is not None and spec.vcpus in {8, 16, 20} for sku in skus)
         assert not any((spec := get_vm_spec(sku)) is not None and spec.vcpus > 32 for sku in skus)
 
     def test_discover_no_max_limit_restores_unbounded_minimum_behavior(self):
@@ -113,8 +113,8 @@ def test_known_hardware_tiers_returns_sorted_unique_values():
 
 
 def test_hardware_window_tiers_returns_next_three_matching_tiers():
-    assert hardware_window_tiers(6, dimension="vcpu") == (8.0, 16.0, 32.0)
-    assert hardware_window_tiers(30, dimension="ram") == (32.0, 56.0, 64.0)
+    assert hardware_window_tiers(6, dimension="vcpu") == (8.0, 16.0, 20.0)
+    assert hardware_window_tiers(15, dimension="ram") == (16.0, 28.0, 32.0)
 
 
 def test_matches_hardware_constraint_respects_bounded_and_unbounded_modes():
