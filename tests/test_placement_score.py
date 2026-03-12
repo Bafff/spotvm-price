@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from spotvm_tool.placement_score import _parse_response
+from spotvm.placement_score import _parse_response
 
 
 def test_parse_response_logs_items_without_vm_size(caplog):
@@ -16,7 +16,7 @@ def test_parse_response_logs_items_without_vm_size(caplog):
         ]
     }
 
-    with caplog.at_level(logging.DEBUG, logger="spotvm-tool"):
+    with caplog.at_level(logging.DEBUG, logger="spotvm"):
         results = _parse_response(payload)
 
     assert results == []

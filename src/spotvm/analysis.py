@@ -11,7 +11,7 @@ from .vm_specs import (
     matches_hardware_constraint,
 )
 
-logger = logging.getLogger("spotvm-tool")
+logger = logging.getLogger("spotvm")
 
 PLACEMENT_ORDER = {"high": 3, "medium": 2, "low": 1}
 

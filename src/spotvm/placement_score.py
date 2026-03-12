@@ -10,7 +10,7 @@ from .config import ToolConfig
 from .http_client import AzureRestClient
 from .models import PlacementScoreResult
 
-logger = logging.getLogger("spotvm-tool")
+logger = logging.getLogger("spotvm")
 
 PLACEMENT_API_VERSION = "2025-06-05"
 PLACEMENT_ENDPOINT_TEMPLATE = (

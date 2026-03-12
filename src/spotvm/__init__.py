@@ -3,7 +3,7 @@
 from importlib.metadata import version, PackageNotFoundError
 
 try:
-    __version__ = version("spotvm-tool")
+    __version__ = version("spotvm")
 except PackageNotFoundError:  # pragma: no cover - during development
     __version__ = "0.0.0-dev"
 
