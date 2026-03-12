@@ -199,7 +199,8 @@ def filter_by_requirements(
     Removes candidates that don't meet minimum vCPU or RAM requirements,
     or don't match the requested CPU architecture.
     SKUs not found in VM_SPECIFICATIONS are kept with a warning for vCPU/RAM
-    checks, but candidates with unknown architecture are excluded when
+    checks only when no_max_limit=True; otherwise bounded hardware filtering
+    excludes them. Candidates with unknown architecture are excluded when
     cpu_arch is specified.
 
     Args:
