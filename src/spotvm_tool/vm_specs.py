@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from typing import Dict, Literal, Optional
 
+from .models import PerformanceBasis
+
 
 @dataclass
 class VMSpec:
@@ -282,18 +284,34 @@ def calculate_relative_performance(
         Percentage relative to baseline (e.g., 200.0 means 2x faster)
         None if either SKU is not found
     """
+    performance, _ = calculate_relative_performance_details(sku, baseline_sku)
+    return performance
+
+
+def calculate_relative_performance_details(
+    sku: str,
+    baseline_sku: str,
+) -> tuple[Optional[float], Optional[PerformanceBasis]]:
+    """Calculate relative performance and expose whether CoreMark or a fallback was used."""
     spec = get_vm_spec(sku)
     baseline_spec = get_vm_spec(baseline_sku)
 
     if not spec or not baseline_spec:
-        return None
+        return None, None
 
-    # Calculate relative performance
-    baseline_score = baseline_spec.compute_score
+    if spec.coremark_score is not None and baseline_spec.coremark_score is not None:
+        score = float(spec.coremark_score)
+        baseline_score = float(baseline_spec.coremark_score)
+        basis: Optional[PerformanceBasis] = "coremark"
+    else:
+        score = spec.compute_score
+        baseline_score = baseline_spec.compute_score
+        basis = "heuristic"
+
     if baseline_score == 0:
-        return None
+        return None, None
 
-    return (spec.compute_score / baseline_score) * 100.0
+    return (score / baseline_score) * 100.0, basis
 
 
 CPUArchitecture = Literal["x64", "arm"]

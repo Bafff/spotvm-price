@@ -248,8 +248,7 @@ Add `--baseline-sku` to compare relative performance:
 spotvm-tool \
   --baseline-sku Standard_D4as_v6 \
   --regions eastus centralus \
-  --sizes Standard_D2as_v6 Standard_D4as_v5 Standard_E4s_v5 \
-  --desired-count 10
+  --sizes Standard_D2as_v6 Standard_D4as_v5 Standard_E4s_v5
 ```
 
 **Output includes:**
@@ -259,10 +258,9 @@ spotvm-tool \
 - `CM/vCPU` - CoreMark per vCPU (CPU efficiency metric, higher = more efficient)
 
 **Performance calculation:**
-```
-Compute Score = (vCPUs × 100) + (RAM_GB × 5)
-Relative % = (SKU_score / Baseline_score) × 100
-```
+- If both the candidate SKU and baseline SKU have published CoreMark data, `Perf %` uses the CoreMark ratio.
+- Otherwise the tool falls back to the resource heuristic `Compute Score = (vCPUs × 100) + (RAM_GB × 5)`.
+- When the fallback is used, the tool adds a warning in the output so you can distinguish heuristic comparisons from benchmark-based ones.
 
 *Source: [Azure VM Sizes Documentation](https://learn.microsoft.com/en-us/azure/virtual-machines/sizes)*
 
@@ -281,15 +279,15 @@ Rank | VM Size          | Price   | Eviction | Perf % | Price/Perf
 - **D2as_v6**: Cheapest, same price/performance, but high eviction risk (20%)
 
 **Notes:**
-- Performance formula weights CPU more heavily (100×) than RAM (5×)
-- Formula is simplified; real performance depends on workload type, CPU generation, I/O, etc.
+- The fallback heuristic weights CPU more heavily (100×) than RAM (5×).
+- Heuristic comparisons are coarse; real performance still depends on workload type, CPU generation, cache behavior, I/O, and throttling.
 - **Official Azure performance metrics status:**
   - **ACU (Azure Compute Units)**: Not published for v5/v6+ series. Microsoft is "reevaluating how they calculate Azure Compute Units weights for Virtual machine performance benchmarks to account for updates in processor architecture." Only v4 and older have ACU values.
   - **CoreMark benchmarks**: **Available for v5 series** (D/E/F) with full data in this tool. **Not available for v6+ series** - Microsoft [no longer publishes](https://learn.microsoft.com/en-us/azure/virtual-machines/linux/compute-benchmark-scores) CoreMark for newest generations, stating: "Azure is no longer publishing CoreMark since the metric has limited ability to inform users of the expected performance."
   - **v6 series (Standard_D4as_v6, etc.)**: ❌ No CoreMark data available - columns will show `-`
   - **v5 series (Standard_D4as_v5, etc.)**: ✅ Full CoreMark data available
   - Microsoft recommends: *"Run your actual workload on target VMs for accurate performance assessment"*
-- Our vCPU + RAM formula provides a reasonable approximation for SKUs without CoreMark data
+- The vCPU + RAM formula is a fallback for SKUs without comparable CoreMark data, not a substitute for workload testing
 - Choose a baseline similar to your typical workload for most accurate relative comparison
 
 ## Filtering and Auto-Discovery

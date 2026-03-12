@@ -181,7 +181,7 @@ def render_table(
             "CoreMark": _format_coremark(item.coremark_score),
             "CM/vCPU": _format_coremark_per_vcpu(item.coremark_per_vcpu),
             "Price Updated": _format_dt(item.price_last_updated),
-            "Notes": item.notes or "",
+            "Notes": _format_notes(item),
         }
         rows.append([all_cells[c] for c in columns])
 
@@ -282,6 +282,15 @@ def _format_coremark_per_vcpu(value: float | None) -> str:
     return f"{value:,.0f}"
 
 
+def _format_notes(item: CandidateInsight) -> str:
+    """Join analysis notes without duplicating repeated messages."""
+    parts: List[str] = []
+    for note in (item.notes, item.performance_note):
+        if note and note not in parts:
+            parts.append(note)
+    return "; ".join(parts)
+
+
 CSV_COLUMNS = [
     "Rank",
     "Region",
@@ -341,7 +350,7 @@ def export_to_csv(
             "CoreMark Score": _csv_format_coremark(item.coremark_score),
             "CoreMark per vCPU": _csv_format_coremark_per_vcpu(item.coremark_per_vcpu),
             "Price Last Updated": _csv_format_datetime(item.price_last_updated),
-            "Notes": item.notes or "",
+            "Notes": _format_notes(item),
         }
         rows.append([all_cells[c] for c in columns])
 

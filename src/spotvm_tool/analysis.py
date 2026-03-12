@@ -4,7 +4,7 @@ import logging
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
-from .vm_specs import calculate_relative_performance, get_vm_spec, detect_cpu_architecture
+from .vm_specs import calculate_relative_performance_details, get_vm_spec, detect_cpu_architecture
 
 logger = logging.getLogger("spotvm-tool")
 
@@ -116,14 +116,23 @@ def enrich_with_performance(
         return candidates
 
     for candidate in candidates:
-        # Calculate relative performance
-        perf = calculate_relative_performance(candidate.vm_size, baseline_sku)
+        perf, basis = calculate_relative_performance_details(candidate.vm_size, baseline_sku)
         candidate.performance_relative = perf
+        candidate.performance_basis = basis
+        candidate.performance_note = None
+
+        if basis == "heuristic":
+            candidate.performance_note = (
+                "Perf % and Price/Perf use the vCPU/RAM heuristic because CoreMark data "
+                "is unavailable for this comparison."
+            )
 
         # Calculate price per performance unit
         if perf and perf > 0 and candidate.price_usd:
             # Price per 1% of baseline performance
             candidate.price_per_performance = candidate.price_usd / perf
+        else:
+            candidate.price_per_performance = None
 
     return candidates
 
