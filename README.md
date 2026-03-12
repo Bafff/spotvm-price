@@ -593,7 +593,7 @@ spotvm-tool \
 **Features:**
 - **Automatic data saving**: Enables `--save-results` automatically
 - **Graceful shutdown**: Press `Ctrl+C` to stop after current run completes
-- **Error resilience**: Continues running even if individual runs fail
+- **Error resilience**: Continues after individual run failures, but stops after 3 consecutive unexpected errors
 - **Timestamped runs**: Each run saved with microsecond-precision timestamp
 - **Flexible interval**: Specify minutes (default: 60)
 
