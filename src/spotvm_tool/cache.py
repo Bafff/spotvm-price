@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -9,6 +10,7 @@ from typing import Any, Optional
 
 CACHE_DIR = Path.home() / ".cache" / "spotvm_tool"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+logger = logging.getLogger("spotvm-tool")
 
 
 def _key_digest(key: str) -> str:
@@ -22,13 +24,31 @@ def load(key: str, ttl_minutes: int) -> Optional[Any]:
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        path.unlink(missing_ok=True)
+    except OSError as exc:
+        logger.warning("Failed to read cache file %s: %s", path, exc)
+        return None
+    except json.JSONDecodeError as exc:
+        logger.warning("Failed to decode cache file %s: %s", path, exc)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as unlink_exc:
+            logger.warning("Failed to remove malformed cache file %s: %s", path, unlink_exc)
+        return None
+
+    if not isinstance(payload, dict):
+        logger.warning("Cache file %s did not contain an object payload", path)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as unlink_exc:
+            logger.warning("Failed to remove malformed cache file %s: %s", path, unlink_exc)
         return None
 
     expires_at = payload.get("expires_at")
     if not expires_at or time.time() > expires_at:
-        path.unlink(missing_ok=True)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("Failed to remove expired cache file %s: %s", path, exc)
         return None
     return payload.get("data")
 
@@ -40,7 +60,10 @@ def store(key: str, data: Any, ttl_minutes: int) -> None:
         "expires_at": time.time() + ttl_minutes * 60,
         "data": data,
     }
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    try:
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Failed to write cache file %s: %s", path, exc)
 
 
 def clear() -> None:

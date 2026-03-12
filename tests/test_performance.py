@@ -6,7 +6,7 @@ import pytest
 
 from spotvm_tool.analysis import enrich_with_performance
 from spotvm_tool.models import CandidateInsight
-from spotvm_tool.vm_specs import calculate_relative_performance
+from spotvm_tool.vm_specs import calculate_relative_performance, calculate_relative_performance_details
 
 
 def test_calculate_relative_performance_prefers_coremark_when_both_skus_have_it():
@@ -34,3 +34,21 @@ def test_enrich_with_performance_marks_heuristic_fallback_when_coremark_missing(
     assert enriched.price_per_performance == pytest.approx(0.0005)
     assert enriched.performance_basis == "heuristic"
     assert "CoreMark" in enriched.performance_note
+
+
+def test_calculate_relative_performance_details_prefers_coremark_basis():
+    perf, basis = calculate_relative_performance_details("Standard_D4as_v5", "Standard_D4s_v5")
+
+    assert perf == pytest.approx((72_928 / 67_114) * 100.0, rel=1e-4)
+    assert basis == "coremark"
+
+
+def test_calculate_relative_performance_details_falls_back_to_heuristic_basis():
+    perf, basis = calculate_relative_performance_details("Standard_D4s_v4", "Standard_D4s_v5")
+
+    assert perf == pytest.approx(100.0)
+    assert basis == "heuristic"
+
+
+def test_calculate_relative_performance_details_returns_none_for_unknown_sku():
+    assert calculate_relative_performance_details("Standard_UnknownSKU_v99", "Standard_D4s_v5") == (None, None)

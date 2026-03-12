@@ -215,6 +215,8 @@ def _extract_eviction(entry: Optional[dict]) -> tuple[Optional[float], Optional[
                 match = re.search(r"^(\d+(?:\.\d+)?)", eviction_str)
                 if match:
                     rate = _to_float(match.group(1))
+        if rate is None:
+            logger.warning("Failed to parse eviction rate: %r", eviction_str)
 
     # Azure SpotResources API doesn't provide lastUpdatedTime for eviction rates
     # This is a known limitation - eviction rates are updated every ~30 minutes but
@@ -247,6 +249,8 @@ def _to_float(value: Any) -> Optional[float]:
     try:
         return float(value)
     except (TypeError, ValueError):
+        if value != "":
+            logger.warning("Failed to parse float value: %r", value)
         return None
 
 
@@ -267,4 +271,3 @@ def _parse_datetime_string(value: Any) -> Optional[datetime]:
             return None
     logger.debug("Unsupported datetime type %s: %r", type(value).__name__, value)
     return None
-

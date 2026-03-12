@@ -54,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--desired-count",
         type=int,
-        help="Number of VMs you plan to deploy (used with --placement-check to assess capacity, default: 1)",
+        help="Number of VMs you plan to deploy (used with --placement-check to assess capacity; effective default in placement mode: 1)",
     )
     parser.add_argument(
         "--os-type",
@@ -457,21 +457,13 @@ def _run_single_analysis(
     effective_no_max_limit = (
         getattr(args, "no_max_limit", False) or getattr(args, "explicit_sizes", False)
     )
-    if effective_no_max_limit:
-        candidates = filter_by_requirements(
-            candidates,
-            min_vcpu=args.min_vcpu,
-            min_ram=args.min_ram,
-            cpu_arch=config.cpu_arch,
-            no_max_limit=True,
-        )
-    else:
-        candidates = filter_by_requirements(
-            candidates,
-            min_vcpu=args.min_vcpu,
-            min_ram=args.min_ram,
-            cpu_arch=config.cpu_arch,
-        )
+    candidates = filter_by_requirements(
+        candidates,
+        min_vcpu=args.min_vcpu,
+        min_ram=args.min_ram,
+        cpu_arch=config.cpu_arch,
+        no_max_limit=effective_no_max_limit,
+    )
 
     ranked = rank_candidates(candidates)
     ranked = enrich_with_performance(ranked, config.baseline_sku)
@@ -501,13 +493,18 @@ def _run_single_analysis(
     if save_results:
         from .history import save_run_results
 
-        saved_path = save_run_results(
-            candidates=ranked,
-            config=config,
-            results_dir=args.results_dir,
-        )
-        logger.info("Results saved to %s", saved_path)
-        emit(f"{'[OK]' if _nc else '✅'} Results saved to: {saved_path}\n")
+        try:
+            saved_path = save_run_results(
+                candidates=ranked,
+                config=config,
+                results_dir=args.results_dir,
+            )
+        except OSError as exc:
+            logger.warning("Failed to save run results: %s", exc)
+            emit_error(f"Failed to save run results: {exc}")
+        else:
+            logger.info("Results saved to %s", saved_path)
+            emit(f"{'[OK]' if _nc else '✅'} Results saved to: {saved_path}\n")
 
     # Export to CSV if requested (even if empty, so downstream tools see the run)
     if args.csv:

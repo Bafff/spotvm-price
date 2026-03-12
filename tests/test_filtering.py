@@ -7,7 +7,14 @@ import pytest
 
 from spotvm_tool.analysis import filter_by_cost, filter_by_requirements
 from spotvm_tool.models import CandidateInsight
-from spotvm_tool.vm_specs import discover_skus, detect_cpu_architecture, get_vm_spec
+from spotvm_tool.vm_specs import (
+    discover_skus,
+    detect_cpu_architecture,
+    get_vm_spec,
+    hardware_window_tiers,
+    known_hardware_tiers,
+    matches_hardware_constraint,
+)
 
 
 class TestAutoDiscovery:
@@ -93,6 +100,27 @@ class TestAutoDiscovery:
 
         assert any((spec := get_vm_spec(sku)) is not None and spec.vcpus > 16 for sku in skus)
         assert any((spec := get_vm_spec(sku)) is not None and spec.ram_gb > 64 for sku in skus)
+
+
+def test_known_hardware_tiers_returns_sorted_unique_values():
+    vcpu_tiers = known_hardware_tiers("vcpu")
+    ram_tiers = known_hardware_tiers("ram")
+
+    assert vcpu_tiers == tuple(sorted(set(vcpu_tiers)))
+    assert ram_tiers == tuple(sorted(set(ram_tiers)))
+    assert 4.0 in vcpu_tiers
+    assert 16.0 in ram_tiers
+
+
+def test_hardware_window_tiers_returns_next_three_matching_tiers():
+    assert hardware_window_tiers(6, dimension="vcpu") == (8.0, 16.0, 32.0)
+    assert hardware_window_tiers(30, dimension="ram") == (32.0, 56.0, 64.0)
+
+
+def test_matches_hardware_constraint_respects_bounded_and_unbounded_modes():
+    assert matches_hardware_constraint(8, 6, dimension="vcpu") is True
+    assert matches_hardware_constraint(64, 6, dimension="vcpu") is False
+    assert matches_hardware_constraint(64, 6, dimension="vcpu", no_max_limit=True) is True
 
 
 class TestFilterByRequirements:

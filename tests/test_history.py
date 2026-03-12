@@ -2,6 +2,7 @@
 
 import csv
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -137,6 +138,39 @@ def test_load_historical_runs_with_depth(temp_results_dir, sample_candidates, sa
     # Load only last 2
     snapshots = load_historical_runs(temp_results_dir, depth=2)
     assert len(snapshots) == 2
+
+
+def test_load_historical_runs_skips_malformed_json_file(temp_results_dir, sample_candidates, sample_config, caplog):
+    save_run_results(sample_candidates, sample_config, temp_results_dir)
+    bad_path = temp_results_dir / "runs" / "broken.json"
+    bad_path.write_text("{not-valid-json", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="spotvm-tool"):
+        snapshots = load_historical_runs(temp_results_dir)
+
+    assert len(snapshots) == 1
+    assert "Failed to load historical run" in caplog.text
+
+
+def test_load_historical_runs_skips_unreadable_file(temp_results_dir, sample_candidates, sample_config, monkeypatch, caplog):
+    save_run_results(sample_candidates, sample_config, temp_results_dir)
+    bad_path = temp_results_dir / "runs" / "unreadable.json"
+    bad_path.write_text("{}", encoding="utf-8")
+
+    original_open = Path.open
+
+    def raising_open(self: Path, *args, **kwargs):
+        if self == bad_path:
+            raise PermissionError("no read access")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", raising_open)
+
+    with caplog.at_level(logging.WARNING, logger="spotvm-tool"):
+        snapshots = load_historical_runs(temp_results_dir)
+
+    assert len(snapshots) == 1
+    assert "Failed to load historical run" in caplog.text
 
 
 def test_generate_history_csv_creates_file(temp_results_dir, sample_candidates, sample_config):
