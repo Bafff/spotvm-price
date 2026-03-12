@@ -4,7 +4,12 @@ import logging
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
-from .vm_specs import calculate_relative_performance_details, get_vm_spec, detect_cpu_architecture
+from .vm_specs import (
+    calculate_relative_performance_details,
+    detect_cpu_architecture,
+    get_vm_spec,
+    matches_hardware_constraint,
+)
 
 logger = logging.getLogger("spotvm-tool")
 
@@ -187,6 +192,7 @@ def filter_by_requirements(
     min_vcpu: Optional[int] = None,
     min_ram: Optional[int] = None,
     cpu_arch: Optional[str] = None,
+    no_max_limit: bool = False,
 ) -> List[CandidateInsight]:
     """Filter candidates by hardware requirements (vCPU, RAM, CPU architecture).
 
@@ -201,6 +207,7 @@ def filter_by_requirements(
         min_vcpu: Minimum vCPUs required (None = no filter)
         min_ram: Minimum RAM in GB required (None = no filter)
         cpu_arch: CPU architecture filter, "x64" or "arm" (None = no filter)
+        no_max_limit: Disable the default bounded 3-tier window for min_vcpu/min_ram
 
     Returns:
         Filtered list of candidates meeting requirements
@@ -239,26 +246,44 @@ def filter_by_requirements(
 
         if not spec:
             if min_vcpu is not None or min_ram is not None:
-                # Unknown SKU - keep it but warn about unverifiable requirements
+                if no_max_limit:
+                    logger.warning(
+                        f"VM size {candidate.vm_size} not in specifications database, "
+                        f"cannot verify vCPU/RAM requirements"
+                    )
+                    filtered.append(candidate)
+                    continue
                 logger.warning(
                     f"VM size {candidate.vm_size} not in specifications database, "
-                    f"cannot verify vCPU/RAM requirements"
+                    f"excluding from bounded hardware results"
                 )
+                filtered_count += 1
+                continue
             filtered.append(candidate)
             continue
 
         # Check vCPU requirement
-        if min_vcpu is not None and spec.vcpus < min_vcpu:
+        if not matches_hardware_constraint(
+            spec.vcpus,
+            min_vcpu,
+            dimension="vcpu",
+            no_max_limit=no_max_limit,
+        ):
             logger.debug(
-                f"Filtered {candidate.vm_size}: {spec.vcpus} vCPU < {min_vcpu} required"
+                f"Filtered {candidate.vm_size}: {spec.vcpus} vCPU does not match requested window"
             )
             filtered_count += 1
             continue
 
         # Check RAM requirement
-        if min_ram is not None and spec.ram_gb < min_ram:
+        if not matches_hardware_constraint(
+            spec.ram_gb,
+            min_ram,
+            dimension="ram",
+            no_max_limit=no_max_limit,
+        ):
             logger.debug(
-                f"Filtered {candidate.vm_size}: {spec.ram_gb} GB RAM < {min_ram} GB required"
+                f"Filtered {candidate.vm_size}: {spec.ram_gb} GB RAM does not match requested window"
             )
             filtered_count += 1
             continue

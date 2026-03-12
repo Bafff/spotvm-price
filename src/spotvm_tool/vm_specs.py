@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Dict, Literal, Optional
 
 from .models import PerformanceBasis
@@ -270,6 +271,45 @@ def get_vm_spec(sku: str) -> Optional[VMSpec]:
     return VM_SPECIFICATIONS.get(sku) or VM_SPECIFICATIONS.get(sku.replace("_", ""))
 
 
+HardwareDimension = Literal["vcpu", "ram"]
+
+
+@lru_cache(maxsize=None)
+def known_hardware_tiers(dimension: HardwareDimension) -> tuple[float, ...]:
+    """Return sorted distinct hardware tiers known to the local specs database."""
+    if dimension == "vcpu":
+        return tuple(sorted({float(spec.vcpus) for spec in VM_SPECIFICATIONS.values()}))
+    return tuple(sorted({float(spec.ram_gb) for spec in VM_SPECIFICATIONS.values()}))
+
+
+def hardware_window_tiers(
+    minimum: Optional[float],
+    *,
+    dimension: HardwareDimension,
+) -> Optional[tuple[float, ...]]:
+    """Return the next three distinct known tiers that satisfy a minimum constraint."""
+    if minimum is None:
+        return None
+    return tuple(tier for tier in known_hardware_tiers(dimension) if tier >= minimum)[:3]
+
+
+def matches_hardware_constraint(
+    value: float,
+    minimum: Optional[float],
+    *,
+    dimension: HardwareDimension,
+    no_max_limit: bool = False,
+) -> bool:
+    """Check whether a hardware value satisfies bounded or unbounded minimum filtering."""
+    if minimum is None:
+        return True
+    if value < minimum:
+        return False
+    if no_max_limit:
+        return True
+    return value in hardware_window_tiers(minimum, dimension=dimension)
+
+
 def calculate_relative_performance(
     sku: str,
     baseline_sku: str,
@@ -393,6 +433,7 @@ def discover_skus(
     min_vcpu: Optional[int] = None,
     min_ram: Optional[int] = None,
     cpu_arch: Optional[CPUArchitecture] = None,
+    no_max_limit: bool = False,
 ) -> list[str]:
     """Discover VM SKUs matching hardware requirements.
 
@@ -405,6 +446,8 @@ def discover_skus(
         min_vcpu: Minimum vCPUs required (None = no filter)
         min_ram: Minimum RAM in GB required (None = no filter)
         cpu_arch: CPU architecture filter: "x64" or "arm" (None = no filter)
+        no_max_limit: Disable the default 3-tier bounded window and keep
+            unbounded minimum filtering
 
     Returns:
         List of SKU names that meet the requirements, sorted by compute score
@@ -422,11 +465,21 @@ def discover_skus(
 
     for sku_name, spec in VM_SPECIFICATIONS.items():
         # Check vCPU requirement
-        if min_vcpu is not None and spec.vcpus < min_vcpu:
+        if not matches_hardware_constraint(
+            spec.vcpus,
+            min_vcpu,
+            dimension="vcpu",
+            no_max_limit=no_max_limit,
+        ):
             continue
 
         # Check RAM requirement
-        if min_ram is not None and spec.ram_gb < min_ram:
+        if not matches_hardware_constraint(
+            spec.ram_gb,
+            min_ram,
+            dimension="ram",
+            no_max_limit=no_max_limit,
+        ):
             continue
 
         # Check CPU architecture requirement

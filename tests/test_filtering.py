@@ -7,7 +7,7 @@ import pytest
 
 from spotvm_tool.analysis import filter_by_cost, filter_by_requirements
 from spotvm_tool.models import CandidateInsight
-from spotvm_tool.vm_specs import discover_skus, detect_cpu_architecture
+from spotvm_tool.vm_specs import discover_skus, detect_cpu_architecture, get_vm_spec
 
 
 class TestAutoDiscovery:
@@ -59,6 +59,40 @@ class TestAutoDiscovery:
         assert len(skus) >= 2
         # Just verify we got some results in order
         assert skus[0]  # First SKU exists
+
+    def test_discover_by_vcpu_uses_bounded_three_tier_window_by_default(self):
+        """Minimum vCPU should default to min, 2x min, and 4x min tiers only."""
+        skus = discover_skus(min_vcpu=4)
+
+        assert len(skus) > 0
+        assert all((spec := get_vm_spec(sku)) is not None and spec.vcpus in {4, 8, 16} for sku in skus)
+        assert not any((spec := get_vm_spec(sku)) is not None and spec.vcpus > 16 for sku in skus)
+
+    def test_discover_by_vcpu_and_ram_intersects_bounded_windows(self):
+        """CPU and RAM windows should both apply in bounded mode."""
+        skus = discover_skus(min_vcpu=4, min_ram=16)
+
+        assert len(skus) > 0
+        for sku in skus:
+            spec = get_vm_spec(sku)
+            assert spec is not None
+            assert spec.vcpus in {4, 8, 16}
+            assert spec.ram_gb in {16, 28, 32}
+
+    def test_discover_by_nonstandard_vcpu_uses_next_known_spec_tiers(self):
+        """Non-standard minimums should snap to the next distinct known tiers."""
+        skus = discover_skus(min_vcpu=6)
+
+        assert len(skus) > 0
+        assert all((spec := get_vm_spec(sku)) is not None and spec.vcpus in {8, 16, 32} for sku in skus)
+        assert not any((spec := get_vm_spec(sku)) is not None and spec.vcpus > 32 for sku in skus)
+
+    def test_discover_no_max_limit_restores_unbounded_minimum_behavior(self):
+        """no_max_limit should keep larger SKU tiers available."""
+        skus = discover_skus(min_vcpu=4, min_ram=16, no_max_limit=True)
+
+        assert any((spec := get_vm_spec(sku)) is not None and spec.vcpus > 16 for sku in skus)
+        assert any((spec := get_vm_spec(sku)) is not None and spec.ram_gb > 64 for sku in skus)
 
 
 class TestFilterByRequirements:
@@ -131,7 +165,7 @@ class TestFilterByRequirements:
         assert len(filtered) == len(sample_candidates)
 
     def test_filter_unknown_sku(self):
-        """Test that unknown SKUs are kept with warning."""
+        """Unknown SKUs are still kept when bounded filtering is disabled."""
         unknown_candidate = [
             CandidateInsight(
                 vm_size="Standard_UnknownSKU_v99",
@@ -145,10 +179,149 @@ class TestFilterByRequirements:
             ),
         ]
 
-        # Should keep unknown SKU (can't verify requirements)
-        filtered = filter_by_requirements(unknown_candidate, min_vcpu=100, min_ram=1000)
+        filtered = filter_by_requirements(
+            unknown_candidate,
+            min_vcpu=100,
+            min_ram=1000,
+            no_max_limit=True,
+        )
 
         assert len(filtered) == 1
+
+    def test_filter_unknown_sku_in_unbounded_mode_keeps_warning(self, caplog):
+        """Unlimited mode should preserve the unverifiable-SKU warning."""
+        unknown_candidate = [
+            CandidateInsight(
+                vm_size="Standard_UnknownSKU_v99",
+                region="eastus",
+                placement_score="High",
+                quota_available=True,
+                price_usd=0.05,
+                price_last_updated=datetime(2025, 1, 25, 14, 0),
+                eviction_rate=1.0,
+                eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+            ),
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="spotvm-tool"):
+            filtered = filter_by_requirements(
+                unknown_candidate,
+                min_vcpu=100,
+                min_ram=1000,
+                no_max_limit=True,
+            )
+
+        assert len(filtered) == 1
+        assert "cannot verify vCPU/RAM requirements" in caplog.text
+
+    def test_filter_by_both_uses_bounded_hardware_window_by_default(self):
+        """Default min filters should keep only the next three CPU and RAM tiers."""
+        candidates = [
+            CandidateInsight(
+                vm_size="Standard_D4as_v6",  # 4 vCPU, 16 GB
+                region="centralus",
+                placement_score="High",
+                quota_available=True,
+                price_usd=0.0336,
+                price_last_updated=datetime(2025, 1, 25, 14, 0),
+                eviction_rate=3.0,
+                eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+            ),
+            CandidateInsight(
+                vm_size="Standard_D8as_v5",  # 8 vCPU, 32 GB
+                region="centralus",
+                placement_score="High",
+                quota_available=True,
+                price_usd=0.0672,
+                price_last_updated=datetime(2025, 1, 25, 14, 0),
+                eviction_rate=3.0,
+                eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+            ),
+            CandidateInsight(
+                vm_size="Standard_E16s_v5",  # 16 vCPU, 128 GB
+                region="centralus",
+                placement_score="High",
+                quota_available=True,
+                price_usd=0.2784,
+                price_last_updated=datetime(2025, 1, 25, 14, 0),
+                eviction_rate=3.0,
+                eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+            ),
+        ]
+
+        filtered = filter_by_requirements(candidates, min_vcpu=4, min_ram=16)
+
+        assert [candidate.vm_size for candidate in filtered] == [
+            "Standard_D4as_v6",
+            "Standard_D8as_v5",
+        ]
+
+    def test_filter_unknown_sku_is_excluded_in_bounded_mode(self):
+        """Bounded mode should drop unverifiable SKUs instead of keeping them."""
+        unknown_candidate = [
+            CandidateInsight(
+                vm_size="Standard_UnknownSKU_v99",
+                region="eastus",
+                placement_score="High",
+                quota_available=True,
+                price_usd=0.05,
+                price_last_updated=datetime(2025, 1, 25, 14, 0),
+                eviction_rate=1.0,
+                eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+            ),
+        ]
+
+        filtered = filter_by_requirements(unknown_candidate, min_vcpu=4, min_ram=16)
+
+        assert filtered == []
+
+    def test_filter_no_max_limit_keeps_unknown_and_large_tiers(self):
+        """Unlimited mode should preserve existing lower-bound semantics."""
+        candidates = [
+            CandidateInsight(
+                vm_size="Standard_D4as_v6",  # 4 vCPU, 16 GB
+                region="centralus",
+                placement_score="High",
+                quota_available=True,
+                price_usd=0.0336,
+                price_last_updated=datetime(2025, 1, 25, 14, 0),
+                eviction_rate=3.0,
+                eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+            ),
+            CandidateInsight(
+                vm_size="Standard_E16s_v5",  # 16 vCPU, 128 GB
+                region="centralus",
+                placement_score="High",
+                quota_available=True,
+                price_usd=0.2784,
+                price_last_updated=datetime(2025, 1, 25, 14, 0),
+                eviction_rate=3.0,
+                eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+            ),
+            CandidateInsight(
+                vm_size="Standard_UnknownSKU_v99",
+                region="eastus",
+                placement_score="High",
+                quota_available=True,
+                price_usd=0.05,
+                price_last_updated=datetime(2025, 1, 25, 14, 0),
+                eviction_rate=1.0,
+                eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+            ),
+        ]
+
+        filtered = filter_by_requirements(
+            candidates,
+            min_vcpu=4,
+            min_ram=16,
+            no_max_limit=True,
+        )
+
+        assert [candidate.vm_size for candidate in filtered] == [
+            "Standard_D4as_v6",
+            "Standard_E16s_v5",
+            "Standard_UnknownSKU_v99",
+        ]
 
 
 class TestFilterByCost:
