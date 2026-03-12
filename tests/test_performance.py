@@ -4,9 +4,9 @@ from datetime import datetime
 
 import pytest
 
-from spotvm_tool.analysis import enrich_with_performance
-from spotvm_tool.models import CandidateInsight
-from spotvm_tool.vm_specs import calculate_relative_performance, calculate_relative_performance_details
+from spotvm.analysis import enrich_with_performance
+from spotvm.models import CandidateInsight
+from spotvm.vm_specs import calculate_relative_performance, calculate_relative_performance_details
 
 
 def test_calculate_relative_performance_prefers_coremark_when_both_skus_have_it():

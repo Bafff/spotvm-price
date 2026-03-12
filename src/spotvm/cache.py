@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 
-CACHE_DIR = Path.home() / ".cache" / "spotvm_tool"
+CACHE_DIR = Path.home() / ".cache" / "spotvm"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
-logger = logging.getLogger("spotvm-tool")
+logger = logging.getLogger("spotvm")
 
 
 def _key_digest(key: str) -> str:

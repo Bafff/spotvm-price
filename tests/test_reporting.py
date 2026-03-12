@@ -2,9 +2,9 @@ import csv
 from datetime import datetime
 from pathlib import Path
 
-from spotvm_tool.models import CandidateInsight
-from spotvm_tool import reporting
-from spotvm_tool.reporting import (
+from spotvm.models import CandidateInsight
+from spotvm import reporting
+from spotvm.reporting import (
     render_table,
     export_to_csv,
     _colorize_eviction,

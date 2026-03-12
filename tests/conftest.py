@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from spotvm_tool import reporting
+from spotvm import reporting
 
 
 @pytest.fixture(autouse=True)

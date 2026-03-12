@@ -32,16 +32,16 @@ MAX_UNATTENDED_FAILURES = 3
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="spotvm-tool",
+        prog="spotvm",
         description=(
             "Compare Azure Spot VM pricing, eviction rates, and performance across regions and SKUs. "
             "Add --placement-check with --subscription-id for capacity/quota scoring."
         ),
         epilog=(
             "Quick start (pricing only, no subscription needed):\n"
-            "  spotvm-tool --regions centralus --sizes Standard_D4s_v5 Standard_E4s_v5\n\n"
+            "  spotvm --regions centralus --sizes Standard_D4s_v5 Standard_E4s_v5\n\n"
             "With placement scores and quota checking:\n"
-            "  spotvm-tool --subscription-id <ID> --regions centralus --sizes Standard_D4s_v5 --placement-check --desired-count 10"
+            "  spotvm --subscription-id <ID> --regions centralus --sizes Standard_D4s_v5 --placement-check --desired-count 10"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -211,7 +211,7 @@ def main(argv: List[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.WARNING,
         format="%(asctime)s %(levelname)s %(message)s",
     )
-    logger = logging.getLogger("spotvm-tool")
+    logger = logging.getLogger("spotvm")
     # Keep our own logger at INFO so our messages still appear
     if not args.verbose:
         logger.setLevel(logging.INFO)

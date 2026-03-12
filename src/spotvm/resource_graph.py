@@ -11,7 +11,7 @@ from .config import ToolConfig
 from .http_client import AzureRestClient
 from .models import HistoricalMetrics
 
-logger = logging.getLogger("spotvm-tool")
+logger = logging.getLogger("spotvm")
 
 RESOURCE_GRAPH_API_VERSION = "2022-10-01"
 RESOURCE_GRAPH_ENDPOINT = (

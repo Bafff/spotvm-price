@@ -1,4 +1,4 @@
-# spotvm-tool Roadmap
+# spotvm Roadmap
 
 ## 🎯 Current Status (v0.3.1)
 

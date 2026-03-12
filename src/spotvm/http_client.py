@@ -20,7 +20,7 @@ class AzureRestClient:
     def __post_init__(self) -> None:
         if not self.user_agent:
             from . import __version__
-            self.user_agent = f"spotvm-tool/{__version__}"
+            self.user_agent = f"spotvm/{__version__}"
         self._session = requests.Session()
         self._session.headers.update({
             "Content-Type": "application/json",

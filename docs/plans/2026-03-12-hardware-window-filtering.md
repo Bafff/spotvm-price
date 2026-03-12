@@ -42,7 +42,7 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git add tests/test_filtering.py src/spotvm_tool/vm_specs.py src/spotvm_tool/analysis.py
+git add tests/test_filtering.py src/spotvm/vm_specs.py src/spotvm/analysis.py
 git commit -m "feat: bound hardware discovery windows"
 ```
 
@@ -77,7 +77,7 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git add tests/test_cli.py src/spotvm_tool/cli.py
+git add tests/test_cli.py src/spotvm/cli.py
 git commit -m "feat: add no-max-limit hardware flag"
 ```
 
@@ -136,9 +136,9 @@ Expected: PASS
 **Step 3: Spot-check CLI behavior**
 
 Run:
-- `spotvm-tool --help`
-- `spotvm-tool --regions centralus --min-vcpu 4 --min-ram 16 --json`
-- `spotvm-tool --regions centralus --min-vcpu 4 --min-ram 16 --no-max-limit --json`
+- `spotvm --help`
+- `spotvm --regions centralus --min-vcpu 4 --min-ram 16 --json`
+- `spotvm --regions centralus --min-vcpu 4 --min-ram 16 --no-max-limit --json`
 
 Expected:
 - help describes bounded mode and the escape hatch

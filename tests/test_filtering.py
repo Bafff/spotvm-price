@@ -7,9 +7,9 @@ import re
 
 import pytest
 
-from spotvm_tool.analysis import filter_by_cost, filter_by_requirements
-from spotvm_tool.models import CandidateInsight
-from spotvm_tool.vm_specs import (
+from spotvm.analysis import filter_by_cost, filter_by_requirements
+from spotvm.models import CandidateInsight
+from spotvm.vm_specs import (
     discover_skus,
     detect_cpu_architecture,
     detect_cpu_vendor,
@@ -127,7 +127,7 @@ def test_matches_hardware_constraint_respects_bounded_and_unbounded_modes():
 
 
 def test_vm_spec_source_has_no_duplicate_sku_keys():
-    source = Path("src/spotvm_tool/vm_specs.py").read_text()
+    source = Path("src/spotvm/vm_specs.py").read_text()
     keys: list[str] = []
 
     for line in source.splitlines():
@@ -279,7 +279,7 @@ class TestFilterByRequirements:
             ),
         ]
 
-        with caplog.at_level(logging.WARNING, logger="spotvm-tool"):
+        with caplog.at_level(logging.WARNING, logger="spotvm"):
             filtered = filter_by_requirements(
                 unknown_candidate,
                 min_vcpu=100,
