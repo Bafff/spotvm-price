@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Rename the project, package, CLI, runtime identifiers, tests, and docs from `spotvm-tool` / `spotvm_tool` to `spotvm` with no backward compatibility aliases.
+**Goal:** Rename the project, package, CLI, runtime identifiers, tests, and docs from the legacy public names to `spotvm` with no backward compatibility aliases.
 
-**Architecture:** Move the Python package directory from `src/spotvm_tool` to `src/spotvm`, then update packaging metadata and all imports to target the new module path. Finish by renaming user-facing/runtime strings such as the CLI program name, logger name, user agent, cache directory, and README usage examples, then verify the renamed package works end-to-end.
+**Architecture:** Move the Python package directory from the legacy package path to `src/spotvm`, then update packaging metadata and all imports to target the new module path. Finish by renaming user-facing/runtime strings such as the CLI program name, logger name, user agent, cache directory, and README usage examples, then verify the renamed package works end-to-end.
 
 **Tech Stack:** Python, setuptools `pyproject.toml`, argparse, pytest, Markdown docs
 
@@ -21,7 +21,7 @@
 **Step 1: Write the failing test**
 
 Add or update tests that assert:
-- CLI help now prints `spotvm`, not `spotvm-tool`.
+- CLI help now prints `spotvm`, not the legacy CLI name.
 - logger-based tests use the `spotvm` logger.
 - cache tests expect the `~/.cache/spotvm` path.
 
@@ -43,19 +43,19 @@ Expected: PASS
 
 **Step 5: Commit**
 
-At this point in the plan Task 2 has not happened yet, so these paths still live under `src/spotvm_tool/`.
+At this point in the plan Task 2 has not happened yet, so these paths still live under the legacy package directory.
 
 ```bash
 git add tests/test_cli.py tests/test_cache.py tests/test_history.py tests/test_resource_graph.py \
-    src/spotvm_tool/cli.py src/spotvm_tool/cache.py src/spotvm_tool/history.py \
-    src/spotvm_tool/resource_graph.py src/spotvm_tool/http_client.py
+    src/<legacy_package_dir>/cli.py src/<legacy_package_dir>/cache.py src/<legacy_package_dir>/history.py \
+    src/<legacy_package_dir>/resource_graph.py src/<legacy_package_dir>/http_client.py
 git commit -m "refactor: rename runtime identifiers to spotvm"
 ```
 
-### Task 2: Rename the Python package from `spotvm_tool` to `spotvm`
+### Task 2: Rename the Python package from the legacy import path to `spotvm`
 
 **Files:**
-- Move: `src/spotvm_tool/` -> `src/spotvm/`
+- Move: `src/<legacy_package_dir>/` -> `src/spotvm/`
 - Modify: `pyproject.toml`
 - Modify: all files under `src/`
 - Modify: all files under `tests/`
@@ -104,7 +104,7 @@ No automated test. Use a grep-based docs checklist.
 
 **Step 2: Run test to verify it fails**
 
-Run: `rg -n "spotvm-tool|spotvm_tool" README.md ROADMAP.md`
+Run a repo-wide search in `README.md` and `ROADMAP.md` for the legacy CLI/import names.
 
 Expected: old names still appear.
 
@@ -121,7 +121,7 @@ Only keep old names where explicitly describing the breaking rename.
 
 **Step 4: Run test to verify it passes**
 
-Run: `rg -n "spotvm-tool|spotvm_tool" README.md ROADMAP.md`
+Run the same repo-wide search again in `README.md` and `ROADMAP.md`.
 
 Expected: no stale references, or only deliberate explanatory references if added.
 
@@ -159,7 +159,7 @@ Expected: PASS
 **Step 3: Check for stale names**
 
 Run:
-- `rg -n "spotvm-tool|spotvm_tool" src tests README.md ROADMAP.md pyproject.toml`
+- Search `src`, `tests`, `README.md`, `ROADMAP.md`, and `pyproject.toml` for legacy CLI/import names.
 
 Expected: no stale references except intentionally preserved plan files.
 
