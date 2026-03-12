@@ -181,7 +181,7 @@ def render_table(
             "CoreMark": _format_coremark(item.coremark_score),
             "CM/vCPU": _format_coremark_per_vcpu(item.coremark_per_vcpu),
             "Price Updated": _format_dt(item.price_last_updated),
-            "Notes": _format_notes(item),
+            "Notes": _format_table_notes(item),
         }
         rows.append([all_cells[c] for c in columns])
 
@@ -282,8 +282,18 @@ def _format_coremark_per_vcpu(value: float | None) -> str:
     return f"{value:,.0f}"
 
 
+def _format_table_notes(item: CandidateInsight) -> str:
+    """Keep the terminal table compact and refer detailed perf fallback text to the footer."""
+    parts: List[str] = []
+    if item.notes:
+        parts.append(item.notes)
+    if item.performance_note and item.performance_basis == "heuristic":
+        parts.append("Heuristic perf*")
+    return "; ".join(dict.fromkeys(parts))
+
+
 def _format_notes(item: CandidateInsight) -> str:
-    """Join analysis notes without duplicating repeated messages."""
+    """Join full analysis notes for exported artifacts."""
     parts: List[str] = []
     for note in (item.notes, item.performance_note):
         if note and note not in parts:

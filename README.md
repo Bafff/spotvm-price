@@ -256,11 +256,12 @@ spotvm-tool \
 - `Price/Perf` - Price per 1% of baseline performance
 - `CoreMark` - Absolute CoreMark benchmark score (CPU performance metric)
 - `CM/vCPU` - CoreMark per vCPU (CPU efficiency metric, higher = more efficient)
+- `Notes` - Uses a short `Heuristic perf*` marker when performance falls back to the non-CoreMark estimate; the footer expands the reason once.
 
 **Performance calculation:**
 - If both the candidate SKU and baseline SKU have published CoreMark data, `Perf %` uses the CoreMark ratio.
 - Otherwise the tool falls back to the resource heuristic `Compute Score = (vCPUs × 100) + (RAM_GB × 5)`.
-- When the fallback is used, the tool adds a warning in the output so you can distinguish heuristic comparisons from benchmark-based ones.
+- When the fallback is used, the `Notes` column shows `Heuristic perf*` and the footer expands the warning once so the table stays compact.
 
 *Source: [Azure VM Sizes Documentation](https://learn.microsoft.com/en-us/azure/virtual-machines/sizes)*
 
