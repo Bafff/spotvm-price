@@ -168,10 +168,27 @@ class TestToolConfigValidation:
         assert config.subscription_id == ""
         assert config.enable_placement is False
 
+    def test_pricing_only_config_omits_placement_fields(self):
+        from spotvm_tool.config import ToolConfig
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+        payload = config.to_dict()
+        assert "desired_count" not in payload
+        assert "availability_zones" not in payload
+
     def test_placement_without_subscription_fails(self):
         from spotvm_tool.config import ToolConfig
         with pytest.raises(ValueError, match="subscription_id is required"):
             ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], enable_placement=True)
+
+    def test_non_default_desired_count_without_placement_fails(self):
+        from spotvm_tool.config import ToolConfig
+        with pytest.raises(ValueError, match="desired_count requires enable_placement"):
+            ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], desired_count=2)
+
+    def test_availability_zones_without_placement_fails(self):
+        from spotvm_tool.config import ToolConfig
+        with pytest.raises(ValueError, match="availability_zones requires enable_placement"):
+            ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], availability_zones=True)
 
     def test_placement_with_subscription_succeeds(self):
         from spotvm_tool.config import ToolConfig

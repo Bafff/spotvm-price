@@ -10,8 +10,8 @@ os_type: linux                    # linux or windows
 # Optional: placement scoring (requires subscription_id)
 # enable_placement: true
 # subscription_id: "00000000-0000-0000-0000-000000000000"
-# desired_count: 10
-# availability_zones: false
+# desired_count: 10            # only valid when enable_placement is true
+# availability_zones: false    # only valid when enable_placement is true
 
 # Optional: performance baseline
 # baseline_sku: Standard_D4as_v6

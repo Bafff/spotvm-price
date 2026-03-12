@@ -47,6 +47,8 @@ class ToolConfig:
                 "subscription_id is required when --placement-check is enabled. "
                 "Provide --subscription-id or remove --placement-check."
             )
+        if self.availability_zones and not self.enable_placement:
+            raise ValueError("availability_zones requires enable_placement")
         if not self.regions:
             raise ValueError("At least one region must be supplied")
         if not self.sizes:
@@ -56,6 +58,8 @@ class ToolConfig:
             )
         if self.desired_count <= 0:
             raise ValueError("desired_count must be positive")
+        if self.desired_count != 1 and not self.enable_placement:
+            raise ValueError("desired_count requires enable_placement")
         self.os_type = self.os_type.lower()
         if self.os_type not in VALID_OS_TYPES:
             raise ValueError(f"os_type must be one of {sorted(VALID_OS_TYPES)}")
@@ -78,7 +82,6 @@ class ToolConfig:
             "regions": self.regions,
             "sizes": self.sizes,
             "os_type": self.os_type,
-            "availability_zones": self.availability_zones,
             "cache_ttl_minutes": self.cache_ttl_minutes,
             "max_sizes_per_request": self.max_sizes_per_request,
             "max_regions_per_request": self.max_regions_per_request,
@@ -91,8 +94,9 @@ class ToolConfig:
             "baseline_sku": self.baseline_sku,
             "cpu_arch": self.cpu_arch,
         }
-        if self.enable_placement or self.desired_count != 1:
+        if self.enable_placement:
             payload["desired_count"] = self.desired_count
+            payload["availability_zones"] = self.availability_zones
         return payload
 
 

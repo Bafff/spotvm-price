@@ -64,6 +64,7 @@ You can supply parameters directly via CLI arguments or load them from a JSON/YA
 
 ```yaml
 subscription_id: "00000000-0000-0000-0000-000000000000"
+enable_placement: true
 regions:
   - eastus
   - westus
@@ -99,9 +100,9 @@ emit_json: false
 
 - `regions`: Up to eight regions per request (the tool batches automatically if more are provided).
 - `sizes`: Up to five SKUs per request (batched automatically as needed).
-- `desired_count`: Number of VMs you intend to launch; placement score sensitivity increases with larger counts.
+- `desired_count`: Placement-only field. Set it only when `enable_placement: true` (or `--placement-check`) is enabled; placement score sensitivity increases with larger counts.
 - `os_type`: `linux` (default) or `windows` to align price history with OS-specific retail rates.
-- `availability_zones`: Set `true` to request zone-level placement scores; otherwise the tool queries region scope.
+- `availability_zones`: Placement-only field. Set `true` only when `enable_placement: true` (or `--placement-check`) is enabled; otherwise the tool queries region scope.
 
   **Important:** When using `--availability-zones`:
   - **Placement Score** and **Quota Available** differ per zone (capacity and quotas vary)
@@ -110,7 +111,7 @@ emit_json: false
 - `cache_ttl_minutes`: Reuses identical placement/Resource Graph responses for the specified TTL to respect Azure guidance of avoiding duplicate calls within 15 minutes.[^placement-score]
 - `result_limit`: Optional maximum number of rows in the final ranked report.
 - `emit_json`: When `true`, prints a JSON representation in addition to the table (also useful when saving reports).
-- `enable_placement`: Set to `true` (or pass `--placement-check`) to query the Spot Placement Score API for capacity and quota data. Requires `subscription_id`. Defaults to `false`.
+- `enable_placement`: Set to `true` (or pass `--placement-check`) to query the Spot Placement Score API for capacity and quota data. Requires `subscription_id`. Defaults to `false`. When this is `false`, omit `desired_count` and `availability_zones`.
 
 ## Usage
 ### Direct arguments
