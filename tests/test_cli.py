@@ -619,6 +619,91 @@ class TestMainWithMocks:
     @patch("spotvm_tool.cli.merge_datasets")
     @patch("spotvm_tool.cli.summarize_top_candidates")
     @patch("spotvm_tool.cli.render_table")
+    def test_baseline_footer_explains_heuristic_marker_once(
+        self,
+        mock_render_table,
+        mock_summarize,
+        mock_merge,
+        mock_filter_requirements,
+        mock_rank,
+        mock_enrich_performance,
+        mock_enrich_coremark,
+        mock_filter_cost,
+        mock_fetch_hist,
+        mock_client_cls,
+        mock_auth_cls,
+        capsys,
+    ):
+        candidate = SimpleNamespace(
+            recommendation_rank=1,
+            region="centralus",
+            availability_zone=None,
+            vm_size="Standard_D4s_v4",
+            cpu_arch="x64",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.01,
+            price_last_updated=None,
+            eviction_rate=1.0,
+            performance_relative=100.0,
+            price_per_performance=0.0001,
+            performance_basis="heuristic",
+            performance_note="Perf % and Price/Perf use the vCPU/RAM heuristic because CoreMark data is unavailable for this comparison.",
+            coremark_score=None,
+            coremark_per_vcpu=None,
+            notes="Heuristic perf*",
+        )
+        mock_fetch_hist.return_value = []
+        mock_merge.return_value = [candidate]
+        mock_filter_requirements.return_value = [candidate]
+        mock_rank.return_value = [candidate]
+        mock_enrich_performance.return_value = [candidate]
+        mock_enrich_coremark.return_value = [candidate]
+        mock_filter_cost.return_value = [candidate]
+        mock_summarize.return_value = []
+        mock_render_table.return_value = "RANKED TABLE\nHeuristic perf*"
+
+        args = SimpleNamespace(
+            no_color=True,
+            min_vcpu=None,
+            min_ram=None,
+            max_price=None,
+            max_eviction=None,
+            min_performance=None,
+            csv=None,
+            results_dir=None,
+        )
+        logger = MagicMock()
+        config = ToolConfig(
+            regions=["centralus"],
+            sizes=["Standard_D4s_v4"],
+            baseline_sku="Standard_D4s_v5",
+        )
+
+        _run_single_analysis(
+            args=args,
+            config=config,
+            logger=logger,
+            save_results=False,
+        )
+
+        captured = capsys.readouterr()
+        assert "Heuristic perf*" in captured.out
+        assert "* Heuristic perf:" in captured.out
+        assert "comparable CoreMark data is unavailable" in captured.out
+        assert "Some Perf % / Price/Perf values use a vCPU/RAM heuristic" not in captured.out
+
+    @patch("spotvm_tool.cli.AzureAuthenticator")
+    @patch("spotvm_tool.cli.AzureRestClient")
+    @patch("spotvm_tool.cli.fetch_historical_metrics")
+    @patch("spotvm_tool.cli.filter_by_cost")
+    @patch("spotvm_tool.cli.enrich_with_coremark")
+    @patch("spotvm_tool.cli.enrich_with_performance")
+    @patch("spotvm_tool.cli.rank_candidates")
+    @patch("spotvm_tool.cli.filter_by_requirements")
+    @patch("spotvm_tool.cli.merge_datasets")
+    @patch("spotvm_tool.cli.summarize_top_candidates")
+    @patch("spotvm_tool.cli.render_table")
     def test_json_output_keeps_stdout_machine_readable(
         self,
         mock_render_table,

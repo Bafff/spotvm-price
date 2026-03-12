@@ -548,8 +548,8 @@ def _run_single_analysis(
         emit("  Price/Perf: Price per performance unit (lower is better value)")
         if any(item.performance_basis == "heuristic" for item in ranked):
             emit(
-                "  Some Perf % / Price/Perf values use a vCPU/RAM heuristic because "
-                "CoreMark data is unavailable for part of the comparison."
+                "  * Heuristic perf: Perf % / Price/Perf use the vCPU/RAM fallback "
+                "because comparable CoreMark data is unavailable."
             )
 
     # Print color legend if colors are enabled

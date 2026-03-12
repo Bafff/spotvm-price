@@ -52,6 +52,31 @@ def test_render_table_formats_columns():
     assert table.count("\n") > 2
 
 
+def test_render_table_shortens_heuristic_performance_note():
+    candidates = [
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D4s_v4",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.0456,
+            price_last_updated=datetime(2025, 10, 24, 12, 0),
+            eviction_rate=3.2,
+            eviction_last_updated=datetime(2025, 10, 20, 8, 0),
+            recommendation_rank=1,
+            performance_relative=100.0,
+            price_per_performance=0.000456,
+            performance_basis="heuristic",
+            performance_note="Perf % and Price/Perf use the vCPU/RAM heuristic because CoreMark data is unavailable for this comparison.",
+        ),
+    ]
+
+    table = render_table(candidates)
+
+    assert "Heuristic perf*" in table
+    assert "vCPU/RAM heuristic because" not in table
+
+
 def test_export_to_csv(tmp_path):
     """Test CSV export functionality."""
     candidates = [
