@@ -2,6 +2,8 @@
 
 from datetime import datetime
 import logging
+from pathlib import Path
+import re
 
 import pytest
 
@@ -10,6 +12,7 @@ from spotvm_tool.models import CandidateInsight
 from spotvm_tool.vm_specs import (
     discover_skus,
     detect_cpu_architecture,
+    detect_cpu_vendor,
     get_vm_spec,
     hardware_window_tiers,
     known_hardware_tiers,
@@ -121,6 +124,51 @@ def test_matches_hardware_constraint_respects_bounded_and_unbounded_modes():
     assert matches_hardware_constraint(8, 6, dimension="vcpu") is True
     assert matches_hardware_constraint(64, 6, dimension="vcpu") is False
     assert matches_hardware_constraint(64, 6, dimension="vcpu", no_max_limit=True) is True
+
+
+def test_vm_spec_source_has_no_duplicate_sku_keys():
+    source = Path("src/spotvm_tool/vm_specs.py").read_text()
+    keys: list[str] = []
+
+    for line in source.splitlines():
+        match = re.match(r'\s*"([^"]+)": VMSpec\(vcpus=\d+, ram_gb=\d+\),', line)
+        if match:
+            keys.append(match.group(1))
+
+    duplicates = sorted({key for key in keys if keys.count(key) > 1})
+    assert duplicates == []
+
+
+@pytest.mark.parametrize(
+    ("sku", "expected_ram_gb"),
+    [
+        ("Standard_E64s_v4", 504),
+        ("Standard_E64d_v4", 504),
+        ("Standard_E64ds_v4", 504),
+        ("Standard_E2ads_v6", 16),
+        ("Standard_E4ads_v6", 32),
+        ("Standard_E8ads_v6", 64),
+        ("Standard_E16ads_v6", 128),
+        ("Standard_E32ads_v6", 256),
+        ("Standard_E48ads_v6", 384),
+        ("Standard_E64ads_v6", 512),
+        ("Standard_E96ads_v6", 672),
+        ("Standard_E96pds_v6", 672),
+        ("Standard_E2ps_v6", 16),
+        ("Standard_E4ps_v6", 32),
+        ("Standard_E8ps_v6", 64),
+        ("Standard_E16ps_v6", 128),
+        ("Standard_E32ps_v6", 256),
+        ("Standard_E48ps_v6", 384),
+        ("Standard_E64ps_v6", 512),
+        ("Standard_E96ps_v6", 672),
+    ],
+)
+def test_memory_optimized_specs_match_official_ram_sizes(sku, expected_ram_gb):
+    spec = get_vm_spec(sku)
+
+    assert spec is not None
+    assert spec.ram_gb == expected_ram_gb
 
 
 class TestFilterByRequirements:
@@ -581,6 +629,26 @@ class TestCPUArchitecture:
         assert detect_cpu_architecture("Standard_D4ps_v5") == "arm"
         assert detect_cpu_architecture("Standard_D8ps_v5") == "arm"
         assert detect_cpu_architecture("Standard_E4pds_v5") == "arm"
+
+    @pytest.mark.parametrize(
+        ("sku", "expected_arch", "expected_vendor"),
+        [
+            ("Standard_D4p_v6", "arm", "arm"),
+            ("Standard_D4pd_v6", "arm", "arm"),
+            ("Standard_D4a_v6", "x64", "amd"),
+            ("Standard_NC4as_T4_v3", "x64", "amd"),
+            ("Standard_E32-8s_v5", "x64", "intel"),
+            ("Standard_D4s_v5", "x64", "intel"),
+        ],
+    )
+    def test_detect_architecture_and_vendor_from_additive_features(
+        self,
+        sku,
+        expected_arch,
+        expected_vendor,
+    ):
+        assert detect_cpu_architecture(sku) == expected_arch
+        assert detect_cpu_vendor(sku) == expected_vendor
 
     def test_detect_subfamily_amd(self):
         """Test detecting AMD x64 VMs with subfamily."""
