@@ -320,11 +320,9 @@ VM_SPECIFICATIONS: Dict[str, VMSpec] = {
     "Standard_D4d_v4": VMSpec(vcpus=4, ram_gb=16),
     "Standard_D4ds_v4": VMSpec(vcpus=4, ram_gb=16),
     "Standard_D8a_v4": VMSpec(vcpus=8, ram_gb=32),
-    "Standard_D8as_v4": VMSpec(vcpus=8, ram_gb=32),
     "Standard_D8d_v4": VMSpec(vcpus=8, ram_gb=32),
     "Standard_D8ds_v4": VMSpec(vcpus=8, ram_gb=32),
     "Standard_D16a_v4": VMSpec(vcpus=16, ram_gb=64),
-    "Standard_D16as_v4": VMSpec(vcpus=16, ram_gb=64),
     "Standard_D16d_v4": VMSpec(vcpus=16, ram_gb=64),
     "Standard_D16ds_v4": VMSpec(vcpus=16, ram_gb=64),
     "Standard_D32a_v4": VMSpec(vcpus=32, ram_gb=128),
@@ -345,17 +343,14 @@ VM_SPECIFICATIONS: Dict[str, VMSpec] = {
     "Standard_E4as_v4": VMSpec(vcpus=4, ram_gb=32),
     "Standard_E4d_v4": VMSpec(vcpus=4, ram_gb=32),
     "Standard_E4ds_v4": VMSpec(vcpus=4, ram_gb=32),
-    "Standard_E4s_v4": VMSpec(vcpus=4, ram_gb=32),
     "Standard_E8a_v4": VMSpec(vcpus=8, ram_gb=64),
     "Standard_E8as_v4": VMSpec(vcpus=8, ram_gb=64),
     "Standard_E8d_v4": VMSpec(vcpus=8, ram_gb=64),
     "Standard_E8ds_v4": VMSpec(vcpus=8, ram_gb=64),
-    "Standard_E8s_v4": VMSpec(vcpus=8, ram_gb=64),
     "Standard_E16a_v4": VMSpec(vcpus=16, ram_gb=128),
     "Standard_E16as_v4": VMSpec(vcpus=16, ram_gb=128),
     "Standard_E16d_v4": VMSpec(vcpus=16, ram_gb=128),
     "Standard_E16ds_v4": VMSpec(vcpus=16, ram_gb=128),
-    "Standard_E16s_v4": VMSpec(vcpus=16, ram_gb=128),
     "Standard_E20a_v4": VMSpec(vcpus=20, ram_gb=160),
     "Standard_E20as_v4": VMSpec(vcpus=20, ram_gb=160),
     "Standard_E20d_v4": VMSpec(vcpus=20, ram_gb=160),
@@ -373,34 +368,18 @@ VM_SPECIFICATIONS: Dict[str, VMSpec] = {
     "Standard_E48s_v4": VMSpec(vcpus=48, ram_gb=384),
     "Standard_E64a_v4": VMSpec(vcpus=64, ram_gb=512),
     "Standard_E64as_v4": VMSpec(vcpus=64, ram_gb=512),
-    "Standard_E64d_v4": VMSpec(vcpus=64, ram_gb=512),
-    "Standard_E64ds_v4": VMSpec(vcpus=64, ram_gb=512),
-    "Standard_E64s_v4": VMSpec(vcpus=64, ram_gb=512),
+    "Standard_E64d_v4": VMSpec(vcpus=64, ram_gb=504),
+    "Standard_E64ds_v4": VMSpec(vcpus=64, ram_gb=504),
+    "Standard_E64s_v4": VMSpec(vcpus=64, ram_gb=504),
     "Standard_E96a_v4": VMSpec(vcpus=96, ram_gb=672),
     "Standard_E96as_v4": VMSpec(vcpus=96, ram_gb=672),
-    "Standard_D2ads_v6": VMSpec(vcpus=2, ram_gb=8),
-    "Standard_E2ads_v6": VMSpec(vcpus=2, ram_gb=8),
     "Standard_D4pds_v6": VMSpec(vcpus=4, ram_gb=16),
-    "Standard_D4ads_v6": VMSpec(vcpus=4, ram_gb=16),
-    "Standard_E4ads_v6": VMSpec(vcpus=4, ram_gb=16),
     "Standard_D8pds_v6": VMSpec(vcpus=8, ram_gb=32),
-    "Standard_D8ads_v6": VMSpec(vcpus=8, ram_gb=32),
-    "Standard_E8ads_v6": VMSpec(vcpus=8, ram_gb=32),
     "Standard_D16pds_v6": VMSpec(vcpus=16, ram_gb=64),
-    "Standard_D16ads_v6": VMSpec(vcpus=16, ram_gb=64),
-    "Standard_E16ads_v6": VMSpec(vcpus=16, ram_gb=64),
     "Standard_D32pds_v6": VMSpec(vcpus=32, ram_gb=128),
-    "Standard_D32ads_v6": VMSpec(vcpus=32, ram_gb=128),
-    "Standard_E32ads_v6": VMSpec(vcpus=32, ram_gb=128),
     "Standard_D48pds_v6": VMSpec(vcpus=48, ram_gb=192),
-    "Standard_D48ads_v6": VMSpec(vcpus=48, ram_gb=192),
-    "Standard_E48ads_v6": VMSpec(vcpus=48, ram_gb=192),
     "Standard_D64pds_v6": VMSpec(vcpus=64, ram_gb=256),
-    "Standard_D64ads_v6": VMSpec(vcpus=64, ram_gb=256),
-    "Standard_E64ads_v6": VMSpec(vcpus=64, ram_gb=256),
     "Standard_D96pds_v6": VMSpec(vcpus=96, ram_gb=384),
-    "Standard_D96ads_v6": VMSpec(vcpus=96, ram_gb=384),
-    "Standard_E96ads_v6": VMSpec(vcpus=96, ram_gb=384),
     "Standard_D4plds_v6": VMSpec(vcpus=4, ram_gb=8),
     "Standard_D4pls_v6": VMSpec(vcpus=4, ram_gb=8),
     "Standard_D8plds_v6": VMSpec(vcpus=8, ram_gb=16),
@@ -418,37 +397,29 @@ VM_SPECIFICATIONS: Dict[str, VMSpec] = {
     "Standard_E2ds_v6": VMSpec(vcpus=2, ram_gb=16),
     "Standard_E2ads_v6": VMSpec(vcpus=2, ram_gb=16),
     "Standard_E2pds_v6": VMSpec(vcpus=2, ram_gb=16),
-    "Standard_E2ps_v6": VMSpec(vcpus=2, ram_gb=16),
     "Standard_E4ds_v6": VMSpec(vcpus=4, ram_gb=32),
     "Standard_E4ads_v6": VMSpec(vcpus=4, ram_gb=32),
     "Standard_E4pds_v6": VMSpec(vcpus=4, ram_gb=32),
-    "Standard_E4ps_v6": VMSpec(vcpus=4, ram_gb=32),
     "Standard_E8ds_v6": VMSpec(vcpus=8, ram_gb=64),
     "Standard_E8ads_v6": VMSpec(vcpus=8, ram_gb=64),
     "Standard_E8pds_v6": VMSpec(vcpus=8, ram_gb=64),
-    "Standard_E8ps_v6": VMSpec(vcpus=8, ram_gb=64),
     "Standard_E16ds_v6": VMSpec(vcpus=16, ram_gb=128),
     "Standard_E16ads_v6": VMSpec(vcpus=16, ram_gb=128),
     "Standard_E16pds_v6": VMSpec(vcpus=16, ram_gb=128),
-    "Standard_E16ps_v6": VMSpec(vcpus=16, ram_gb=128),
     "Standard_E20ds_v6": VMSpec(vcpus=20, ram_gb=160),
     "Standard_E20ads_v6": VMSpec(vcpus=20, ram_gb=160),
     "Standard_E32ds_v6": VMSpec(vcpus=32, ram_gb=256),
     "Standard_E32ads_v6": VMSpec(vcpus=32, ram_gb=256),
     "Standard_E32pds_v6": VMSpec(vcpus=32, ram_gb=256),
-    "Standard_E32ps_v6": VMSpec(vcpus=32, ram_gb=256),
     "Standard_E48ds_v6": VMSpec(vcpus=48, ram_gb=384),
     "Standard_E48ads_v6": VMSpec(vcpus=48, ram_gb=384),
     "Standard_E48pds_v6": VMSpec(vcpus=48, ram_gb=384),
-    "Standard_E48ps_v6": VMSpec(vcpus=48, ram_gb=384),
     "Standard_E64ds_v6": VMSpec(vcpus=64, ram_gb=512),
     "Standard_E64ads_v6": VMSpec(vcpus=64, ram_gb=512),
     "Standard_E64pds_v6": VMSpec(vcpus=64, ram_gb=512),
-    "Standard_E64ps_v6": VMSpec(vcpus=64, ram_gb=512),
     "Standard_E96ds_v6": VMSpec(vcpus=96, ram_gb=768),
-    "Standard_E96ads_v6": VMSpec(vcpus=96, ram_gb=768),
-    "Standard_E96pds_v6": VMSpec(vcpus=96, ram_gb=768),
-    "Standard_E96ps_v6": VMSpec(vcpus=96, ram_gb=768),
+    "Standard_E96ads_v6": VMSpec(vcpus=96, ram_gb=672),
+    "Standard_E96pds_v6": VMSpec(vcpus=96, ram_gb=672),
     "Standard_E128ds_v6": VMSpec(vcpus=128, ram_gb=1024),
     "Standard_L4s": VMSpec(vcpus=4, ram_gb=32),
     "Standard_L8s_v2": VMSpec(vcpus=8, ram_gb=64),
@@ -584,6 +555,23 @@ CPUArchitecture = Literal["x64", "arm"]
 CPUVendor = Literal["intel", "amd", "arm"]
 
 
+def _extract_additive_features(sku: str) -> str:
+    """Return the additive-feature block from an Azure VM SKU name.
+
+    Examples:
+        Standard_D4ps_v6 -> ps
+        Standard_D4p_v6 -> p
+        Standard_E32-8s_v5 -> s
+        Standard_NC4as_T4_v3 -> as
+    """
+    normalized = sku.removeprefix("Standard_").lower()
+    family_segment = normalized.split("_", 1)[0]
+    match = re.search(r"\d+(?:-\d+)?", family_segment)
+    if match is None:
+        return ""
+    return family_segment[match.end():]
+
+
 def detect_cpu_architecture(sku: str) -> CPUArchitecture:
     """Detect CPU architecture from Azure VM SKU name.
 
@@ -606,10 +594,7 @@ def detect_cpu_architecture(sku: str) -> CPUArchitecture:
     Returns:
         "x64" for x86-64 architecture, "arm" for ARM architecture
     """
-    # Check for ARM indicator 'p' in the feature section
-    # Pattern: after vCPU count digits, look for 'p' before other features
-    # Examples: D4ps_v5, DC8ps_v5, E4pds_v5
-    if re.search(r'\d+p[sdl]', sku.lower()):
+    if "p" in _extract_additive_features(sku):
         return "arm"
 
     # Default to x64 (Intel or AMD)
@@ -640,14 +625,12 @@ def detect_cpu_vendor(sku: str) -> CPUVendor:
     Returns:
         "intel", "amd", or "arm"
     """
-    # Check for ARM indicator 'p'
-    if re.search(r'\d+p[sdl]', sku.lower()):
+    features = _extract_additive_features(sku)
+
+    if "p" in features:
         return "arm"
 
-    # Check for AMD indicator 'a'
-    # Pattern: after vCPU count digits, look for 'a' before other features
-    # Examples: D4as_v5, D4ads_v5, DC8ads_v5
-    if re.search(r'\d+a[sdl]', sku.lower()):
+    if "a" in features:
         return "amd"
 
     # Default to Intel (no letter after vCPU count)
