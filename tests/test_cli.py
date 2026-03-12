@@ -61,12 +61,13 @@ class TestBuildParser:
                 "--availability-zones",
             ])
 
-    def test_desired_count_without_placement_errors(self):
+    @pytest.mark.parametrize("desired_count", [1, 5])
+    def test_desired_count_without_placement_errors(self, desired_count):
         with pytest.raises(SystemExit):
             main([
                 "--regions", "centralus",
                 "--sizes", "Standard_D4s_v5",
-                "--desired-count", "5",
+                "--desired-count", str(desired_count),
             ])
 
     def test_min_performance_without_baseline_errors(self):
@@ -80,6 +81,14 @@ class TestBuildParser:
     @pytest.mark.parametrize(
         ("config_payload", "error_text"),
         [
+            (
+                {
+                    "regions": ["centralus"],
+                    "sizes": ["Standard_D4s_v5"],
+                    "desired_count": 1,
+                },
+                "--desired-count requires --placement-check",
+            ),
             (
                 {
                     "regions": ["centralus"],
@@ -107,6 +116,25 @@ class TestBuildParser:
 
         captured = capsys.readouterr()
         assert error_text in captured.err
+
+    @patch("spotvm_tool.cli._run_single_analysis")
+    def test_pricing_only_config_accepts_default_desired_count(self, mock_run_single_analysis, tmp_path):
+        config = ToolConfig(
+            regions=["centralus"],
+            sizes=["Standard_D4s_v5"],
+        )
+        config_path = tmp_path / "spotvm.json"
+        config_path.write_text(json.dumps(config.to_dict()), encoding="utf-8")
+
+        rc = main([
+            "--config", str(config_path),
+            "--no-color",
+        ])
+
+        assert rc == 0
+        called_config = mock_run_single_analysis.call_args.kwargs["config"]
+        assert called_config.desired_count == 1
+        assert called_config.enable_placement is False
 
     def test_parser_accepts_all_documented_args(self):
         parser = build_parser()

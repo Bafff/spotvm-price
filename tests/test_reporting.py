@@ -296,8 +296,8 @@ def test_render_table_keeps_column_with_one_value():
     assert "Zone" in table
 
 
-def test_export_to_csv_auto_hides_empty_columns(tmp_path):
-    """CSV auto-hides columns where every row value is empty."""
+def test_export_to_csv_keeps_empty_columns_for_stable_schema(tmp_path):
+    """CSV keeps the configured schema even when current rows have blank values."""
     candidates = [
         _candidate(price_usd=0.05, eviction_rate=3.0, recommendation_rank=1),
     ]
@@ -307,8 +307,8 @@ def test_export_to_csv_auto_hides_empty_columns(tmp_path):
     with csv_path.open("r", encoding="utf-8") as f:
         headers = csv.DictReader(f).fieldnames
 
-    assert "Availability Zone" not in headers
-    assert "Notes" not in headers
+    assert "Availability Zone" in headers
+    assert "Notes" in headers
     assert "Region" in headers
 
 

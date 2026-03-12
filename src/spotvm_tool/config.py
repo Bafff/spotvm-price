@@ -77,7 +77,6 @@ class ToolConfig:
             "subscription_id": self.subscription_id,
             "regions": self.regions,
             "sizes": self.sizes,
-            "desired_count": self.desired_count,
             "os_type": self.os_type,
             "availability_zones": self.availability_zones,
             "cache_ttl_minutes": self.cache_ttl_minutes,
@@ -92,6 +91,8 @@ class ToolConfig:
             "baseline_sku": self.baseline_sku,
             "cpu_arch": self.cpu_arch,
         }
+        if self.enable_placement or self.desired_count != 1:
+            payload["desired_count"] = self.desired_count
         return payload
 
 
