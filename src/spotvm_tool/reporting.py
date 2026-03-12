@@ -345,18 +345,6 @@ def export_to_csv(
         }
         rows.append([all_cells[c] for c in columns])
 
-    # Auto-hide columns where every row is empty
-    if rows:
-        auto_hide = {
-            col_idx
-            for col_idx in range(len(columns))
-            if all(row[col_idx].strip() in ("", "-") for row in rows)
-        }
-        if auto_hide:
-            keep = [i for i in range(len(columns)) if i not in auto_hide]
-            columns = [columns[i] for i in keep]
-            rows = [[row[i] for i in keep] for row in rows]
-
     with csv_path.open("w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(columns)
