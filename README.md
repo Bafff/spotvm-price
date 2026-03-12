@@ -63,20 +63,35 @@ pipx run --pip-args="--force-reinstall" --spec ./ spotvm-tool \
 You can supply parameters directly via CLI arguments or load them from a JSON/YAML file. The sample below mirrors `config.sample.yaml` in the repository:
 
 ```yaml
-subscription_id: "00000000-0000-0000-0000-000000000000"
-enable_placement: true
+# Required
 regions:
+  - centralus
   - eastus
-  - westus
 sizes:
-  - Standard_D2s_v4
-  - Standard_D4s_v4
-desired_count: 10
-os_type: linux
-availability_zones: false
+  - Standard_D4s_v5
+  - Standard_E4s_v5
+os_type: linux                    # linux or windows
+
+# Optional: placement scoring (requires subscription_id)
+# enable_placement: true
+# subscription_id: "00000000-0000-0000-0000-000000000000"
+# desired_count: 10            # only valid when enable_placement is true
+# availability_zones: false    # only valid when enable_placement is true
+
+# Optional: performance baseline
+# baseline_sku: Standard_D4as_v6
+
+# Optional: filtering (config-supported)
+# cpu_arch: x64                   # x64 or arm
+
+# Note: max_price, max_eviction, min_performance are CLI-only flags
+# and cannot be set in the config file. Use them on the command line:
+#   --max-price 0.10 --max-eviction 15 --min-performance 80
+
+# Optional: output
 cache_ttl_minutes: 15
-result_limit: 10
-emit_json: false
+# result_limit: 10
+# emit_json: false
 ```
 
 ### Key fields
@@ -155,9 +170,12 @@ The `--csv` option exports results to a spreadsheet-compatible CSV file with:
 - Clean format without emojis for Excel compatibility
 - Numeric values without symbols ($, %) for proper sorting and charts
 - ISO datetime format
-- All columns: Rank, Region, Zone, VM Size, CPU Vendor, Placement Score, Quota, Price, Eviction Rate, Performance, Price/Performance, CoreMark Score, CoreMark per vCPU, Price Last Updated, and Notes
+- Mode-dependent columns:
+  - Always included: Rank, Region, Availability Zone, VM Size, CPU Vendor, Price, Eviction Rate, CoreMark Score, CoreMark per vCPU, Price Last Updated, and Notes
+  - Included with `--placement-check`: Placement Score and Quota Available
+  - Included with `--baseline-sku`: Performance and Price per Performance
 
-**CSV Example:**
+**CSV Example (with placement and baseline enabled):**
 ```csv
 Rank,Region,Availability Zone,VM Size,CPU Vendor,Placement Score,Quota Available,Price (USD/hr),Eviction Rate (%),Performance (%),Price per Performance,CoreMark Score,CoreMark per vCPU,Price Last Updated,Notes
 1,eastus,,Standard_D4as_v5,AMD,High,Yes,0.0336,3.0,100,0.000336,72928,18232,2025-01-26,
@@ -384,7 +402,7 @@ spotvm-tool \
 
 **Workflow:**
 1. **Auto-discovery:** Finds SKUs in the next three distinct known CPU and RAM tiers above your minimums
-2. **Azure query:** Fetches placement scores and pricing for discovered SKUs
+2. **Azure query:** Fetches pricing and eviction data for discovered SKUs; placement scores are added only when `--placement-check` is enabled
 3. **Hardware filter:** Re-validates vCPU/RAM against the same bounded windows
 4. **Ranking:** Sorts by placement score → eviction → price/performance
 5. **Performance calc:** Computes relative to Standard_D8as_v6
@@ -629,7 +647,7 @@ plt.show()
 
 **Scenario 1: Without `--availability-zones` (regional aggregation)**
 ```bash
-spotvm-tool --regions centralus --sizes Standard_D4as_v5 --save-results
+spotvm-tool --subscription-id 00000000-0000-0000-0000-000000000000 --placement-check --regions centralus --sizes Standard_D4as_v5 --save-results
 ```
 Produces:
 ```csv
@@ -641,7 +659,7 @@ timestamp,vm_size,region,zone,price_usd,...
 
 **Scenario 2: With `--availability-zones` (zone-specific)**
 ```bash
-spotvm-tool --regions centralus --sizes Standard_D4as_v5 --availability-zones --save-results
+spotvm-tool --subscription-id 00000000-0000-0000-0000-000000000000 --placement-check --regions centralus --sizes Standard_D4as_v5 --availability-zones --save-results
 ```
 Produces:
 ```csv

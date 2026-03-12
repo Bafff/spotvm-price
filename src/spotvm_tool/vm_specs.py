@@ -459,7 +459,7 @@ def discover_skus(
 
         # Find all ARM VMs with at least 2 vCPUs
         skus = discover_skus(min_vcpu=2, cpu_arch="arm")
-        # Returns: ['Standard_D2ps_v5', 'Standard_D4ps_v5', ...]
+        # Returns: ['Standard_D2ps_v6', 'Standard_D4ps_v6', ...]
     """
     matching_skus = []
 
