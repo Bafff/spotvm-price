@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from spotvm_tool.resource_graph import _ensure_list, _extract_latest_price
+from spotvm_tool.resource_graph import _ensure_list, _extract_eviction, _extract_latest_price, _to_float
 
 
 def test_extract_latest_price_logs_malformed_json(caplog):
@@ -41,3 +41,20 @@ def test_ensure_list_logs_non_list_json(caplog):
 
     assert result == []
     assert "Decoded JSON value is not a list" in caplog.text
+
+
+def test_to_float_warns_on_malformed_non_empty_value(caplog):
+    with caplog.at_level(logging.WARNING, logger="spotvm-tool"):
+        result = _to_float("not-a-number")
+
+    assert result is None
+    assert "Failed to parse float value" in caplog.text
+
+
+def test_extract_eviction_warns_on_unparseable_non_empty_value(caplog):
+    with caplog.at_level(logging.WARNING, logger="spotvm-tool"):
+        rate, timestamp = _extract_eviction({"spotEvictionRate": "unknown"})
+
+    assert rate is None
+    assert timestamp is None
+    assert "Failed to parse eviction rate" in caplog.text

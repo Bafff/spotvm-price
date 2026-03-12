@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +16,9 @@ from typing import Dict, List, Optional
 
 from .config import ToolConfig
 from .models import CandidateInsight
+
+
+logger = logging.getLogger("spotvm-tool")
 
 
 @dataclass
@@ -110,15 +114,19 @@ def load_historical_runs(
     # Load snapshots
     snapshots = []
     for filepath in json_files:
-        with filepath.open("r") as f:
-            data = json.load(f)
-            snapshots.append(
-                RunSnapshot(
-                    timestamp=data["timestamp"],
-                    config=data["config"],
-                    candidates=data["candidates"],
+        try:
+            with filepath.open("r") as f:
+                data = json.load(f)
+                snapshots.append(
+                    RunSnapshot(
+                        timestamp=data["timestamp"],
+                        config=data["config"],
+                        candidates=data["candidates"],
+                    )
                 )
-            )
+        except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            logger.warning("Failed to load historical run %s: %s", filepath, exc)
+            continue
 
     return snapshots
 
