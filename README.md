@@ -110,7 +110,7 @@ emit_json: false
 - `baseline_sku`: Optional VM SKU to use as 100% performance baseline for relative comparison (e.g., `Standard_D4as_v6`). When set, enables `Perf %` and `Price/Perf` columns and optimizes recommendations for value.
 - `cache_ttl_minutes`: Reuses identical placement/Resource Graph responses for the specified TTL to respect Azure guidance of avoiding duplicate calls within 15 minutes.[^placement-score]
 - `result_limit`: Optional maximum number of rows in the final ranked report.
-- `emit_json`: When `true`, prints a JSON representation in addition to the table (also useful when saving reports).
+- `emit_json`: When `true`, writes machine-readable JSON to `stdout` and suppresses the human-readable console table, recommendations, and explanatory text.
 - `enable_placement`: Set to `true` (or pass `--placement-check`) to query the Spot Placement Score API for capacity and quota data. Requires `subscription_id`. Defaults to `false`. When this is `false`, omit `desired_count` and `availability_zones`.
 
 ## Usage
@@ -132,6 +132,14 @@ spotvm-tool \
 ### With a configuration file
 ```bash
 spotvm-tool --config config.sample.yaml --save-report reports/latest.json
+```
+
+### Machine-readable JSON
+```bash
+spotvm-tool \
+  --regions eastus westus \
+  --sizes Standard_D2s_v4 Standard_D4s_v4 \
+  --json | jq .
 ```
 
 ### Export to CSV for Excel/Google Sheets
@@ -176,9 +184,9 @@ Rank | Region | Zone | VM Size          | CPU | Placement | Quota | Price (USD/h
 *(Perf %, Price/Perf, CoreMark, and CM/vCPU columns shown when `--baseline-sku` is specified)*
 
 ## Output artifacts
-- **Console table** – always emitted with color-coded risk indicators.
+- **Console table** – emitted for human-readable runs with color-coded risk indicators. It is suppressed when `--json` is enabled.
 - **Recommendations** – human-readable summary of the top three entries.
-- **JSON report** – optional structured output (includes timestamps, metrics, and notes) controllable via `--json` and `--save-report`.
+- **JSON report** – optional structured output (includes timestamps, metrics, performance basis, and notes) controllable via `--json` and `--save-report`.
 - **CSV export** – optional spreadsheet-compatible export for Excel/Google Sheets via `--csv <file>`.
 
 ### Color-Coded Output
