@@ -22,6 +22,7 @@ ENV/
 .vscode/
 
 # Local artifacts
+.worktrees/
 *.sqlite3
 .cache/
 .mypy_cache/

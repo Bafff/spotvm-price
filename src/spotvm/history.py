@@ -1,4 +1,4 @@
-"""Historical data management for spotvm-tool.
+"""Historical data management for spotvm.
 
 Saves each run's results to JSON files and provides analysis
 of historical price/eviction trends across multiple runs.
@@ -18,7 +18,7 @@ from .config import ToolConfig
 from .models import CandidateInsight
 
 
-logger = logging.getLogger("spotvm-tool")
+logger = logging.getLogger("spotvm")
 
 
 @dataclass

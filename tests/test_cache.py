@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import spotvm_tool.cache as cache
+import spotvm.cache as cache
 
 
 def test_load_returns_cache_miss_and_warns_on_oserror(tmp_path, monkeypatch, caplog):
@@ -20,7 +20,7 @@ def test_load_returns_cache_miss_and_warns_on_oserror(tmp_path, monkeypatch, cap
 
     monkeypatch.setattr(Path, "read_text", raising_read_text)
 
-    with caplog.at_level(logging.WARNING, logger="spotvm-tool"):
+    with caplog.at_level(logging.WARNING, logger="spotvm"):
         result = cache.load("example", ttl_minutes=15)
 
     assert result is None
@@ -40,7 +40,7 @@ def test_store_warns_and_skips_cache_write_on_oserror(tmp_path, monkeypatch, cap
 
     monkeypatch.setattr(Path, "write_text", raising_write_text)
 
-    with caplog.at_level(logging.WARNING, logger="spotvm-tool"):
+    with caplog.at_level(logging.WARNING, logger="spotvm"):
         cache.store("example", {"value": 1}, ttl_minutes=15)
 
     assert not cache_path.exists()

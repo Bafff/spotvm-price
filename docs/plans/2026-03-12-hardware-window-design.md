@@ -20,9 +20,9 @@ Today `--min-vcpu` and `--min-ram` are open-ended lower bounds. A request like `
 ## Scope
 
 - CLI help text for `--min-vcpu`, `--min-ram`, and the new `--no-max-limit`.
-- Auto-discovery in `src/spotvm_tool/vm_specs.py`.
-- Requirement filtering in `src/spotvm_tool/analysis.py`.
-- CLI plumbing and logging in `src/spotvm_tool/cli.py`.
+- Auto-discovery in `src/spotvm/vm_specs.py`.
+- Requirement filtering in `src/spotvm/analysis.py`.
+- CLI plumbing and logging in `src/spotvm/cli.py`.
 - Tests and README updates.
 
 ## Non-Goals

@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import pytest
 from unittest.mock import patch, MagicMock
 
-from spotvm_tool.cli import build_parser, main, _run_single_analysis
-from spotvm_tool.config import ToolConfig
+from spotvm.cli import build_parser, main, _run_single_analysis
+from spotvm.config import ToolConfig
 
 
 def _analysis_args(**overrides):
@@ -36,7 +36,7 @@ class TestBuildParser:
         rc = main([])
         assert rc == 0
         captured = capsys.readouterr()
-        assert "spotvm-tool" in captured.out
+        assert "spotvm" in captured.out
         assert "--regions" in captured.out
 
     def test_missing_regions_errors(self):
@@ -119,7 +119,7 @@ class TestBuildParser:
         captured = capsys.readouterr()
         assert error_text in captured.err
 
-    @patch("spotvm_tool.cli._run_single_analysis")
+    @patch("spotvm.cli._run_single_analysis")
     def test_pricing_only_config_accepts_default_desired_count(self, mock_run_single_analysis, tmp_path):
         config = ToolConfig(
             regions=["centralus"],
@@ -182,35 +182,35 @@ class TestToolConfigValidation:
     """Tests for ToolConfig validation logic."""
 
     def test_no_subscription_without_placement_succeeds(self):
-        from spotvm_tool.config import ToolConfig
+        from spotvm.config import ToolConfig
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
         assert config.subscription_id == ""
         assert config.enable_placement is False
 
     def test_pricing_only_config_omits_placement_fields(self):
-        from spotvm_tool.config import ToolConfig
+        from spotvm.config import ToolConfig
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
         payload = config.to_dict()
         assert "desired_count" not in payload
         assert "availability_zones" not in payload
 
     def test_placement_without_subscription_fails(self):
-        from spotvm_tool.config import ToolConfig
+        from spotvm.config import ToolConfig
         with pytest.raises(ValueError, match="subscription_id is required"):
             ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], enable_placement=True)
 
     def test_non_default_desired_count_without_placement_fails(self):
-        from spotvm_tool.config import ToolConfig
+        from spotvm.config import ToolConfig
         with pytest.raises(ValueError, match="desired_count requires enable_placement"):
             ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], desired_count=2)
 
     def test_availability_zones_without_placement_fails(self):
-        from spotvm_tool.config import ToolConfig
+        from spotvm.config import ToolConfig
         with pytest.raises(ValueError, match="availability_zones requires enable_placement"):
             ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], availability_zones=True)
 
     def test_placement_with_subscription_succeeds(self):
-        from spotvm_tool.config import ToolConfig
+        from spotvm.config import ToolConfig
         config = ToolConfig(
             regions=["centralus"], sizes=["Standard_D4s_v5"],
             enable_placement=True, subscription_id="abc-123",
@@ -218,12 +218,12 @@ class TestToolConfigValidation:
         assert config.enable_placement is True
 
     def test_invalid_cpu_arch_fails(self):
-        from spotvm_tool.config import ToolConfig
+        from spotvm.config import ToolConfig
         with pytest.raises(ValueError, match="cpu_arch"):
             ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], cpu_arch="mips")
 
     def test_valid_cpu_arch_normalizes(self):
-        from spotvm_tool.config import ToolConfig
+        from spotvm.config import ToolConfig
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], cpu_arch="X64")
         assert config.cpu_arch == "x64"
 
@@ -231,9 +231,9 @@ class TestToolConfigValidation:
 class TestMainWithMocks:
     """Tests for main() with mocked Azure API calls."""
 
-    @patch("spotvm_tool.cli.AzureAuthenticator")
-    @patch("spotvm_tool.cli.AzureRestClient")
-    @patch("spotvm_tool.cli.fetch_historical_metrics")
+    @patch("spotvm.cli.AzureAuthenticator")
+    @patch("spotvm.cli.AzureRestClient")
+    @patch("spotvm.cli.fetch_historical_metrics")
     def test_basic_run_returns_zero(
         self, mock_fetch_hist, mock_client_cls, mock_auth_cls, capsys
     ):
@@ -246,10 +246,10 @@ class TestMainWithMocks:
         assert rc == 0
         mock_fetch_hist.assert_called_once()
 
-    @patch("spotvm_tool.cli.AzureAuthenticator")
-    @patch("spotvm_tool.cli.AzureRestClient")
-    @patch("spotvm_tool.cli.fetch_placement_scores")
-    @patch("spotvm_tool.cli.fetch_historical_metrics")
+    @patch("spotvm.cli.AzureAuthenticator")
+    @patch("spotvm.cli.AzureRestClient")
+    @patch("spotvm.cli.fetch_placement_scores")
+    @patch("spotvm.cli.fetch_historical_metrics")
     def test_placement_not_called_without_flag(
         self, mock_fetch_hist, mock_fetch_placement, mock_client_cls, mock_auth_cls, capsys
     ):
@@ -263,9 +263,9 @@ class TestMainWithMocks:
         mock_fetch_hist.assert_called_once()
         mock_fetch_placement.assert_not_called()
 
-    @patch("spotvm_tool.cli.AzureAuthenticator")
-    @patch("spotvm_tool.cli.AzureRestClient")
-    @patch("spotvm_tool.cli.fetch_historical_metrics")
+    @patch("spotvm.cli.AzureAuthenticator")
+    @patch("spotvm.cli.AzureRestClient")
+    @patch("spotvm.cli.fetch_historical_metrics")
     def test_no_color_flag_works(
         self, mock_fetch_hist, mock_client_cls, mock_auth_cls, capsys
     ):
@@ -280,10 +280,10 @@ class TestMainWithMocks:
         # No ANSI escape codes in output
         assert "\033[" not in captured.out
 
-    @patch("spotvm_tool.cli.AzureAuthenticator")
-    @patch("spotvm_tool.cli.AzureRestClient")
-    @patch("spotvm_tool.cli.fetch_placement_scores")
-    @patch("spotvm_tool.cli.fetch_historical_metrics")
+    @patch("spotvm.cli.AzureAuthenticator")
+    @patch("spotvm.cli.AzureRestClient")
+    @patch("spotvm.cli.fetch_placement_scores")
+    @patch("spotvm.cli.fetch_historical_metrics")
     def test_placement_check_with_subscription(
         self, mock_fetch_hist, mock_fetch_placement, mock_client_cls, mock_auth_cls, capsys
     ):
@@ -299,17 +299,17 @@ class TestMainWithMocks:
         assert rc == 0
         mock_fetch_placement.assert_called_once()
 
-    @patch("spotvm_tool.cli.AzureAuthenticator")
-    @patch("spotvm_tool.cli.AzureRestClient")
-    @patch("spotvm_tool.cli.fetch_historical_metrics")
-    @patch("spotvm_tool.cli.filter_by_cost")
-    @patch("spotvm_tool.cli.enrich_with_coremark")
-    @patch("spotvm_tool.cli.enrich_with_performance")
-    @patch("spotvm_tool.cli.rank_candidates")
-    @patch("spotvm_tool.cli.filter_by_requirements")
-    @patch("spotvm_tool.cli.merge_datasets")
-    @patch("spotvm_tool.cli.summarize_top_candidates")
-    @patch("spotvm_tool.cli.render_table")
+    @patch("spotvm.cli.AzureAuthenticator")
+    @patch("spotvm.cli.AzureRestClient")
+    @patch("spotvm.cli.fetch_historical_metrics")
+    @patch("spotvm.cli.filter_by_cost")
+    @patch("spotvm.cli.enrich_with_coremark")
+    @patch("spotvm.cli.enrich_with_performance")
+    @patch("spotvm.cli.rank_candidates")
+    @patch("spotvm.cli.filter_by_requirements")
+    @patch("spotvm.cli.merge_datasets")
+    @patch("spotvm.cli.summarize_top_candidates")
+    @patch("spotvm.cli.render_table")
     def test_successful_run_prints_ranked_table(
         self,
         mock_render_table,
@@ -361,17 +361,17 @@ class TestMainWithMocks:
             show_baseline=False,
         )
 
-    @patch("spotvm_tool.cli.AzureAuthenticator")
-    @patch("spotvm_tool.cli.AzureRestClient")
-    @patch("spotvm_tool.cli.fetch_historical_metrics")
-    @patch("spotvm_tool.cli.filter_by_cost")
-    @patch("spotvm_tool.cli.enrich_with_coremark")
-    @patch("spotvm_tool.cli.enrich_with_performance")
-    @patch("spotvm_tool.cli.rank_candidates")
-    @patch("spotvm_tool.cli.filter_by_requirements")
-    @patch("spotvm_tool.cli.merge_datasets")
-    @patch("spotvm_tool.cli.summarize_top_candidates")
-    @patch("spotvm_tool.cli.render_table")
+    @patch("spotvm.cli.AzureAuthenticator")
+    @patch("spotvm.cli.AzureRestClient")
+    @patch("spotvm.cli.fetch_historical_metrics")
+    @patch("spotvm.cli.filter_by_cost")
+    @patch("spotvm.cli.enrich_with_coremark")
+    @patch("spotvm.cli.enrich_with_performance")
+    @patch("spotvm.cli.rank_candidates")
+    @patch("spotvm.cli.filter_by_requirements")
+    @patch("spotvm.cli.merge_datasets")
+    @patch("spotvm.cli.summarize_top_candidates")
+    @patch("spotvm.cli.render_table")
     def test_explicit_sizes_bypass_bounded_hardware_window(
         self,
         mock_render_table,
@@ -418,8 +418,8 @@ class TestMainWithMocks:
             no_max_limit=True,
         )
 
-    @patch("spotvm_tool.cli._run_single_analysis")
-    @patch("spotvm_tool.cli.discover_skus")
+    @patch("spotvm.cli._run_single_analysis")
+    @patch("spotvm.cli.discover_skus")
     def test_config_sizes_do_not_trigger_auto_discovery(
         self,
         mock_discover_skus,
@@ -452,7 +452,7 @@ class TestMainWithMocks:
         assert config.sizes == ["Standard_D4ps_v5"]
         assert config.cpu_arch == "arm"
 
-    @patch("spotvm_tool.cli._run_single_analysis")
+    @patch("spotvm.cli._run_single_analysis")
     def test_cli_sizes_mark_run_as_explicit_for_hardware_window(
         self,
         mock_run_single_analysis,
@@ -469,8 +469,8 @@ class TestMainWithMocks:
         args = mock_run_single_analysis.call_args.kwargs["args"]
         assert args.explicit_sizes is True
 
-    @patch("spotvm_tool.cli._run_single_analysis")
-    @patch("spotvm_tool.cli.discover_skus")
+    @patch("spotvm.cli._run_single_analysis")
+    @patch("spotvm.cli.discover_skus")
     def test_config_cpu_arch_triggers_auto_discovery(
         self,
         mock_discover_skus,
@@ -504,8 +504,8 @@ class TestMainWithMocks:
         assert config.sizes == ["Standard_D2ps_v5"]
         assert config.cpu_arch == "arm"
 
-    @patch("spotvm_tool.cli._run_single_analysis")
-    @patch("spotvm_tool.cli.discover_skus")
+    @patch("spotvm.cli._run_single_analysis")
+    @patch("spotvm.cli.discover_skus")
     def test_config_cpu_arch_is_normalized_before_auto_discovery(
         self,
         mock_discover_skus,
@@ -538,8 +538,8 @@ class TestMainWithMocks:
         config = mock_run_single_analysis.call_args.kwargs["config"]
         assert config.cpu_arch == "arm"
 
-    @patch("spotvm_tool.cli._run_single_analysis")
-    @patch("spotvm_tool.cli.discover_skus")
+    @patch("spotvm.cli._run_single_analysis")
+    @patch("spotvm.cli.discover_skus")
     def test_main_passes_no_max_limit_through_to_auto_discovery(
         self,
         mock_discover_skus,
@@ -564,10 +564,10 @@ class TestMainWithMocks:
         config = mock_run_single_analysis.call_args.kwargs["config"]
         assert config.sizes == ["Standard_D4as_v5"]
 
-    @patch("spotvm_tool.cli.MAX_UNATTENDED_FAILURES", 1)
-    @patch("spotvm_tool.cli.time.sleep")
-    @patch("spotvm_tool.cli.signal.signal")
-    @patch("spotvm_tool.cli._run_single_analysis", side_effect=RuntimeError("boom"))
+    @patch("spotvm.cli.MAX_UNATTENDED_FAILURES", 1)
+    @patch("spotvm.cli.time.sleep")
+    @patch("spotvm.cli.signal.signal")
+    @patch("spotvm.cli._run_single_analysis", side_effect=RuntimeError("boom"))
     def test_unattended_mode_stops_after_unexpected_failure_threshold(
         self,
         mock_run_single_analysis,
@@ -576,7 +576,7 @@ class TestMainWithMocks:
         caplog,
         capsys,
     ):
-        with caplog.at_level(logging.ERROR, logger="spotvm-tool"):
+        with caplog.at_level(logging.ERROR, logger="spotvm"):
             rc = main([
                 "--regions", "centralus",
                 "--sizes", "Standard_D4s_v5",
@@ -592,18 +592,18 @@ class TestMainWithMocks:
         captured = capsys.readouterr()
         assert "Stopping monitoring after 1 consecutive unexpected errors" in captured.out
 
-    @patch("spotvm_tool.cli.AzureAuthenticator")
-    @patch("spotvm_tool.cli.AzureRestClient")
-    @patch("spotvm_tool.cli.fetch_historical_metrics")
-    @patch("spotvm_tool.cli.export_to_csv", side_effect=PermissionError("disk full"))
-    @patch("spotvm_tool.cli.filter_by_cost")
-    @patch("spotvm_tool.cli.enrich_with_coremark")
-    @patch("spotvm_tool.cli.enrich_with_performance")
-    @patch("spotvm_tool.cli.rank_candidates")
-    @patch("spotvm_tool.cli.filter_by_requirements")
-    @patch("spotvm_tool.cli.merge_datasets")
-    @patch("spotvm_tool.cli.summarize_top_candidates")
-    @patch("spotvm_tool.cli.render_table")
+    @patch("spotvm.cli.AzureAuthenticator")
+    @patch("spotvm.cli.AzureRestClient")
+    @patch("spotvm.cli.fetch_historical_metrics")
+    @patch("spotvm.cli.export_to_csv", side_effect=PermissionError("disk full"))
+    @patch("spotvm.cli.filter_by_cost")
+    @patch("spotvm.cli.enrich_with_coremark")
+    @patch("spotvm.cli.enrich_with_performance")
+    @patch("spotvm.cli.rank_candidates")
+    @patch("spotvm.cli.filter_by_requirements")
+    @patch("spotvm.cli.merge_datasets")
+    @patch("spotvm.cli.summarize_top_candidates")
+    @patch("spotvm.cli.render_table")
     def test_csv_export_failure_does_not_suppress_console_output(
         self,
         mock_render_table,
@@ -656,17 +656,17 @@ class TestMainWithMocks:
         assert "RANKED TABLE" in captured.out
         logger.error.assert_called()
 
-    @patch("spotvm_tool.cli.AzureAuthenticator")
-    @patch("spotvm_tool.cli.AzureRestClient")
-    @patch("spotvm_tool.cli.fetch_historical_metrics")
-    @patch("spotvm_tool.cli.filter_by_cost")
-    @patch("spotvm_tool.cli.enrich_with_coremark")
-    @patch("spotvm_tool.cli.enrich_with_performance")
-    @patch("spotvm_tool.cli.rank_candidates")
-    @patch("spotvm_tool.cli.filter_by_requirements")
-    @patch("spotvm_tool.cli.merge_datasets")
-    @patch("spotvm_tool.cli.summarize_top_candidates")
-    @patch("spotvm_tool.cli.render_table")
+    @patch("spotvm.cli.AzureAuthenticator")
+    @patch("spotvm.cli.AzureRestClient")
+    @patch("spotvm.cli.fetch_historical_metrics")
+    @patch("spotvm.cli.filter_by_cost")
+    @patch("spotvm.cli.enrich_with_coremark")
+    @patch("spotvm.cli.enrich_with_performance")
+    @patch("spotvm.cli.rank_candidates")
+    @patch("spotvm.cli.filter_by_requirements")
+    @patch("spotvm.cli.merge_datasets")
+    @patch("spotvm.cli.summarize_top_candidates")
+    @patch("spotvm.cli.render_table")
     def test_report_write_failure_does_not_suppress_console_output(
         self,
         mock_render_table,
@@ -736,18 +736,18 @@ class TestMainWithMocks:
         assert "RANKED TABLE" in captured.out
         logger.error.assert_called()
 
-    @patch("spotvm_tool.history.save_run_results", side_effect=PermissionError("disk full"))
-    @patch("spotvm_tool.cli.AzureAuthenticator")
-    @patch("spotvm_tool.cli.AzureRestClient")
-    @patch("spotvm_tool.cli.fetch_historical_metrics")
-    @patch("spotvm_tool.cli.filter_by_cost")
-    @patch("spotvm_tool.cli.enrich_with_coremark")
-    @patch("spotvm_tool.cli.enrich_with_performance")
-    @patch("spotvm_tool.cli.rank_candidates")
-    @patch("spotvm_tool.cli.filter_by_requirements")
-    @patch("spotvm_tool.cli.merge_datasets")
-    @patch("spotvm_tool.cli.summarize_top_candidates")
-    @patch("spotvm_tool.cli.render_table")
+    @patch("spotvm.history.save_run_results", side_effect=PermissionError("disk full"))
+    @patch("spotvm.cli.AzureAuthenticator")
+    @patch("spotvm.cli.AzureRestClient")
+    @patch("spotvm.cli.fetch_historical_metrics")
+    @patch("spotvm.cli.filter_by_cost")
+    @patch("spotvm.cli.enrich_with_coremark")
+    @patch("spotvm.cli.enrich_with_performance")
+    @patch("spotvm.cli.rank_candidates")
+    @patch("spotvm.cli.filter_by_requirements")
+    @patch("spotvm.cli.merge_datasets")
+    @patch("spotvm.cli.summarize_top_candidates")
+    @patch("spotvm.cli.render_table")
     def test_save_results_failure_does_not_suppress_console_output(
         self,
         mock_render_table,
@@ -800,17 +800,17 @@ class TestMainWithMocks:
         assert "RANKED TABLE" in captured.out
         logger.warning.assert_called()
 
-    @patch("spotvm_tool.cli.AzureAuthenticator")
-    @patch("spotvm_tool.cli.AzureRestClient")
-    @patch("spotvm_tool.cli.fetch_historical_metrics")
-    @patch("spotvm_tool.cli.filter_by_cost")
-    @patch("spotvm_tool.cli.enrich_with_coremark")
-    @patch("spotvm_tool.cli.enrich_with_performance")
-    @patch("spotvm_tool.cli.rank_candidates")
-    @patch("spotvm_tool.cli.filter_by_requirements")
-    @patch("spotvm_tool.cli.merge_datasets")
-    @patch("spotvm_tool.cli.summarize_top_candidates")
-    @patch("spotvm_tool.cli.render_table")
+    @patch("spotvm.cli.AzureAuthenticator")
+    @patch("spotvm.cli.AzureRestClient")
+    @patch("spotvm.cli.fetch_historical_metrics")
+    @patch("spotvm.cli.filter_by_cost")
+    @patch("spotvm.cli.enrich_with_coremark")
+    @patch("spotvm.cli.enrich_with_performance")
+    @patch("spotvm.cli.rank_candidates")
+    @patch("spotvm.cli.filter_by_requirements")
+    @patch("spotvm.cli.merge_datasets")
+    @patch("spotvm.cli.summarize_top_candidates")
+    @patch("spotvm.cli.render_table")
     def test_baseline_footer_explains_heuristic_marker_once(
         self,
         mock_render_table,
@@ -885,17 +885,17 @@ class TestMainWithMocks:
         assert "comparable CoreMark data is unavailable" in captured.out
         assert "Some Perf % / Price/Perf values use a vCPU/RAM heuristic" not in captured.out
 
-    @patch("spotvm_tool.cli.AzureAuthenticator")
-    @patch("spotvm_tool.cli.AzureRestClient")
-    @patch("spotvm_tool.cli.fetch_historical_metrics")
-    @patch("spotvm_tool.cli.filter_by_cost")
-    @patch("spotvm_tool.cli.enrich_with_coremark")
-    @patch("spotvm_tool.cli.enrich_with_performance")
-    @patch("spotvm_tool.cli.rank_candidates")
-    @patch("spotvm_tool.cli.filter_by_requirements")
-    @patch("spotvm_tool.cli.merge_datasets")
-    @patch("spotvm_tool.cli.summarize_top_candidates")
-    @patch("spotvm_tool.cli.render_table")
+    @patch("spotvm.cli.AzureAuthenticator")
+    @patch("spotvm.cli.AzureRestClient")
+    @patch("spotvm.cli.fetch_historical_metrics")
+    @patch("spotvm.cli.filter_by_cost")
+    @patch("spotvm.cli.enrich_with_coremark")
+    @patch("spotvm.cli.enrich_with_performance")
+    @patch("spotvm.cli.rank_candidates")
+    @patch("spotvm.cli.filter_by_requirements")
+    @patch("spotvm.cli.merge_datasets")
+    @patch("spotvm.cli.summarize_top_candidates")
+    @patch("spotvm.cli.render_table")
     def test_json_output_keeps_stdout_machine_readable(
         self,
         mock_render_table,
@@ -968,16 +968,16 @@ class TestMainWithMocks:
         assert captured.err == ""
         mock_render_table.assert_not_called()
 
-    @patch("spotvm_tool.cli.AzureAuthenticator")
-    @patch("spotvm_tool.cli.AzureRestClient")
-    @patch("spotvm_tool.cli.fetch_historical_metrics")
-    @patch("spotvm_tool.cli.filter_by_cost", return_value=[])
-    @patch("spotvm_tool.cli.enrich_with_coremark", return_value=[])
-    @patch("spotvm_tool.cli.enrich_with_performance", return_value=[])
-    @patch("spotvm_tool.cli.rank_candidates", return_value=[])
-    @patch("spotvm_tool.cli.filter_by_requirements", return_value=[])
-    @patch("spotvm_tool.cli.merge_datasets", return_value=[])
-    @patch("spotvm_tool.cli.render_table")
+    @patch("spotvm.cli.AzureAuthenticator")
+    @patch("spotvm.cli.AzureRestClient")
+    @patch("spotvm.cli.fetch_historical_metrics")
+    @patch("spotvm.cli.filter_by_cost", return_value=[])
+    @patch("spotvm.cli.enrich_with_coremark", return_value=[])
+    @patch("spotvm.cli.enrich_with_performance", return_value=[])
+    @patch("spotvm.cli.rank_candidates", return_value=[])
+    @patch("spotvm.cli.filter_by_requirements", return_value=[])
+    @patch("spotvm.cli.merge_datasets", return_value=[])
+    @patch("spotvm.cli.render_table")
     def test_empty_ranked_results_emit_json_outputs_empty_payload_only(
         self,
         mock_render_table,
@@ -1018,16 +1018,16 @@ class TestMainWithMocks:
         assert captured.err == ""
         mock_render_table.assert_not_called()
 
-    @patch("spotvm_tool.cli.AzureAuthenticator")
-    @patch("spotvm_tool.cli.AzureRestClient")
-    @patch("spotvm_tool.cli.fetch_historical_metrics")
-    @patch("spotvm_tool.cli.filter_by_cost", return_value=[])
-    @patch("spotvm_tool.cli.enrich_with_coremark", return_value=[])
-    @patch("spotvm_tool.cli.enrich_with_performance", return_value=[])
-    @patch("spotvm_tool.cli.rank_candidates", return_value=[])
-    @patch("spotvm_tool.cli.filter_by_requirements", return_value=[])
-    @patch("spotvm_tool.cli.merge_datasets", return_value=[])
-    @patch("spotvm_tool.cli.render_table")
+    @patch("spotvm.cli.AzureAuthenticator")
+    @patch("spotvm.cli.AzureRestClient")
+    @patch("spotvm.cli.fetch_historical_metrics")
+    @patch("spotvm.cli.filter_by_cost", return_value=[])
+    @patch("spotvm.cli.enrich_with_coremark", return_value=[])
+    @patch("spotvm.cli.enrich_with_performance", return_value=[])
+    @patch("spotvm.cli.rank_candidates", return_value=[])
+    @patch("spotvm.cli.filter_by_requirements", return_value=[])
+    @patch("spotvm.cli.merge_datasets", return_value=[])
+    @patch("spotvm.cli.render_table")
     def test_empty_ranked_results_print_message(
         self,
         mock_render_table,

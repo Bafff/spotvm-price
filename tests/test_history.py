@@ -8,14 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from spotvm_tool.config import ToolConfig
-from spotvm_tool.history import (
+from spotvm.config import ToolConfig
+from spotvm.history import (
     analyze_history,
     generate_history_csv,
     load_historical_runs,
     save_run_results,
 )
-from spotvm_tool.models import CandidateInsight
+from spotvm.models import CandidateInsight
 
 
 @pytest.fixture
@@ -145,7 +145,7 @@ def test_load_historical_runs_skips_malformed_json_file(temp_results_dir, sample
     bad_path = temp_results_dir / "runs" / "broken.json"
     bad_path.write_text("{not-valid-json", encoding="utf-8")
 
-    with caplog.at_level(logging.WARNING, logger="spotvm-tool"):
+    with caplog.at_level(logging.WARNING, logger="spotvm"):
         snapshots = load_historical_runs(temp_results_dir)
 
     assert len(snapshots) == 1
@@ -166,7 +166,7 @@ def test_load_historical_runs_skips_unreadable_file(temp_results_dir, sample_can
 
     monkeypatch.setattr(Path, "open", raising_open)
 
-    with caplog.at_level(logging.WARNING, logger="spotvm-tool"):
+    with caplog.at_level(logging.WARNING, logger="spotvm"):
         snapshots = load_historical_runs(temp_results_dir)
 
     assert len(snapshots) == 1
