@@ -226,24 +226,24 @@ resource "azurerm_linux_virtual_machine" "spot" {
 ## 🎯 Recommended Next Steps
 
 ### Immediate (Next Sprint)
-1. **Cost Filtering** - High business value, low complexity
-2. **CSV Export** - Frequently requested, easy to implement
-3. **Monthly Cost Calculator** - Demonstrates ROI
+1. **Monthly Cost Calculator** - Demonstrates ROI
+2. **Progress Indicators** - Quick UX improvement for long-running operations
+3. **HTML Reports** - Useful deliverable for non-CLI consumers
 
 ### Short Term (Next Month)
-4. **Requirements Matching** - Better UX
-5. **Historical Trends** - Better decision making
-6. **Colored Output** - Visual improvement
+4. **Watch Mode** - Better automation for ongoing monitoring
+5. **Terraform Export** - IaC workflow integration
+6. **Webhook Notifications** - Practical alerting integrations
 
 ### Medium Term (Next Quarter)
-7. **HTML Reports** - Professional presentation
-8. **Terraform Export** - IaC workflow integration
-9. **Watch Mode** - Real-time monitoring
+7. **Visual Charts** - Richer presentation for trends and comparisons
+8. **Existing VM Monitoring** - Subscription-aware operational visibility
+9. **Cost Optimization Recommendations** - Actionable savings guidance
 
 ### Long Term (Future)
 10. **Multi-cloud** - Competitive analysis
 11. **ML Predictions** - Advanced intelligence
-12. **Monitoring Dashboard** - Enterprise features
+12. **Grafana/Prometheus Integration** - Enterprise monitoring features
 
 ---
 
@@ -271,18 +271,16 @@ resource "azurerm_linux_virtual_machine" "spot" {
 
 ## 🤝 Contributing
 
-Interested in implementing any of these features? Check our [CONTRIBUTING.md](CONTRIBUTING.md) guide!
+Interested in implementing any of these features? Start with the issue lists below and open a PR against the repo when you have a draft ready.
 
 ### Easy First Issues
-- Colored terminal output
-- CSV export
-- Cost filtering
+- Monthly cost calculator
 - Progress indicators
 
 ### Good Second Issues
-- Requirements matching
+- Watch mode
 - HTML reports
-- Historical price trends
+- Webhook notifications
 
 ### Advanced Features
 - Terraform export
