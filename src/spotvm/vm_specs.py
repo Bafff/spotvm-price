@@ -451,7 +451,7 @@ VM_SPECIFICATIONS: Dict[str, VMSpec] = {
     "Standard_F16": VMSpec(vcpus=16, ram_gb=32),
     "Standard_F16s": VMSpec(vcpus=16, ram_gb=32),
 
-    # Legacy v3 series (Found in ArkadiumWarehouse YAMLs)
+    # Legacy v3 series
     "Standard_D4s_v3": VMSpec(vcpus=4, ram_gb=16),
     "Standard_E8_v3": VMSpec(vcpus=8, ram_gb=64),
 }
