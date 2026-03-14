@@ -6,6 +6,7 @@ import re
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any, cast
+from urllib.parse import urlunsplit
 
 from . import cache
 from .config import ToolConfig
@@ -15,9 +16,10 @@ from .models import HistoricalMetrics
 logger = logging.getLogger("spotvm")
 
 RESOURCE_GRAPH_API_VERSION = "2022-10-01"
-RESOURCE_GRAPH_ENDPOINT = (
-    f"https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version={RESOURCE_GRAPH_API_VERSION}"
-)
+AZURE_MANAGEMENT_HOST = "management.azure.com"
+RESOURCE_GRAPH_PATH = "/providers/Microsoft.ResourceGraph/resources"
+MIN_PLAUSIBLE_UNIX_TIMESTAMP = datetime(2015, 1, 1, tzinfo=timezone.utc).timestamp()
+MAX_PLAUSIBLE_UNIX_TIMESTAMP = datetime(2041, 1, 1, tzinfo=timezone.utc).timestamp()
 
 
 def fetch_historical_metrics(
@@ -26,9 +28,11 @@ def fetch_historical_metrics(
 ) -> list[HistoricalMetrics]:
     price_query = _build_price_query(config)
     eviction_query = _build_eviction_query(config)
-
-    logger.debug("Price query: %s", price_query)
-    logger.debug("Eviction query: %s", eviction_query)
+    logger.debug(
+        "Built Resource Graph queries for %d SKU filters across %d regions",
+        len(config.sizes),
+        len(config.regions),
+    )
 
     price_rows = _execute_query(client, config, price_query, "price")
     eviction_rows = _execute_query(client, config, eviction_query, "eviction")
@@ -92,8 +96,6 @@ def _execute_query(
         },
     }
 
-    logger.debug("Executing query with authorizationScopeFilter=AtScopeAboveAndBelow")
-
     cache_key = _cache_key(cache_prefix, payload)
     cached = cache.load(cache_key, config.cache_ttl_minutes)
     if cached is not None:
@@ -108,17 +110,27 @@ def _execute_query(
 
     logger.debug("Executing %s query against Resource Graph API", cache_prefix)
     response = client.post_json(
-        RESOURCE_GRAPH_ENDPOINT,
+        _resource_graph_endpoint(),
         payload,
         retry_attempts=config.retry_attempts,
         retry_backoff_seconds=config.retry_backoff_seconds,
     )
     logger.debug("Response keys: %s", list(response.keys()))
     logger.debug("Response data length: %d", len(response.get("data", [])))
-    if response.get("data"):
-        logger.debug("Sample data item: %s", response["data"][0] if response["data"] else "N/A")
     cache.store(cache_key, response, config.cache_ttl_minutes)
     return cast(list[dict[str, Any]], response.get("data", []))
+
+
+def _resource_graph_endpoint() -> str:
+    return urlunsplit(
+        (
+            "https",
+            AZURE_MANAGEMENT_HOST,
+            RESOURCE_GRAPH_PATH,
+            f"api-version={RESOURCE_GRAPH_API_VERSION}",
+            "",
+        )
+    )
 
 
 def _cache_key(prefix: str, payload: dict) -> str:
@@ -264,9 +276,21 @@ def _parse_datetime_string(value: Any) -> datetime | None:
             if dt.tzinfo is None and value.endswith("Z"):
                 dt = dt.replace(tzinfo=timezone.utc)
         except ValueError:
+            numeric_value = _parse_timestamp_string(value)
+            if numeric_value is not None:
+                return datetime.fromtimestamp(numeric_value, tz=timezone.utc)
             logger.debug("Could not parse datetime string: %r", value)
+            return None
         else:
             return dt
-        return None
     logger.debug("Unsupported datetime type %s: %r", type(value).__name__, value)
+    return None
+
+
+def _parse_timestamp_string(value: str) -> float | None:
+    candidate = value.strip()
+    if re.fullmatch(r"\d+(?:\.\d+)?", candidate):
+        timestamp = float(candidate)
+        if MIN_PLAUSIBLE_UNIX_TIMESTAMP <= timestamp < MAX_PLAUSIBLE_UNIX_TIMESTAMP:
+            return timestamp
     return None

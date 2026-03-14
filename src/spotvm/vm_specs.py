@@ -425,10 +425,17 @@ VM_SPECIFICATIONS: dict[str, VMSpec] = {
     "Standard_E8_v3": VMSpec(vcpus=8, ram_gb=64),
 }
 
+_NORMALIZED_VM_SPECIFICATIONS: dict[str, VMSpec] = {
+    sku.lower().replace("_", ""): spec for sku, spec in VM_SPECIFICATIONS.items()
+}
+
 
 def get_vm_spec(sku: str) -> VMSpec | None:
     """Get VM specification by SKU name (case-insensitive)."""
-    return VM_SPECIFICATIONS.get(sku) or VM_SPECIFICATIONS.get(sku.replace("_", ""))
+    exact_match = VM_SPECIFICATIONS.get(sku)
+    if exact_match is not None:
+        return exact_match
+    return _NORMALIZED_VM_SPECIFICATIONS.get(sku.lower().replace("_", ""))
 
 
 HardwareDimension = Literal["vcpu", "ram"]

@@ -35,5 +35,8 @@ reports/
 results/
 *.csv
 
+# Desloppify local state
+.desloppify/
+
 # Lock files
 uv.lock
