@@ -1,4 +1,4 @@
-# Azure Spot VM Placement Score Analysis Tool
+# Azure Spot VM Analysis Tool
 
 This project delivers a Python CLI that correlates Azure Spot Placement Score data with the Spot price and eviction history published via Azure Resource Graph. It provides a consolidated, ranked report for a set of VM SKUs and regions so you can quickly identify combinations that balance availability, stability, and cost for Spot VM workloads.
 
@@ -30,6 +30,14 @@ uv sync --extra dev
 uv run spotvm --help
 ```
 
+Unless otherwise noted, the command examples below assume this repo-local workflow from the project root:
+
+```bash
+uv run spotvm ...
+```
+
+If you installed the CLI globally with `uv tool install --editable .`, you can omit the `uv run` prefix.
+
 ### One-command execution options
 - **uv from GitHub:** `uvx --from git+https://github.com/Bafff/spotvm-price.git spotvm -- --help`
 - **pipx from local checkout:** `pipx run --spec ./ spotvm -- --help`
@@ -43,7 +51,7 @@ All three commands read `pyproject.toml`, create an isolated environment, instal
 - Existing cache data under the previous cache directory in `~/.cache` is not migrated automatically. It is safe to delete manually if you no longer need it.
 
 ### Complete `uv` example
-If you keep your subscription ID in `.env` (for example `AZURE_SUBSCRIPTION_ID=2f929c0a-d1f4-480c-a610-f75d1862fd53`), load it and execute:
+If you keep your subscription ID in `.env` (for example `AZURE_SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000000`), load it and execute:
 
 ```bash
 uv sync --extra dev
@@ -65,7 +73,7 @@ Alternatively, pass the subscription inline:
 ```bash
 uv run spotvm \
   --clear-cache \
-  --subscription-id 2f929c0a-d1f4-480c-a610-f75d1862fd53 \
+  --subscription-id 00000000-0000-0000-0000-000000000000 \
   --placement-check \
   --regions centralus \
   --sizes Standard_D2as_v6 \
@@ -132,11 +140,11 @@ cache_ttl_minutes: 15
   **Example:**
   ```bash
   # Subscription A has 100 vCPU quota in eastus (80 used, 20 free)
-  spotvm --subscription-id AAAA... --placement-check --regions eastus --sizes Standard_D4as_v5
+  uv run spotvm --subscription-id AAAA... --placement-check --regions eastus --sizes Standard_D4as_v5
   # Result: Quota = ✅ Yes (4 vCPU needed, 20 available)
 
   # Subscription B has 10 vCPU quota in eastus (9 used, 1 free)
-  spotvm --subscription-id BBBB... --placement-check --regions eastus --sizes Standard_D4as_v5
+  uv run spotvm --subscription-id BBBB... --placement-check --regions eastus --sizes Standard_D4as_v5
   # Result: Quota = ❌ No (4 vCPU needed, only 1 available)
   ```
 
@@ -159,12 +167,12 @@ cache_ttl_minutes: 15
 ### Direct arguments
 ```bash
 # Pricing and eviction data (no subscription needed)
-spotvm \
+uv run spotvm \
   --regions eastus westus \
   --sizes Standard_D2s_v4 Standard_D4s_v4
 
 # With placement scoring (requires subscription)
-spotvm \
+uv run spotvm \
   --subscription-id 00000000-0000-0000-0000-000000000000 \
   --regions eastus westus \
   --sizes Standard_D2s_v4 Standard_D4s_v4 \
@@ -173,12 +181,14 @@ spotvm \
 
 ### With a configuration file
 ```bash
-spotvm --config config.sample.yaml --save-report reports/latest.json
+uv run spotvm --config config.sample.yaml --save-report reports/latest.json
 ```
+
+`--save-report` creates the parent directory automatically if it does not already exist.
 
 ### Machine-readable JSON
 ```bash
-spotvm \
+uv run spotvm \
   --regions eastus westus \
   --sizes Standard_D2s_v4 Standard_D4s_v4 \
   --json | jq .
@@ -186,7 +196,7 @@ spotvm \
 
 ### Export to CSV for Excel/Google Sheets
 ```bash
-spotvm \
+uv run spotvm \
   --regions eastus westus centralus \
   --sizes Standard_D2s_v4 Standard_D4s_v4 Standard_E4s_v5 \
   --baseline-sku Standard_D4s_v4 \
@@ -252,7 +262,7 @@ The terminal output uses colors to highlight eviction risk levels and placement 
 
 **Disable colors** for CI/CD or non-TTY environments:
 ```bash
-spotvm --no-color --regions eastus --sizes Standard_D4as_v5
+uv run spotvm --no-color --regions eastus --sizes Standard_D4as_v5
 ```
 
 Colors are automatically disabled when output is redirected to a file or pipe.
@@ -290,7 +300,7 @@ Priority 3: Price/Performance ratio (lower is better value)
 Add `--baseline-sku` to compare relative performance:
 
 ```bash
-spotvm \
+uv run spotvm \
   --baseline-sku Standard_D4as_v6 \
   --regions eastus centralus \
   --sizes Standard_D2as_v6 Standard_D4as_v5 Standard_E4s_v5
@@ -344,7 +354,7 @@ Filter VMs by hardware requirements instead of manually specifying SKUs:
 
 ```bash
 # Auto-discover right-sized VMs near your requested shape
-spotvm \
+uv run spotvm \
   --regions centralus eastus \
   --min-vcpu 4 \
   --min-ram 32 \
@@ -371,7 +381,7 @@ spotvm \
 
 ```bash
 # Restore open-ended minimum filtering
-spotvm \
+uv run spotvm \
   --regions centralus eastus \
   --min-vcpu 4 \
   --min-ram 32 \
@@ -397,7 +407,7 @@ Apply maximum constraints on price, eviction rate, and performance:
 
 ```bash
 # Find VMs cheaper than $0.10/hr with low eviction risk
-spotvm \
+uv run spotvm \
   --regions centralus eastus westus \
   --sizes Standard_D4as_v5 Standard_D4as_v6 Standard_E4s_v5 \
   --baseline-sku Standard_D4as_v6 \
@@ -416,16 +426,24 @@ spotvm \
 Find the cheapest Spot VM for your workload:
 
 ```bash
-spotvm \
+uv run spotvm \
   --regions centralus eastus \
-  --min-vcpu 8 \          # At least 8 cores
-  --min-ram 64 \          # At least 64 GB RAM
-  --max-price 0.20 \      # Max $0.20/hour
-  --max-eviction 5 \      # Max 5% eviction risk
+  --min-vcpu 8 \
+  --min-ram 64 \
+  --max-price 0.20 \
+  --max-eviction 5 \
   --baseline-sku Standard_D8as_v6 \
-  --min-performance 90 \  # At least 90% of baseline
-  --limit 3               # Top 3 results
+  --min-performance 90 \
+  --limit 3
 ```
+
+Constraints in this example:
+- at least `8` vCPUs
+- at least `64` GB RAM
+- max price `$0.20/hour`
+- max eviction risk `5%`
+- at least `90%` of baseline performance
+- return the top `3` results
 
 **Workflow:**
 1. **Auto-discovery:** Finds SKUs in the next three distinct known CPU and RAM tiers above your minimums
@@ -464,7 +482,7 @@ Track spot price and eviction rate changes over time by saving results from each
 Add `--save-results` to any normal run to save a timestamped snapshot:
 
 ```bash
-spotvm \
+uv run spotvm \
   --regions centralus eastus \
   --sizes Standard_D4as_v5 Standard_D2as_v6 \
   --baseline-sku Standard_D4as_v6 \
@@ -491,7 +509,7 @@ Each run creates a JSON snapshot in `results/runs/` containing:
 After accumulating multiple runs over days/weeks, generate a unified CSV for visualization:
 
 ```bash
-spotvm --analyze-history
+uv run spotvm --analyze-history
 ```
 
 **Output:**
@@ -520,18 +538,18 @@ timestamp,vm_size,region,zone,price_usd,eviction_rate,placement_score,performanc
 **Limit analysis depth:**
 ```bash
 # Analyze only last 7 runs
-spotvm --analyze-history --history-depth 7
+uv run spotvm --analyze-history --history-depth 7
 ```
 
 **Custom output location:**
 ```bash
-spotvm --analyze-history --history-output /tmp/price_trends.csv
+uv run spotvm --analyze-history --history-output /tmp/price_trends.csv
 ```
 
 **Custom results directory:**
 ```bash
-spotvm --save-results --results-dir /data/spot-analysis
-spotvm --analyze-history --results-dir /data/spot-analysis
+uv run spotvm --save-results --results-dir /data/spot-analysis
+uv run spotvm --analyze-history --results-dir /data/spot-analysis
 ```
 
 ### Visualization Examples
@@ -576,7 +594,7 @@ For continuous data collection without setting up cron, use `--run-unattended`:
 
 ```bash
 # Run every hour (default), saving data automatically
-spotvm \
+uv run spotvm \
   --regions centralus eastus \
   --min-vcpu 4 \
   --min-ram 16 \
@@ -611,7 +629,7 @@ Run #2 at 2025-10-25 20:00:00
 **Custom interval:**
 ```bash
 # Run every 15 minutes
-spotvm \
+uv run spotvm \
   --regions centralus \
   --sizes Standard_D4as_v5 \
   --run-unattended 15
@@ -632,7 +650,7 @@ spotvm \
 **Example workflow:**
 ```bash
 # 1. Start monitoring (let it run for several hours)
-spotvm \
+uv run spotvm \
   --regions centralus \
   --min-vcpu 4 \
   --min-ram 16 \
@@ -641,7 +659,7 @@ spotvm \
 # 2. Stop after collecting enough data (Ctrl+C or kill process)
 
 # 3. Analyze collected data
-spotvm --analyze-history
+uv run spotvm --analyze-history
 
 # 4. Visualize trends
 python -c "
@@ -674,7 +692,7 @@ plt.show()
 
 **Scenario 1: Without `--availability-zones` (regional aggregation)**
 ```bash
-spotvm --subscription-id 00000000-0000-0000-0000-000000000000 --placement-check --regions centralus --sizes Standard_D4as_v5 --save-results
+uv run spotvm --subscription-id 00000000-0000-0000-0000-000000000000 --placement-check --regions centralus --sizes Standard_D4as_v5 --save-results
 ```
 Produces:
 ```csv
@@ -686,7 +704,7 @@ timestamp,vm_size,region,zone,price_usd,...
 
 **Scenario 2: With `--availability-zones` (zone-specific)**
 ```bash
-spotvm --subscription-id 00000000-0000-0000-0000-000000000000 --placement-check --regions centralus --sizes Standard_D4as_v5 --availability-zones --save-results
+uv run spotvm --subscription-id 00000000-0000-0000-0000-000000000000 --placement-check --regions centralus --sizes Standard_D4as_v5 --availability-zones --save-results
 ```
 Produces:
 ```csv
@@ -761,7 +779,7 @@ plt.show()
 | ------- | -------- |
 | `AuthorizationFailed` from the placement score API | Confirm the caller has the *Compute Recommendations* role on the subscription. |
 | `DataNotFoundOrStale` messages | Azure currently lacks fresh data for that SKU/region. Retry later or inspect alternative regions. |
-| CLI exits with `No module named spotvm` when running from source | Set `PYTHONPATH=src` when invoking via `python -m spotvm.cli`. |
+| CLI exits with `No module named spotvm` when running from source | Prefer `uv sync --extra dev` and `uv run spotvm ...`. If you invoke `python -m spotvm.cli` directly, set `PYTHONPATH=src`. |
 
 ## Testing
 The preferred test workflow uses `uv`:

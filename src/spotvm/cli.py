@@ -529,6 +529,7 @@ def _run_single_analysis(
             print(json.dumps(report_payload, indent=2, default=_json_serializer), file=sys.stdout)
         if config.save_report:
             try:
+                config.save_report.parent.mkdir(parents=True, exist_ok=True)
                 config.save_report.write_text(
                     json.dumps(report_payload, indent=2, default=_json_serializer),
                     encoding="utf-8",
