@@ -4,9 +4,9 @@ import itertools
 import json
 import logging
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from . import cache
-from .config import ToolConfig
 from .http_client import AzureRestClient
 from .models import PlacementScoreResult
 
@@ -20,18 +20,32 @@ PLACEMENT_ENDPOINT_TEMPLATE = (
 )
 
 
+@dataclass(frozen=True)
+class PlacementScoreRequest:
+    subscription_id: str
+    regions: list[str]
+    sizes: list[str]
+    desired_count: int
+    availability_zones: bool
+    cache_ttl_minutes: int
+    max_sizes_per_request: int
+    max_regions_per_request: int
+    retry_attempts: int
+    retry_backoff_seconds: float
+
+
 def fetch_placement_scores(
     client: AzureRestClient,
-    config: ToolConfig,
+    request: PlacementScoreRequest,
 ) -> list[PlacementScoreResult]:
     """Fetch placement scores, observing Azure's batching limits."""
 
     results: list[PlacementScoreResult] = []
-    for region_batch in _batched(config.regions, config.max_regions_per_request):
-        for size_batch in _batched(config.sizes, config.max_sizes_per_request):
-            payload = _build_payload(region_batch, size_batch, config)
-            cache_key = _cache_key("placement", payload, config.subscription_id)
-            cached = cache.load(cache_key, config.cache_ttl_minutes)
+    for region_batch in _batched(request.regions, request.max_regions_per_request):
+        for size_batch in _batched(request.sizes, request.max_sizes_per_request):
+            payload = _build_payload(region_batch, size_batch, request)
+            cache_key = _cache_key("placement", payload, request.subscription_id)
+            cached = cache.load(cache_key, request.cache_ttl_minutes)
             if cached is not None:
                 if not isinstance(cached, dict):
                     logger.warning("Ignoring malformed cached placement data for %s", region_batch[0])
@@ -39,26 +53,26 @@ def fetch_placement_scores(
                     results.extend(_parse_response(cached))
                     continue
             endpoint = PLACEMENT_ENDPOINT_TEMPLATE.format(
-                subscription_id=config.subscription_id,
+                subscription_id=request.subscription_id,
                 location=region_batch[0],
             )
             response = client.post_json(
                 endpoint,
                 payload,
-                retry_attempts=config.retry_attempts,
-                retry_backoff_seconds=config.retry_backoff_seconds,
+                retry_attempts=request.retry_attempts,
+                retry_backoff_seconds=request.retry_backoff_seconds,
             )
-            cache.store(cache_key, response, config.cache_ttl_minutes)
+            cache.store(cache_key, response, request.cache_ttl_minutes)
             results.extend(_parse_response(response))
     return results
 
 
-def _build_payload(regions: list[str], sizes: list[str], config: ToolConfig) -> dict:
+def _build_payload(regions: list[str], sizes: list[str], request: PlacementScoreRequest) -> dict:
     return {
         "desiredLocations": regions,
         "desiredSizes": [{"sku": size} for size in sizes],
-        "desiredCount": config.desired_count,
-        "availabilityZones": config.availability_zones,
+        "desiredCount": request.desired_count,
+        "availabilityZones": request.availability_zones,
     }
 
 

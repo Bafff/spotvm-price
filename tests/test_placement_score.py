@@ -3,8 +3,29 @@ from __future__ import annotations
 import logging
 from unittest.mock import MagicMock
 
-from spotvm.config import ToolConfig
-from spotvm.placement_score import _build_result, _parse_response, fetch_placement_scores
+from spotvm.placement_score import (
+    PlacementScoreRequest,
+    _build_result,
+    _parse_response,
+    fetch_placement_scores,
+)
+
+
+def _request(**overrides):
+    defaults = {
+        "subscription_id": "sub-id",
+        "regions": ["eastus"],
+        "sizes": ["Standard_D4as_v5"],
+        "desired_count": 1,
+        "availability_zones": False,
+        "cache_ttl_minutes": 15,
+        "max_sizes_per_request": 5,
+        "max_regions_per_request": 8,
+        "retry_attempts": 4,
+        "retry_backoff_seconds": 2.0,
+    }
+    defaults.update(overrides)
+    return PlacementScoreRequest(**defaults)
 
 
 def test_parse_response_logs_items_without_vm_size(caplog):
@@ -31,15 +52,10 @@ def test_fetch_placement_scores_ignores_malformed_cached_payload(monkeypatch, ca
 
     client = MagicMock()
     client.post_json.return_value = {"placementScores": []}
-    config = ToolConfig(
-        subscription_id="sub-id",
-        regions=["eastus"],
-        sizes=["Standard_D4as_v5"],
-        enable_placement=True,
-    )
+    request = _request()
 
     with caplog.at_level(logging.WARNING, logger="spotvm"):
-        result = fetch_placement_scores(client, config)
+        result = fetch_placement_scores(client, request)
 
     assert result == []
     assert client.post_json.called

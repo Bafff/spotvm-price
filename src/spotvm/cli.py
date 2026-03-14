@@ -24,7 +24,7 @@ from .analysis import (
 from .auth import AzureAuthenticator
 from .config import VALID_CPU_ARCHS, ToolConfig, load_config_file, merge_cli_overrides
 from .http_client import AzureHttpError, AzureRestClient
-from .placement_score import fetch_placement_scores
+from .placement_score import PlacementScoreRequest, fetch_placement_scores
 from .reporting import RenderOptions, export_to_csv, initialize_color_output, render_table
 from .resource_graph import ResourceGraphRequest, fetch_historical_metrics
 from .vm_specs import discover_skus
@@ -69,6 +69,21 @@ def _build_resource_graph_request(config: ToolConfig) -> ResourceGraphRequest:
         sizes=config.sizes,
         os_type=config.os_type,
         cache_ttl_minutes=config.cache_ttl_minutes,
+        retry_attempts=config.retry_attempts,
+        retry_backoff_seconds=config.retry_backoff_seconds,
+    )
+
+
+def _build_placement_score_request(config: ToolConfig) -> PlacementScoreRequest:
+    return PlacementScoreRequest(
+        subscription_id=config.subscription_id,
+        regions=config.regions,
+        sizes=config.sizes,
+        desired_count=config.desired_count,
+        availability_zones=config.availability_zones,
+        cache_ttl_minutes=config.cache_ttl_minutes,
+        max_sizes_per_request=config.max_sizes_per_request,
+        max_regions_per_request=config.max_regions_per_request,
         retry_attempts=config.retry_attempts,
         retry_backoff_seconds=config.retry_backoff_seconds,
     )
@@ -503,7 +518,10 @@ def _run_single_analysis(
     authenticator = AzureAuthenticator()
     client = AzureRestClient(authenticator)
 
-    placement_scores = fetch_placement_scores(client, config) if config.enable_placement else []
+    placement_scores = []
+    if config.enable_placement:
+        placement_request = _build_placement_score_request(config)
+        placement_scores = fetch_placement_scores(client, placement_request)
     resource_graph_request = _build_resource_graph_request(config)
     historical_metrics = fetch_historical_metrics(client, resource_graph_request)
 

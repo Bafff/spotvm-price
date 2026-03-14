@@ -13,6 +13,7 @@ import pytest
 from spotvm import reporting
 from spotvm.cli import AnalysisRunRequest, _run_single_analysis, build_parser, main
 from spotvm.config import ToolConfig
+from spotvm.placement_score import PlacementScoreRequest
 from spotvm.resource_graph import ResourceGraphRequest
 
 
@@ -354,11 +355,19 @@ class TestMainWithMocks:
                 "--sizes",
                 "Standard_D4s_v5",
                 "--placement-check",
+                "--availability-zones",
+                "--desired-count",
+                "5",
                 "--no-color",
             ]
         )
         assert rc == 0
         mock_fetch_placement.assert_called_once()
+        placement_request = mock_fetch_placement.call_args.args[1]
+        assert isinstance(placement_request, PlacementScoreRequest)
+        assert placement_request.subscription_id == "00000000-0000-0000-0000-000000000000"
+        assert placement_request.desired_count == 5
+        assert placement_request.availability_zones is True
 
     @patch("spotvm.cli.AzureAuthenticator")
     @patch("spotvm.cli.AzureRestClient")
