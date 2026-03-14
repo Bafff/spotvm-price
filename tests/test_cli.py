@@ -736,6 +736,89 @@ class TestMainWithMocks:
         assert "RANKED TABLE" in captured.out
         logger.error.assert_called()
 
+    @patch("spotvm.cli.AzureAuthenticator")
+    @patch("spotvm.cli.AzureRestClient")
+    @patch("spotvm.cli.fetch_historical_metrics")
+    @patch("spotvm.cli.filter_by_cost")
+    @patch("spotvm.cli.enrich_with_coremark")
+    @patch("spotvm.cli.enrich_with_performance")
+    @patch("spotvm.cli.rank_candidates")
+    @patch("spotvm.cli.filter_by_requirements")
+    @patch("spotvm.cli.merge_datasets")
+    @patch("spotvm.cli.summarize_top_candidates")
+    @patch("spotvm.cli.render_table")
+    def test_save_report_creates_parent_directories(
+        self,
+        mock_render_table,
+        mock_summarize,
+        mock_merge,
+        mock_filter_requirements,
+        mock_rank,
+        mock_enrich_performance,
+        mock_enrich_coremark,
+        mock_filter_cost,
+        mock_fetch_hist,
+        mock_client_cls,
+        mock_auth_cls,
+        tmp_path,
+        capsys,
+    ):
+        candidate = SimpleNamespace(
+            recommendation_rank=1,
+            region="centralus",
+            availability_zone=None,
+            vm_size="Standard_D4s_v5",
+            cpu_arch="x64",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.01,
+            price_last_updated=None,
+            eviction_rate=1.0,
+            performance_relative=None,
+            price_per_performance=None,
+            coremark_score=None,
+            coremark_per_vcpu=None,
+            notes=None,
+        )
+        mock_fetch_hist.return_value = []
+        mock_merge.return_value = [candidate]
+        mock_filter_requirements.return_value = [candidate]
+        mock_rank.return_value = [candidate]
+        mock_enrich_performance.return_value = [candidate]
+        mock_enrich_coremark.return_value = [candidate]
+        mock_filter_cost.return_value = [candidate]
+        mock_summarize.return_value = []
+        mock_render_table.return_value = "RANKED TABLE"
+
+        args = SimpleNamespace(
+            no_color=True,
+            min_vcpu=None,
+            min_ram=None,
+            max_price=None,
+            max_eviction=None,
+            min_performance=None,
+            csv=None,
+            results_dir=None,
+        )
+        logger = MagicMock()
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+        config.save_report = tmp_path / "reports" / "latest.json"
+
+        _run_single_analysis(
+            args=args,
+            config=config,
+            logger=logger,
+            save_results=False,
+        )
+
+        captured = capsys.readouterr()
+        assert "Failed to save report" not in captured.err
+        assert config.save_report.exists()
+        report_payload = json.loads(config.save_report.read_text(encoding="utf-8"))
+        assert report_payload["candidates"][0]["vmSize"] == "Standard_D4s_v5"
+        assert "RANKED TABLE" in captured.out
+        logger.error.assert_not_called()
+
     @patch("spotvm.history.save_run_results", side_effect=PermissionError("disk full"))
     @patch("spotvm.cli.AzureAuthenticator")
     @patch("spotvm.cli.AzureRestClient")

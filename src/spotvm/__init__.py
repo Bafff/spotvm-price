@@ -1,4 +1,4 @@
-"""Azure Spot VM Placement Score Analysis Tool."""
+"""spotvm package."""
 
 from importlib.metadata import version, PackageNotFoundError
 
