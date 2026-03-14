@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from spotvm import reporting
-from spotvm.cli import _run_single_analysis, build_parser, main
+from spotvm.cli import AnalysisRunRequest, _run_single_analysis, build_parser, main
 from spotvm.config import ToolConfig
 
 
@@ -26,10 +26,11 @@ def _analysis_args(**overrides):
         "max_eviction": None,
         "min_performance": None,
         "csv": None,
-        "results_dir": None,
+        "results_dir": Path("./results"),
+        "save_results": False,
     }
     defaults.update(overrides)
-    return SimpleNamespace(**defaults)
+    return AnalysisRunRequest(**defaults)
 
 
 class TestBuildParser:
@@ -399,10 +400,9 @@ class TestMainWithMocks:
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
 
         _run_single_analysis(
-            args=args,
+            request=args,
             config=config,
             logger=MagicMock(),
-            save_results=False,
         )
 
         captured = capsys.readouterr()
@@ -462,10 +462,9 @@ class TestMainWithMocks:
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D64s_v5"])
 
         _run_single_analysis(
-            args=args,
+            request=args,
             config=config,
             logger=MagicMock(),
-            save_results=False,
         )
 
         captured = capsys.readouterr()
@@ -509,8 +508,8 @@ class TestMainWithMocks:
 
         assert rc == 0
         mock_discover_skus.assert_not_called()
-        args = mock_run_single_analysis.call_args.kwargs["args"]
-        assert args.explicit_sizes is True
+        request = mock_run_single_analysis.call_args.kwargs["request"]
+        assert request.explicit_sizes is True
         config = mock_run_single_analysis.call_args.kwargs["config"]
         assert config.sizes == ["Standard_D4ps_v5"]
         assert config.cpu_arch == "arm"
@@ -535,8 +534,130 @@ class TestMainWithMocks:
         )
 
         assert rc == 0
-        args = mock_run_single_analysis.call_args.kwargs["args"]
-        assert args.explicit_sizes is True
+        request = mock_run_single_analysis.call_args.kwargs["request"]
+        assert request.explicit_sizes is True
+
+    @patch("spotvm.cli._run_single_analysis")
+    def test_analysis_run_request_copies_cli_execution_fields(
+        self,
+        mock_run_single_analysis,
+        tmp_path,
+    ):
+        csv_path = tmp_path / "out.csv"
+        results_dir = tmp_path / "results"
+
+        rc = main(
+            [
+                "--regions",
+                "centralus",
+                "--sizes",
+                "Standard_D64s_v5",
+                "--min-vcpu",
+                "4",
+                "--min-ram",
+                "16",
+                "--max-price",
+                "0.10",
+                "--max-eviction",
+                "10",
+                "--min-performance",
+                "80",
+                "--baseline-sku",
+                "Standard_D4as_v6",
+                "--no-max-limit",
+                "--save-results",
+                "--csv",
+                str(csv_path),
+                "--results-dir",
+                str(results_dir),
+                "--no-color",
+            ]
+        )
+
+        assert rc == 0
+        request = mock_run_single_analysis.call_args.kwargs["request"]
+        assert request.no_color is True
+        assert request.min_vcpu == 4
+        assert request.min_ram == 16
+        assert request.no_max_limit is True
+        assert request.explicit_sizes is True
+        assert request.max_price == 0.10
+        assert request.max_eviction == 10.0
+        assert request.min_performance == 80.0
+        assert request.csv == csv_path
+        assert request.results_dir == results_dir
+        assert request.save_results is True
+
+    @patch("spotvm.cli.AzureAuthenticator")
+    @patch("spotvm.cli.AzureRestClient")
+    @patch("spotvm.cli.fetch_historical_metrics")
+    @patch("spotvm.cli.filter_by_cost")
+    @patch("spotvm.cli.enrich_with_coremark")
+    @patch("spotvm.cli.enrich_with_performance")
+    @patch("spotvm.cli.rank_candidates")
+    @patch("spotvm.cli.filter_by_requirements")
+    @patch("spotvm.cli.merge_datasets")
+    @patch("spotvm.cli.summarize_top_candidates")
+    @patch("spotvm.cli.render_table")
+    def test_run_single_analysis_uses_analysis_run_request(
+        self,
+        mock_render_table,
+        mock_summarize,
+        mock_merge,
+        mock_filter_requirements,
+        mock_rank,
+        mock_enrich_performance,
+        mock_enrich_coremark,
+        mock_filter_cost,
+        mock_fetch_hist,
+        mock_client_cls,
+        mock_auth_cls,
+        capsys,
+        tmp_path,
+    ):
+        candidate = object()
+        mock_fetch_hist.return_value = []
+        mock_merge.return_value = [candidate]
+        mock_filter_requirements.return_value = [candidate]
+        mock_rank.return_value = [candidate]
+        mock_enrich_performance.return_value = [candidate]
+        mock_enrich_coremark.return_value = [candidate]
+        mock_filter_cost.return_value = [candidate]
+        mock_summarize.return_value = []
+        mock_render_table.return_value = "RANKED TABLE"
+
+        request = _analysis_args(
+            min_vcpu=4,
+            min_ram=16,
+            explicit_sizes=True,
+            max_price=0.10,
+            max_eviction=10.0,
+            min_performance=80.0,
+            results_dir=tmp_path / "results",
+        )
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D64s_v5"])
+
+        _run_single_analysis(
+            request=request,
+            config=config,
+            logger=MagicMock(),
+        )
+
+        captured = capsys.readouterr()
+        assert "RANKED TABLE" in captured.out
+        mock_filter_requirements.assert_called_once_with(
+            [candidate],
+            min_vcpu=4,
+            min_ram=16,
+            cpu_arch=None,
+            no_max_limit=True,
+        )
+        mock_filter_cost.assert_called_once_with(
+            [candidate],
+            max_price=0.10,
+            max_eviction=10.0,
+            min_performance=80.0,
+        )
 
     @patch("spotvm.cli._run_single_analysis")
     @patch("spotvm.cli.discover_skus")
@@ -715,24 +836,14 @@ class TestMainWithMocks:
         mock_summarize.return_value = []
         mock_render_table.return_value = "RANKED TABLE"
 
-        args = SimpleNamespace(
-            no_color=True,
-            min_vcpu=None,
-            min_ram=None,
-            max_price=None,
-            max_eviction=None,
-            min_performance=None,
-            csv="results.csv",
-            results_dir=None,
-        )
+        args = _analysis_args(csv=Path("results.csv"))
         logger = MagicMock()
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
 
         _run_single_analysis(
-            args=args,
+            request=args,
             config=config,
             logger=logger,
-            save_results=False,
         )
 
         captured = capsys.readouterr()
@@ -795,16 +906,7 @@ class TestMainWithMocks:
         mock_summarize.return_value = []
         mock_render_table.return_value = "RANKED TABLE"
 
-        args = SimpleNamespace(
-            no_color=True,
-            min_vcpu=None,
-            min_ram=None,
-            max_price=None,
-            max_eviction=None,
-            min_performance=None,
-            csv=None,
-            results_dir=None,
-        )
+        args = _analysis_args()
         logger = MagicMock()
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
         config.save_report = tmp_path / "reports" / "latest.json"
@@ -819,10 +921,9 @@ class TestMainWithMocks:
         monkeypatch.setattr(Path, "replace", raising_replace)
 
         _run_single_analysis(
-            args=args,
+            request=args,
             config=config,
             logger=logger,
-            save_results=False,
         )
 
         captured = capsys.readouterr()
@@ -884,25 +985,15 @@ class TestMainWithMocks:
         mock_summarize.return_value = []
         mock_render_table.return_value = "RANKED TABLE"
 
-        args = SimpleNamespace(
-            no_color=True,
-            min_vcpu=None,
-            min_ram=None,
-            max_price=None,
-            max_eviction=None,
-            min_performance=None,
-            csv=None,
-            results_dir=None,
-        )
+        args = _analysis_args()
         logger = MagicMock()
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
         config.save_report = tmp_path / "reports" / "latest.json"
 
         _run_single_analysis(
-            args=args,
+            request=args,
             config=config,
             logger=logger,
-            save_results=False,
         )
 
         captured = capsys.readouterr()
@@ -968,16 +1059,7 @@ class TestMainWithMocks:
         mock_summarize.return_value = []
         mock_render_table.return_value = "RANKED TABLE"
 
-        args = SimpleNamespace(
-            no_color=True,
-            min_vcpu=None,
-            min_ram=None,
-            max_price=None,
-            max_eviction=None,
-            min_performance=None,
-            csv=None,
-            results_dir=None,
-        )
+        args = _analysis_args()
         logger = MagicMock()
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
         config.save_report = tmp_path / "reports" / "latest.json"
@@ -988,10 +1070,9 @@ class TestMainWithMocks:
         monkeypatch.setattr(Path, "write_text", raising_write_text)
 
         _run_single_analysis(
-            args=args,
+            request=args,
             config=config,
             logger=logger,
-            save_results=False,
         )
 
         captured = capsys.readouterr()
@@ -1039,24 +1120,14 @@ class TestMainWithMocks:
         mock_summarize.return_value = []
         mock_render_table.return_value = "RANKED TABLE"
 
-        args = SimpleNamespace(
-            no_color=True,
-            min_vcpu=None,
-            min_ram=None,
-            max_price=None,
-            max_eviction=None,
-            min_performance=None,
-            csv=None,
-            results_dir="results",
-        )
+        args = _analysis_args(results_dir=Path("results"), save_results=True)
         logger = MagicMock()
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
 
         _run_single_analysis(
-            args=args,
+            request=args,
             config=config,
             logger=logger,
-            save_results=True,
         )
 
         captured = capsys.readouterr()
@@ -1119,16 +1190,7 @@ class TestMainWithMocks:
         mock_summarize.return_value = []
         mock_render_table.return_value = "RANKED TABLE\nHeuristic perf*"
 
-        args = SimpleNamespace(
-            no_color=True,
-            min_vcpu=None,
-            min_ram=None,
-            max_price=None,
-            max_eviction=None,
-            min_performance=None,
-            csv=None,
-            results_dir=None,
-        )
+        args = _analysis_args()
         logger = MagicMock()
         config = ToolConfig(
             regions=["centralus"],
@@ -1137,10 +1199,9 @@ class TestMainWithMocks:
         )
 
         _run_single_analysis(
-            args=args,
+            request=args,
             config=config,
             logger=logger,
-            save_results=False,
         )
 
         captured = capsys.readouterr()
@@ -1204,23 +1265,13 @@ class TestMainWithMocks:
         mock_summarize.return_value = []
         mock_render_table.return_value = "RANKED TABLE"
 
-        args = SimpleNamespace(
-            no_color=True,
-            min_vcpu=None,
-            min_ram=None,
-            max_price=None,
-            max_eviction=None,
-            min_performance=None,
-            csv=None,
-            results_dir=None,
-        )
+        args = _analysis_args()
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], emit_json=True)
 
         _run_single_analysis(
-            args=args,
+            request=args,
             config=config,
             logger=MagicMock(),
-            save_results=False,
         )
 
         captured = capsys.readouterr()
@@ -1258,22 +1309,12 @@ class TestMainWithMocks:
     ):
         mock_fetch_hist.return_value = []
 
-        args = SimpleNamespace(
-            no_color=True,
-            min_vcpu=None,
-            min_ram=None,
-            max_price=None,
-            max_eviction=None,
-            min_performance=None,
-            csv=None,
-            results_dir=None,
-        )
+        args = _analysis_args()
 
         _run_single_analysis(
-            args=args,
+            request=args,
             config=ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], emit_json=True),
             logger=MagicMock(),
-            save_results=False,
         )
 
         captured = capsys.readouterr()
@@ -1308,22 +1349,12 @@ class TestMainWithMocks:
     ):
         mock_fetch_hist.return_value = []
 
-        args = SimpleNamespace(
-            no_color=True,
-            min_vcpu=None,
-            min_ram=None,
-            max_price=None,
-            max_eviction=None,
-            min_performance=None,
-            csv=None,
-            results_dir=None,
-        )
+        args = _analysis_args()
 
         _run_single_analysis(
-            args=args,
+            request=args,
             config=ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"]),
             logger=MagicMock(),
-            save_results=False,
         )
 
         captured = capsys.readouterr()

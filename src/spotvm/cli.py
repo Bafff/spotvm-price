@@ -7,6 +7,7 @@ import signal
 import sys
 import tempfile
 import time
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,37 @@ from .resource_graph import fetch_historical_metrics
 from .vm_specs import discover_skus
 
 MAX_UNATTENDED_FAILURES = 3
+
+
+@dataclass(frozen=True)
+class AnalysisRunRequest:
+    no_color: bool
+    min_vcpu: int | None
+    min_ram: int | None
+    no_max_limit: bool
+    explicit_sizes: bool
+    max_price: float | None
+    max_eviction: float | None
+    min_performance: float | None
+    csv: Path | None
+    results_dir: Path
+    save_results: bool
+
+
+def _build_analysis_run_request(args: argparse.Namespace, *, save_results: bool) -> AnalysisRunRequest:
+    return AnalysisRunRequest(
+        no_color=args.no_color,
+        min_vcpu=args.min_vcpu,
+        min_ram=args.min_ram,
+        no_max_limit=args.no_max_limit,
+        explicit_sizes=args.explicit_sizes,
+        max_price=args.max_price,
+        max_eviction=args.max_eviction,
+        min_performance=args.min_performance,
+        csv=args.csv,
+        results_dir=args.results_dir,
+        save_results=save_results,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -318,6 +350,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(exc))
         return 1
 
+    request = _build_analysis_run_request(args, save_results=args.save_results)
+
     if args.clear_cache:
         from . import cache
 
@@ -326,16 +360,15 @@ def main(argv: list[str] | None = None) -> int:
 
     # Unattended mode: run continuously
     if args.run_unattended:
-        # Force save results in unattended mode
-        save_results_enabled = True
+        request = replace(request, save_results=True)
         interval_minutes = args.run_unattended
 
         logger.info(
             f"Starting unattended monitoring mode: running every {interval_minutes} minutes. Press Ctrl+C to stop."
         )
-        _nc = args.no_color
+        _nc = request.no_color
         print(f"{'[*]' if _nc else '🔄'} Monitoring mode started (interval: {interval_minutes} min)")
-        print(f"{'[>]' if _nc else '📊'} Results will be saved to: {args.results_dir}/runs/")
+        print(f"{'[>]' if _nc else '📊'} Results will be saved to: {request.results_dir}/runs/")
         print(f"{'[!]' if _nc else '⏸️ '} Press Ctrl+C to stop\n")
 
         # Setup signal handler for graceful shutdown
@@ -359,10 +392,9 @@ def main(argv: list[str] | None = None) -> int:
 
             try:
                 _run_single_analysis(
-                    args=args,
+                    request=request,
                     config=config,
                     logger=logger,
-                    save_results=save_results_enabled,
                 )
                 unexpected_error_count = 0
             except AzureHttpError as exc:
@@ -408,10 +440,9 @@ def main(argv: list[str] | None = None) -> int:
     # Normal mode: run once
     try:
         _run_single_analysis(
-            args=args,
+            request=request,
             config=config,
             logger=logger,
-            save_results=args.save_results,
         )
     except AzureHttpError as exc:
         logger.error("Azure API request failed: %s", exc)  # noqa: TRY400 - user-facing API failure should stay concise
@@ -443,21 +474,19 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
 
 
 def _run_single_analysis(
-    args,
+    request: AnalysisRunRequest,
     config: ToolConfig,
     logger,
-    save_results: bool,
 ) -> None:
     """Execute a single analysis run.
 
     Args:
-        args: Parsed command-line arguments
+        request: CLI execution request
         config: Tool configuration
         logger: Logger instance
-        save_results: Whether to save results to disk
     """
     # Handle color output setting
-    _nc = args.no_color
+    _nc = request.no_color
     render_options = RenderOptions(colors_enabled=(not _nc and sys.stdout.isatty()))
 
     authenticator = AzureAuthenticator()
@@ -470,11 +499,11 @@ def _run_single_analysis(
 
     # Filter by hardware requirements (before ranking to reduce dataset)
     # Use config values so config-file settings (cpu_arch, etc.) are honored
-    effective_no_max_limit = getattr(args, "no_max_limit", False) or getattr(args, "explicit_sizes", False)
+    effective_no_max_limit = request.no_max_limit or request.explicit_sizes
     candidates = filter_by_requirements(
         candidates,
-        min_vcpu=args.min_vcpu,
-        min_ram=args.min_ram,
+        min_vcpu=request.min_vcpu,
+        min_ram=request.min_ram,
         cpu_arch=config.cpu_arch,
         no_max_limit=effective_no_max_limit,
     )
@@ -486,9 +515,9 @@ def _run_single_analysis(
     # Filter by cost constraints (after enrichment for min_performance filter)
     ranked = filter_by_cost(
         ranked,
-        max_price=args.max_price,
-        max_eviction=args.max_eviction,
-        min_performance=args.min_performance,
+        max_price=request.max_price,
+        max_eviction=request.max_eviction,
+        min_performance=request.min_performance,
     )
 
     if config.result_limit:
@@ -504,14 +533,14 @@ def _run_single_analysis(
 
     # Save results for historical analysis if requested (even if empty,
     # so automation/unattended monitoring records that a run completed)
-    if save_results:
+    if request.save_results:
         from .history import save_run_results
 
         try:
             saved_path = save_run_results(
                 candidates=ranked,
                 config=config,
-                results_dir=args.results_dir,
+                results_dir=request.results_dir,
             )
         except OSError as exc:
             logger.warning("Failed to save run results: %s", exc)
@@ -521,20 +550,24 @@ def _run_single_analysis(
             emit(f"{'[OK]' if _nc else '✅'} Results saved to: {saved_path}\n")
 
     # Export to CSV if requested (even if empty, so downstream tools see the run)
-    if args.csv:
+    if request.csv:
         try:
             export_to_csv(
                 ranked,
-                args.csv,
+                request.csv,
                 show_placement=config.enable_placement,
                 show_baseline=config.baseline_sku is not None,
             )
         except OSError as exc:
-            logger.error("Failed to export CSV to %s: %s", args.csv, exc)  # noqa: TRY400 - expected filesystem failure path
-            emit_error(f"{'[x]' if _nc else '❌'} Failed to export CSV to: {args.csv} ({exc})\n")
+            logger.error(  # noqa: TRY400 - expected filesystem failure path
+                "Failed to export CSV to %s: %s",
+                request.csv,
+                exc,
+            )
+            emit_error(f"{'[x]' if _nc else '❌'} Failed to export CSV to: {request.csv} ({exc})\n")
         else:
-            logger.info("Results exported to CSV: %s", args.csv)
-            emit(f"{'[OK]' if _nc else '✅'} CSV exported to: {args.csv}\n")
+            logger.info("Results exported to CSV: %s", request.csv)
+            emit(f"{'[OK]' if _nc else '✅'} CSV exported to: {request.csv}\n")
 
     # Emit JSON / save report (even if empty)
     if config.emit_json or config.save_report:
@@ -587,7 +620,7 @@ def _run_single_analysis(
             )
 
     # Print color legend if colors are enabled
-    if not args.no_color:
+    if not request.no_color:
         from colorama import Fore, Style
 
         emit("\nColor Legend:")
