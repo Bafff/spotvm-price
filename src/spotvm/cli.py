@@ -5,6 +5,7 @@ import json
 import logging
 import signal
 import sys
+import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -23,7 +24,7 @@ from .auth import AzureAuthenticator
 from .config import VALID_CPU_ARCHS, ToolConfig, load_config_file, merge_cli_overrides
 from .http_client import AzureHttpError, AzureRestClient
 from .placement_score import fetch_placement_scores
-from .reporting import export_to_csv, render_table, set_colors_enabled
+from .reporting import RenderOptions, export_to_csv, initialize_color_output, render_table
 from .resource_graph import fetch_historical_metrics
 from .vm_specs import discover_skus
 
@@ -215,6 +216,8 @@ def main(argv: list[str] | None = None) -> int:
     # Keep our own logger at INFO so our messages still appear
     if not args.verbose:
         logger.setLevel(logging.INFO)
+    if not args.no_color:
+        initialize_color_output()
 
     # Handle --analyze-history mode (separate from normal runs)
     if args.analyze_history:
@@ -417,6 +420,28 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _write_json_atomic(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            json.dump(payload, handle, indent=2, default=_json_serializer)
+            handle.write("\n")
+            temp_path = Path(handle.name)
+        temp_path.replace(path)
+    except Exception:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        raise
+
+
 def _run_single_analysis(
     args,
     config: ToolConfig,
@@ -433,8 +458,7 @@ def _run_single_analysis(
     """
     # Handle color output setting
     _nc = args.no_color
-    if _nc:
-        set_colors_enabled(False)
+    render_options = RenderOptions(colors_enabled=(not _nc and sys.stdout.isatty()))
 
     authenticator = AzureAuthenticator()
     client = AzureRestClient(authenticator)
@@ -519,11 +543,7 @@ def _run_single_analysis(
             print(json.dumps(report_payload, indent=2, default=_json_serializer), file=sys.stdout)
         if config.save_report:
             try:
-                config.save_report.parent.mkdir(parents=True, exist_ok=True)
-                config.save_report.write_text(
-                    json.dumps(report_payload, indent=2, default=_json_serializer),
-                    encoding="utf-8",
-                )
+                _write_json_atomic(config.save_report, report_payload)
             except OSError as exc:
                 logger.error(  # noqa: TRY400 - expected filesystem failure path
                     "Failed to save report to %s: %s",
@@ -545,6 +565,7 @@ def _run_single_analysis(
             ranked,
             show_placement=config.enable_placement,
             show_baseline=config.baseline_sku is not None,
+            render_options=render_options,
         )
     )
 

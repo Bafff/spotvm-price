@@ -4,6 +4,7 @@ import csv
 import re
 import sys
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -12,20 +13,24 @@ from colorama import Fore, Style, init
 
 from .models import CandidateInsight
 
-# Initialize colorama for cross-platform color support
-init(autoreset=True)
 
-# Global flag to enable/disable colors (can be controlled via CLI)
-_COLORS_ENABLED = sys.stdout.isatty()  # Auto-detect TTY for CI/CD compatibility
-
-
-def set_colors_enabled(enabled: bool) -> None:
-    """Enable or disable colored output globally."""
-    global _COLORS_ENABLED
-    _COLORS_ENABLED = enabled
+@dataclass(frozen=True)
+class RenderOptions:
+    colors_enabled: bool
 
 
-def _colorize_eviction(rate: float | None) -> str:
+def initialize_color_output() -> None:
+    """Initialize terminal color support explicitly from the CLI entry path."""
+    init(autoreset=True)
+
+
+def _resolve_render_options(render_options: RenderOptions | None) -> RenderOptions:
+    if render_options is not None:
+        return render_options
+    return RenderOptions(colors_enabled=sys.stdout.isatty())
+
+
+def _colorize_eviction(rate: float | None, *, render_options: RenderOptions | None = None) -> str:
     """Colorize eviction rate based on risk level.
 
     Color scheme:
@@ -35,7 +40,8 @@ def _colorize_eviction(rate: float | None) -> str:
     - Red (15-24%): High - high eviction risk
     - Bright Red (≥25%): Critical - very high eviction risk
     """
-    if rate is None or not _COLORS_ENABLED:
+    options = _resolve_render_options(render_options)
+    if rate is None or not options.colors_enabled:
         return _format_percentage(rate)
 
     formatted = _format_percentage(rate)
@@ -51,7 +57,7 @@ def _colorize_eviction(rate: float | None) -> str:
     return f"{Fore.RED}{Style.BRIGHT}{formatted}{Style.RESET_ALL}"
 
 
-def _colorize_placement(score: str | None) -> str:
+def _colorize_placement(score: str | None, *, render_options: RenderOptions | None = None) -> str:
     """Colorize placement score.
 
     Color scheme:
@@ -59,7 +65,8 @@ def _colorize_placement(score: str | None) -> str:
     - Yellow (Medium): Moderate capacity availability
     - Red (Low): Limited capacity availability
     """
-    if score is None or not _COLORS_ENABLED:
+    options = _resolve_render_options(render_options)
+    if score is None or not options.colors_enabled:
         return score or "N/A"
 
     if score == "High":
@@ -71,7 +78,7 @@ def _colorize_placement(score: str | None) -> str:
     return score
 
 
-def _format_cpu(vm_size: str | None) -> str:
+def _format_cpu(vm_size: str | None, *, render_options: RenderOptions | None = None) -> str:
     """Format CPU vendor with colored emoji or plain text.
 
     When colors enabled (default):
@@ -96,8 +103,9 @@ def _format_cpu(vm_size: str | None) -> str:
     from .vm_specs import detect_cpu_vendor
 
     vendor = detect_cpu_vendor(vm_size)
+    options = _resolve_render_options(render_options)
 
-    if _COLORS_ENABLED:
+    if options.colors_enabled:
         # Colored emoji squares
         if vendor == "intel":
             return "🟦"  # Blue square
@@ -151,7 +159,9 @@ def render_table(
     candidates: Iterable[CandidateInsight],
     show_placement: bool = True,
     show_baseline: bool = True,
+    render_options: RenderOptions | None = None,
 ) -> str:
+    options = _resolve_render_options(render_options)
     # Determine which columns to hide based on mode
     hidden = set()
     if not show_placement:
@@ -167,11 +177,15 @@ def render_table(
             "Region": item.region or "",
             "Zone": item.availability_zone or "",
             "VM Size": item.vm_size or "",
-            "CPU": _format_cpu(item.vm_size),
-            "Placement": _colorize_placement(item.placement_score) if item.placement_score else (item.notes or "N/A"),
-            "Quota": _format_quota(item.quota_available),
+            "CPU": _format_cpu(item.vm_size, render_options=options),
+            "Placement": (
+                _colorize_placement(item.placement_score, render_options=options)
+                if item.placement_score
+                else (item.notes or "N/A")
+            ),
+            "Quota": _format_quota(item.quota_available, render_options=options),
             "Price (USD/hr)": _format_price(item.price_usd),
-            "Eviction %": _colorize_eviction(item.eviction_rate),
+            "Eviction %": _colorize_eviction(item.eviction_rate, render_options=options),
             "Perf %": _format_performance(item.performance_relative),
             "Price/Perf": _format_price_per_perf(item.price_per_performance),
             "CoreMark": _format_coremark(item.coremark_score),
@@ -217,12 +231,13 @@ def _format_rank(rank: int | None) -> str:
     return str(rank) if rank is not None else "-"
 
 
-def _format_quota(value: bool | None) -> str:
+def _format_quota(value: bool | None, *, render_options: RenderOptions | None = None) -> str:
+    options = _resolve_render_options(render_options)
     if value is True:
-        return "Yes" if not _COLORS_ENABLED else "✅ Yes"
+        return "Yes" if not options.colors_enabled else "✅ Yes"
     if value is False:
-        return "No" if not _COLORS_ENABLED else "❌ No"
-    return "Unknown" if not _COLORS_ENABLED else "❓ Unknown"
+        return "No" if not options.colors_enabled else "❌ No"
+    return "Unknown" if not options.colors_enabled else "❓ Unknown"
 
 
 def _format_price(value: float | None) -> str:

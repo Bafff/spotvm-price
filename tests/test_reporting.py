@@ -9,10 +9,10 @@ from spotvm.reporting import (
     _strip_ansi,
     export_to_csv,
     render_table,
-    set_colors_enabled,
 )
 
-INITIAL_COLOR_STATE = reporting._COLORS_ENABLED
+COLOR = lambda: reporting.RenderOptions(colors_enabled=True)
+NO_COLOR = lambda: reporting.RenderOptions(colors_enabled=False)
 
 
 def test_render_table_formats_columns():
@@ -43,7 +43,7 @@ def test_render_table_formats_columns():
         ),
     ]
 
-    table = render_table(candidates)
+    table = render_table(candidates, render_options=NO_COLOR())
 
     assert "eastus" in table
     assert "Standard_D4s_v4" in table
@@ -70,7 +70,7 @@ def test_render_table_shortens_heuristic_performance_note():
         ),
     ]
 
-    table = render_table(candidates)
+    table = render_table(candidates, render_options=NO_COLOR())
 
     assert "Heuristic perf*" in table
     assert "vCPU/RAM heuristic because" not in table
@@ -146,15 +146,12 @@ def test_export_to_csv(tmp_path):
 
 def test_colorize_eviction_rates():
     """Test eviction rate colorization with correct thresholds."""
-    # Enable colors for testing
-    set_colors_enabled(True)
-
     # Test different eviction rate ranges
-    blue_result = _colorize_eviction(3.0)  # <5% should be blue
-    green_result = _colorize_eviction(7.0)  # 5-10% should be green
-    yellow_result = _colorize_eviction(12.0)  # 10-15% should be yellow
-    red_result = _colorize_eviction(20.0)  # 15-24% should be red
-    bright_red_result = _colorize_eviction(30.0)  # >=25% should be bright red
+    blue_result = _colorize_eviction(3.0, render_options=COLOR())  # <5% should be blue
+    green_result = _colorize_eviction(7.0, render_options=COLOR())  # 5-10% should be green
+    yellow_result = _colorize_eviction(12.0, render_options=COLOR())  # 10-15% should be yellow
+    red_result = _colorize_eviction(20.0, render_options=COLOR())  # 15-24% should be red
+    bright_red_result = _colorize_eviction(30.0, render_options=COLOR())  # >=25% should be bright red
 
     # Verify colors are applied (contains ANSI codes)
     assert "\x1b[" in blue_result  # Contains ANSI escape codes
@@ -171,22 +168,16 @@ def test_colorize_eviction_rates():
     assert "30.0%" in bright_red_result
 
     # Test with colors disabled
-    set_colors_enabled(False)
-    no_color_result = _colorize_eviction(12.0)
+    no_color_result = _colorize_eviction(12.0, render_options=NO_COLOR())
     assert "\x1b[" not in no_color_result  # No ANSI codes
     assert no_color_result == "12.0%"
-
-    # Re-enable for other tests
-    set_colors_enabled(True)
 
 
 def test_colorize_placement_scores():
     """Test placement score colorization."""
-    set_colors_enabled(True)
-
-    high_result = _colorize_placement("High")
-    medium_result = _colorize_placement("Medium")
-    low_result = _colorize_placement("Low")
+    high_result = _colorize_placement("High", render_options=COLOR())
+    medium_result = _colorize_placement("Medium", render_options=COLOR())
+    low_result = _colorize_placement("Low", render_options=COLOR())
 
     # Verify colors are applied
     assert "\x1b[" in high_result  # Green
@@ -227,13 +218,12 @@ def _candidate(**kwargs):
 
 def test_render_table_hides_placement_columns():
     """Placement and Quota columns are omitted when show_placement=False."""
-    set_colors_enabled(False)
     candidates = [
         _candidate(
             placement_score="High", quota_available=True, price_usd=0.05, eviction_rate=3.0, recommendation_rank=1
         ),
     ]
-    table = render_table(candidates, show_placement=False)
+    table = render_table(candidates, show_placement=False, render_options=NO_COLOR())
     assert "Placement" not in table
     assert "Quota" not in table
     assert "Region" in table
@@ -242,7 +232,6 @@ def test_render_table_hides_placement_columns():
 
 def test_render_table_hides_baseline_columns():
     """Perf % and Price/Perf columns are omitted when show_baseline=False."""
-    set_colors_enabled(False)
     candidates = [
         _candidate(
             price_usd=0.05,
@@ -252,11 +241,11 @@ def test_render_table_hides_baseline_columns():
             price_per_performance=0.0004,
         ),
     ]
-    table_without = render_table(candidates, show_baseline=False)
+    table_without = render_table(candidates, show_baseline=False, render_options=NO_COLOR())
     assert "Perf %" not in table_without
     assert "Price/Perf" not in table_without
 
-    table_with = render_table(candidates, show_baseline=True)
+    table_with = render_table(candidates, show_baseline=True, render_options=NO_COLOR())
     assert "Perf %" in table_with
     assert "Price/Perf" in table_with
 
@@ -305,14 +294,13 @@ def test_export_to_csv_hides_baseline_columns(tmp_path):
 
 def test_render_table_auto_hides_empty_columns():
     """Columns where every data row is empty or '-' are auto-hidden."""
-    set_colors_enabled(False)
     candidates = [
         _candidate(price_usd=0.05, eviction_rate=3.0, recommendation_rank=1),
         _candidate(
             region="westus", vm_size="Standard_D4s_v4", price_usd=0.08, eviction_rate=5.0, recommendation_rank=2
         ),
     ]
-    table = render_table(candidates, show_placement=False, show_baseline=False)
+    table = render_table(candidates, show_placement=False, show_baseline=False, render_options=NO_COLOR())
     # Zone should be auto-hidden (all empty)
     assert "Zone" not in table
     # Region should remain (has values)
@@ -322,14 +310,13 @@ def test_render_table_auto_hides_empty_columns():
 
 def test_render_table_keeps_column_with_one_value():
     """A column with at least one non-empty value is kept."""
-    set_colors_enabled(False)
     candidates = [
         _candidate(price_usd=0.05, eviction_rate=3.0, recommendation_rank=1, availability_zone="1"),
         _candidate(
             region="westus", vm_size="Standard_D4s_v4", price_usd=0.08, eviction_rate=5.0, recommendation_rank=2
         ),
     ]
-    table = render_table(candidates, show_placement=False, show_baseline=False)
+    table = render_table(candidates, show_placement=False, show_baseline=False, render_options=NO_COLOR())
     assert "Zone" in table
 
 
@@ -351,15 +338,23 @@ def test_export_to_csv_keeps_empty_columns_for_stable_schema(tmp_path):
 
 def test_eviction_none_handling():
     """Test that None eviction rates are handled gracefully."""
-    result = _colorize_eviction(None)
+    result = _colorize_eviction(None, render_options=NO_COLOR())
     assert result == "-"  # Default formatting for None
 
 
-def test_color_state_can_change_within_a_test():
-    original = reporting._COLORS_ENABLED
-    set_colors_enabled(not original)
-    assert reporting._COLORS_ENABLED is (not original)
+def test_render_table_plain_text_mode_is_explicit():
+    candidates = [
+        _candidate(
+            placement_score="High",
+            quota_available=True,
+            price_usd=0.05,
+            eviction_rate=3.0,
+            recommendation_rank=1,
+        ),
+    ]
 
+    table = render_table(candidates, render_options=NO_COLOR())
 
-def test_color_state_is_reset_between_tests():
-    assert reporting._COLORS_ENABLED is INITIAL_COLOR_STATE
+    assert "\x1b[" not in table
+    assert "✅ Yes" not in table
+    assert "Yes" in table

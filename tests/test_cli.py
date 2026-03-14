@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from spotvm import reporting
 from spotvm.cli import _run_single_analysis, build_parser, main
 from spotvm.config import ToolConfig
 
@@ -416,6 +418,7 @@ class TestMainWithMocks:
             [candidate],
             show_placement=False,
             show_baseline=False,
+            render_options=reporting.RenderOptions(colors_enabled=False),
         )
 
     @patch("spotvm.cli.AzureAuthenticator")
@@ -761,6 +764,8 @@ class TestMainWithMocks:
         mock_fetch_hist,
         mock_client_cls,
         mock_auth_cls,
+        tmp_path,
+        monkeypatch,
         capsys,
     ):
         candidate = SimpleNamespace(
@@ -802,8 +807,16 @@ class TestMainWithMocks:
         )
         logger = MagicMock()
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
-        config.save_report = MagicMock()
-        config.save_report.write_text.side_effect = PermissionError("read only file system")
+        config.save_report = tmp_path / "reports" / "latest.json"
+
+        original_replace = Path.replace
+
+        def raising_replace(self: Path, target: Path):
+            if self.parent == config.save_report.parent:
+                raise PermissionError("read only file system")
+            return original_replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", raising_replace)
 
         _run_single_analysis(
             args=args,
@@ -897,6 +910,93 @@ class TestMainWithMocks:
         assert config.save_report.exists()
         report_payload = json.loads(config.save_report.read_text(encoding="utf-8"))
         assert report_payload["candidates"][0]["vmSize"] == "Standard_D4s_v5"
+        assert "RANKED TABLE" in captured.out
+        logger.error.assert_not_called()
+
+    @patch("spotvm.cli.AzureAuthenticator")
+    @patch("spotvm.cli.AzureRestClient")
+    @patch("spotvm.cli.fetch_historical_metrics")
+    @patch("spotvm.cli.filter_by_cost")
+    @patch("spotvm.cli.enrich_with_coremark")
+    @patch("spotvm.cli.enrich_with_performance")
+    @patch("spotvm.cli.rank_candidates")
+    @patch("spotvm.cli.filter_by_requirements")
+    @patch("spotvm.cli.merge_datasets")
+    @patch("spotvm.cli.summarize_top_candidates")
+    @patch("spotvm.cli.render_table")
+    def test_save_report_does_not_depend_on_path_write_text(
+        self,
+        mock_render_table,
+        mock_summarize,
+        mock_merge,
+        mock_filter_requirements,
+        mock_rank,
+        mock_enrich_performance,
+        mock_enrich_coremark,
+        mock_filter_cost,
+        mock_fetch_hist,
+        mock_client_cls,
+        mock_auth_cls,
+        tmp_path,
+        monkeypatch,
+        capsys,
+    ):
+        candidate = SimpleNamespace(
+            recommendation_rank=1,
+            region="centralus",
+            availability_zone=None,
+            vm_size="Standard_D4s_v5",
+            cpu_arch="x64",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.01,
+            price_last_updated=None,
+            eviction_rate=1.0,
+            performance_relative=None,
+            price_per_performance=None,
+            coremark_score=None,
+            coremark_per_vcpu=None,
+            notes=None,
+        )
+        mock_fetch_hist.return_value = []
+        mock_merge.return_value = [candidate]
+        mock_filter_requirements.return_value = [candidate]
+        mock_rank.return_value = [candidate]
+        mock_enrich_performance.return_value = [candidate]
+        mock_enrich_coremark.return_value = [candidate]
+        mock_filter_cost.return_value = [candidate]
+        mock_summarize.return_value = []
+        mock_render_table.return_value = "RANKED TABLE"
+
+        args = SimpleNamespace(
+            no_color=True,
+            min_vcpu=None,
+            min_ram=None,
+            max_price=None,
+            max_eviction=None,
+            min_performance=None,
+            csv=None,
+            results_dir=None,
+        )
+        logger = MagicMock()
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+        config.save_report = tmp_path / "reports" / "latest.json"
+
+        def raising_write_text(self: Path, *args, **kwargs):
+            raise PermissionError("write_text disabled")
+
+        monkeypatch.setattr(Path, "write_text", raising_write_text)
+
+        _run_single_analysis(
+            args=args,
+            config=config,
+            logger=logger,
+            save_results=False,
+        )
+
+        captured = capsys.readouterr()
+        assert "Failed to save report" not in captured.err
+        assert config.save_report.exists()
         assert "RANKED TABLE" in captured.out
         logger.error.assert_not_called()
 
