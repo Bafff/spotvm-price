@@ -3,9 +3,9 @@ from __future__ import annotations
 import csv
 import re
 import sys
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, List
 
 import wcwidth
 from colorama import Fore, Style, init
@@ -42,14 +42,13 @@ def _colorize_eviction(rate: float | None) -> str:
 
     if rate < 5.0:
         return f"{Fore.BLUE}{formatted}{Style.RESET_ALL}"
-    elif rate < 10.0:
+    if rate < 10.0:
         return f"{Fore.GREEN}{formatted}{Style.RESET_ALL}"
-    elif rate < 15.0:
+    if rate < 15.0:
         return f"{Fore.YELLOW}{formatted}{Style.RESET_ALL}"
-    elif rate < 25.0:
+    if rate < 25.0:
         return f"{Fore.RED}{formatted}{Style.RESET_ALL}"
-    else:
-        return f"{Fore.RED}{Style.BRIGHT}{formatted}{Style.RESET_ALL}"
+    return f"{Fore.RED}{Style.BRIGHT}{formatted}{Style.RESET_ALL}"
 
 
 def _colorize_placement(score: str | None) -> str:
@@ -65,12 +64,11 @@ def _colorize_placement(score: str | None) -> str:
 
     if score == "High":
         return f"{Fore.GREEN}{score}{Style.RESET_ALL}"
-    elif score == "Medium":
+    if score == "Medium":
         return f"{Fore.YELLOW}{score}{Style.RESET_ALL}"
-    elif score == "Low":
+    if score == "Low":
         return f"{Fore.RED}{score}{Style.RESET_ALL}"
-    else:
-        return score
+    return score
 
 
 def _format_cpu(vm_size: str | None) -> str:
@@ -103,21 +101,19 @@ def _format_cpu(vm_size: str | None) -> str:
         # Colored emoji squares
         if vendor == "intel":
             return "🟦"  # Blue square
-        elif vendor == "amd":
+        if vendor == "amd":
             return "🟥"  # Red square
-        elif vendor == "arm":
+        if vendor == "arm":
             return "🟩"  # Green square
-        else:
-            return vendor
-    else:
-        # Plain text for CSV/CI/CD/--no-color
-        return vendor.upper()
+        return vendor
+    # Plain text for CSV/CI/CD/--no-color
+    return vendor.upper()
 
 
 def _strip_ansi(text: str) -> str:
     """Remove ANSI escape codes (colors) from text for width calculation."""
-    ansi_escape = re.compile(r'\x1b\[[0-9;]*m')
-    return ansi_escape.sub('', text)
+    ansi_escape = re.compile(r"\x1b\[[0-9;]*m")
+    return ansi_escape.sub("", text)
 
 
 def _display_width(text: str) -> int:
@@ -164,7 +160,7 @@ def render_table(
         hidden |= {"Perf %", "Price/Perf"}
     columns = [c for c in TABLE_COLUMNS if c not in hidden]
 
-    rows: List[List[str]] = [columns]
+    rows: list[list[str]] = [columns]
     for item in candidates:
         all_cells = {
             "Rank": _format_rank(item.recommendation_rank),
@@ -188,11 +184,8 @@ def render_table(
     # Auto-hide columns where every data row is empty or dash
     if len(rows) > 1:
         auto_hide = set()
-        for col_idx, col_name in enumerate(columns):
-            if all(
-                _strip_ansi(rows[row_idx][col_idx]).strip() in ("", "-")
-                for row_idx in range(1, len(rows))
-            ):
+        for col_idx, _col_name in enumerate(columns):
+            if all(_strip_ansi(rows[row_idx][col_idx]).strip() in ("", "-") for row_idx in range(1, len(rows))):
                 auto_hide.add(col_idx)
         if auto_hide:
             keep = [i for i in range(len(columns)) if i not in auto_hide]
@@ -200,20 +193,17 @@ def render_table(
             rows = [[row[i] for i in keep] for row in rows]
 
     col_widths = _compute_widths(rows)
-    lines = [
-        _format_row(row, col_widths)
-        for row in rows
-    ]
+    lines = [_format_row(row, col_widths) for row in rows]
     separator = "-" * len(lines[0])
     return "\n".join([lines[0], separator, *lines[1:]])
 
 
-def _compute_widths(rows: List[List[str]]) -> List[int]:
+def _compute_widths(rows: list[list[str]]) -> list[int]:
     """Compute maximum display width for each column, accounting for emoji."""
     return [max(_display_width(row[idx]) for row in rows) for idx in range(len(rows[0]))]
 
 
-def _format_row(row: List[str], widths: List[int]) -> str:
+def _format_row(row: list[str], widths: list[int]) -> str:
     """Format row with proper spacing, accounting for emoji taking 2 columns."""
     formatted_cells = []
     for idx, cell in enumerate(row):
@@ -251,7 +241,7 @@ def _format_dt(value: datetime | None) -> str:
     """Format datetime as date only (YYYY-MM-DD) without time/timezone."""
     if value is None:
         return "-"
-    return value.strftime('%Y-%m-%d')
+    return value.strftime("%Y-%m-%d")
 
 
 def _format_performance(value: float | None) -> str:
@@ -284,7 +274,7 @@ def _format_coremark_per_vcpu(value: float | None) -> str:
 
 def _format_table_notes(item: CandidateInsight) -> str:
     """Keep the terminal table compact and refer detailed perf fallback text to the footer."""
-    parts: List[str] = []
+    parts: list[str] = []
     if item.notes:
         parts.append(item.notes)
     if item.performance_note and item.performance_basis == "heuristic":
@@ -294,7 +284,7 @@ def _format_table_notes(item: CandidateInsight) -> str:
 
 def _format_notes(item: CandidateInsight) -> str:
     """Join full analysis notes for exported artifacts."""
-    parts: List[str] = []
+    parts: list[str] = []
     for note in (item.notes, item.performance_note):
         if note and note not in parts:
             parts.append(note)
@@ -340,7 +330,7 @@ def export_to_csv(
         hidden |= _CSV_BASELINE_COLS
     columns = [c for c in CSV_COLUMNS if c not in hidden]
 
-    rows: List[List[str]] = []
+    rows: list[list[str]] = []
     for item in candidates:
         vendor = detect_cpu_vendor(item.vm_size) if item.vm_size else ""
         vendor_text = vendor.upper() if vendor else ""

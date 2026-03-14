@@ -116,7 +116,7 @@ def test_load_historical_runs_empty_dir(temp_results_dir):
 def test_load_historical_runs_loads_all_files(temp_results_dir, sample_candidates, sample_config):
     """Test loading multiple historical runs."""
     # Create 3 snapshots
-    for i in range(3):
+    for _i in range(3):
         save_run_results(sample_candidates, sample_config, temp_results_dir)
 
     snapshots = load_historical_runs(temp_results_dir)
@@ -132,7 +132,7 @@ def test_load_historical_runs_loads_all_files(temp_results_dir, sample_candidate
 def test_load_historical_runs_with_depth(temp_results_dir, sample_candidates, sample_config):
     """Test loading with depth limit."""
     # Create 5 snapshots
-    for i in range(5):
+    for _i in range(5):
         save_run_results(sample_candidates, sample_config, temp_results_dir)
 
     # Load only last 2
@@ -152,7 +152,9 @@ def test_load_historical_runs_skips_malformed_json_file(temp_results_dir, sample
     assert "Failed to load historical run" in caplog.text
 
 
-def test_load_historical_runs_skips_unreadable_file(temp_results_dir, sample_candidates, sample_config, monkeypatch, caplog):
+def test_load_historical_runs_skips_unreadable_file(
+    temp_results_dir, sample_candidates, sample_config, monkeypatch, caplog
+):
     save_run_results(sample_candidates, sample_config, temp_results_dir)
     bad_path = temp_results_dir / "runs" / "unreadable.json"
     bad_path.write_text("{}", encoding="utf-8")
@@ -186,7 +188,7 @@ def test_generate_history_csv_creates_file(temp_results_dir, sample_candidates, 
 
     # Verify CSV created
     assert csv_path.exists()
-    assert num_points == 4  # 2 candidates × 2 snapshots
+    assert num_points == 4  # 2 candidates x 2 snapshots
 
     # Parse and verify CSV
     with csv_path.open("r") as f:
@@ -212,7 +214,7 @@ def test_generate_history_csv_handles_empty(temp_results_dir):
 def test_analyze_history_complete_workflow(temp_results_dir, sample_candidates, sample_config):
     """Test complete analyze_history workflow."""
     # Create 3 snapshots
-    for i in range(3):
+    for _i in range(3):
         save_run_results(sample_candidates, sample_config, temp_results_dir)
 
     # Analyze
@@ -222,7 +224,7 @@ def test_analyze_history_complete_workflow(temp_results_dir, sample_candidates, 
     )
 
     assert num_runs == 2
-    assert num_datapoints == 4  # 2 candidates × 2 runs
+    assert num_datapoints == 4  # 2 candidates x 2 runs
     assert csv_path.exists()
     assert csv_path.name == "history.csv"
 
@@ -414,20 +416,20 @@ def test_mixed_zone_and_regional_data(temp_results_dir, sample_config):
     assert len(rows) == 5
 
     # Verify regional data has empty zone
-    regional_rows = [r for r in rows if r['zone'] == '']
+    regional_rows = [r for r in rows if r["zone"] == ""]
     assert len(regional_rows) == 2  # Two regional runs
-    assert regional_rows[0]['price_usd'] == '0.0336'
-    assert regional_rows[1]['price_usd'] == '0.0335'
+    assert regional_rows[0]["price_usd"] == "0.0336"
+    assert regional_rows[1]["price_usd"] == "0.0335"
 
     # Verify zone-specific data has zone values
-    zone_rows = [r for r in rows if r['zone'] != '']
+    zone_rows = [r for r in rows if r["zone"] != ""]
     assert len(zone_rows) == 3  # Three zone-specific records
-    assert set([r['zone'] for r in zone_rows]) == {'1', '2', '3'}
+    assert {r["zone"] for r in zone_rows} == {"1", "2", "3"}
 
     # Verify prices differ between zones
-    zone_prices = [float(r['price_usd']) for r in zone_rows]
+    zone_prices = [float(r["price_usd"]) for r in zone_rows]
     assert zone_prices == [0.0338, 0.0340, 0.0342]  # Ascending order
 
     # Verify all rows are for same SKU and region
-    assert all(r['vm_size'] == 'Standard_D4as_v5' for r in rows)
-    assert all(r['region'] == 'centralus' for r in rows)
+    assert all(r["vm_size"] == "Standard_D4as_v5" for r in rows)
+    assert all(r["region"] == "centralus" for r in rows)

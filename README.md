@@ -782,11 +782,32 @@ plt.show()
 | CLI exits with `No module named spotvm` when running from source | Prefer `uv sync --extra dev` and `uv run spotvm ...`. If you invoke `python -m spotvm.cli` directly, set `PYTHONPATH=src`. |
 
 ## Testing
-The preferred test workflow uses `uv`:
+The preferred quality workflow uses `uv`:
 
 ```bash
 uv sync --extra dev
-uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src
+uv run pytest -q
+```
+
+For a one-command local verification pass:
+
+```bash
+make check
+```
+
+To install the Git hooks locally:
+
+```bash
+uv run pre-commit install
+```
+
+To run the same hooks against the full tree on demand:
+
+```bash
+uv run pre-commit run --all-files
 ```
 
 If you are using a traditional virtualenv instead, `pip install -e .[dev]` and `PYTHONPATH=src pytest` still work.

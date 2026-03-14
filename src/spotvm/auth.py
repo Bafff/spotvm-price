@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import Optional
 
 from azure.identity import DefaultAzureCredential
-
 
 _DEFAULT_SCOPE = "https://management.azure.com/.default"
 
@@ -19,12 +17,10 @@ class AzureAuthenticator:
 
     def __post_init__(self) -> None:
         if self.credential is None:
-            self.credential = DefaultAzureCredential(
-                exclude_interactive_browser_credential=False
-            )
+            self.credential = DefaultAzureCredential(exclude_interactive_browser_credential=False)
         self._lock = threading.RLock()
-        self._cached_token: Optional[str] = None
-        self._cached_expiry: Optional[int] = None
+        self._cached_token: str | None = None
+        self._cached_expiry: int | None = None
 
     def get_token(self) -> str:
         """Return a bearer token for Azure management APIs."""
@@ -33,13 +29,16 @@ class AzureAuthenticator:
             if self._cached_token and _not_expired(self._cached_expiry):
                 return self._cached_token
 
-            access_token = self.credential.get_token(self.scope)
+            credential = self.credential
+            if credential is None:
+                raise RuntimeError("Azure credential initialization failed")  # noqa: TRY003
+            access_token = credential.get_token(self.scope)
             self._cached_token = access_token.token
             self._cached_expiry = access_token.expires_on
             return access_token.token
 
 
-def _not_expired(expiry: Optional[int]) -> bool:
+def _not_expired(expiry: int | None) -> bool:
     if not expiry:
         return False
     import time

@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 import logging
+from unittest.mock import MagicMock
 
-from spotvm.resource_graph import _ensure_list, _extract_eviction, _extract_latest_price, _to_float
+from spotvm.config import ToolConfig
+from spotvm.resource_graph import (
+    _ensure_list,
+    _execute_query,
+    _extract_eviction,
+    _extract_latest_price,
+    _to_float,
+)
 
 
 def test_extract_latest_price_logs_malformed_json(caplog):
@@ -58,3 +66,19 @@ def test_extract_eviction_warns_on_unparseable_non_empty_value(caplog):
     assert rate is None
     assert timestamp is None
     assert "Failed to parse eviction rate" in caplog.text
+
+
+def test_execute_query_ignores_malformed_cached_payload(monkeypatch, caplog):
+    monkeypatch.setattr("spotvm.resource_graph.cache.load", lambda *args, **kwargs: ["bad-cache"])
+    monkeypatch.setattr("spotvm.resource_graph.cache.store", lambda *args, **kwargs: None)
+
+    client = MagicMock()
+    client.post_json.return_value = {"data": []}
+    config = ToolConfig(regions=["eastus"], sizes=["Standard_D4as_v5"])
+
+    with caplog.at_level(logging.WARNING, logger="spotvm"):
+        result = _execute_query(client, config, "resources | take 1", "price")
+
+    assert result == []
+    assert client.post_json.called
+    assert "Ignoring malformed cached price data" in caplog.text

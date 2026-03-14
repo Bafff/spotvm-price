@@ -8,7 +8,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from .analysis import (
     enrich_with_coremark,
@@ -19,13 +19,13 @@ from .analysis import (
     rank_candidates,
     summarize_top_candidates,
 )
-from .vm_specs import discover_skus
 from .auth import AzureAuthenticator
 from .config import VALID_CPU_ARCHS, ToolConfig, load_config_file, merge_cli_overrides
-from .http_client import AzureRestClient, AzureHttpError
+from .http_client import AzureHttpError, AzureRestClient
 from .placement_score import fetch_placement_scores
-from .reporting import render_table, export_to_csv, set_colors_enabled
+from .reporting import export_to_csv, render_table, set_colors_enabled
 from .resource_graph import fetch_historical_metrics
+from .vm_specs import discover_skus
 
 MAX_UNATTENDED_FAILURES = 3
 
@@ -100,7 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--placement-check",
         action="store_true",
         help="Enable Placement Score API queries for capacity and quota data "
-             "(requires --subscription-id). Useful for large-scale deployments",
+        "(requires --subscription-id). Useful for large-scale deployments",
     )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     parser.add_argument(
@@ -167,7 +167,7 @@ def build_parser() -> argparse.ArgumentParser:
         const=60,
         metavar="MINUTES",
         help="Run continuously in background, collecting data every MINUTES (default: 60). "
-             "Automatically enables --save-results. Stop with Ctrl+C.",
+        "Automatically enables --save-results. Stop with Ctrl+C.",
     )
     parser.add_argument(
         "--results-dir",
@@ -199,7 +199,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: List[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     # Show help when invoked with no arguments
     if (argv is not None and len(argv) == 0) or (argv is None and len(sys.argv) <= 1):
@@ -230,18 +230,18 @@ def main(argv: List[str] | None = None) -> int:
             output_path=history_output,
         )
 
-        print(f"Historical Analysis Complete:")
+        print("Historical Analysis Complete:")
         print(f"  Runs analyzed: {num_runs}")
         print(f"  Data points: {num_datapoints}")
         print(f"  CSV output: {csv_path}")
-        print(f"\nUse this CSV for visualization with tools like:")
+        print("\nUse this CSV for visualization with tools like:")
         print(f"  - Excel/Google Sheets: Import {csv_path}")
         print(f"  - Python: pd.read_csv('{csv_path}')")
-        print(f"  - Grafana: CSV data source plugin")
+        print("  - Grafana: CSV data source plugin")
 
         return 0
 
-    base_config: Dict[str, Any] = {}
+    base_config: dict[str, Any] = {}
     if args.config:
         base_config = load_config_file(args.config)
 
@@ -264,14 +264,12 @@ def main(argv: List[str] | None = None) -> int:
             requirements.append(f"RAM≥{args.min_ram} GB")
         if effective_cpu_arch:
             requirements.append(f"arch={effective_cpu_arch}")
-        logger.info(
-            f"No --sizes specified, auto-discovering SKUs matching requirements ({', '.join(requirements)})"
-        )
-        discover_kwargs = dict(
-            min_vcpu=args.min_vcpu,
-            min_ram=args.min_ram,
-            cpu_arch=effective_cpu_arch,
-        )
+        logger.info(f"No --sizes specified, auto-discovering SKUs matching requirements ({', '.join(requirements)})")
+        discover_kwargs = {
+            "min_vcpu": args.min_vcpu,
+            "min_ram": args.min_ram,
+            "cpu_arch": effective_cpu_arch,
+        }
         if args.no_max_limit:
             discover_kwargs["no_max_limit"] = True
         sizes = discover_skus(**discover_kwargs)
@@ -280,7 +278,7 @@ def main(argv: List[str] | None = None) -> int:
             return 1
         logger.info(f"Auto-discovered {len(sizes)} SKUs: {', '.join(sizes[:5])}{'...' if len(sizes) > 5 else ''}")
 
-    overrides: Dict[str, Any] = {
+    overrides: dict[str, Any] = {
         "subscription_id": args.subscription_id,
         "regions": args.regions,
         "sizes": sizes,
@@ -313,7 +311,7 @@ def main(argv: List[str] | None = None) -> int:
 
     try:
         config = ToolConfig.from_dict(config_data)
-    except Exception as exc:  # noqa: BLE001 - surface configuration errors
+    except (TypeError, ValueError) as exc:
         parser.error(str(exc))
         return 1
 
@@ -330,8 +328,7 @@ def main(argv: List[str] | None = None) -> int:
         interval_minutes = args.run_unattended
 
         logger.info(
-            f"Starting unattended monitoring mode: running every {interval_minutes} minutes. "
-            f"Press Ctrl+C to stop."
+            f"Starting unattended monitoring mode: running every {interval_minutes} minutes. Press Ctrl+C to stop."
         )
         _nc = args.no_color
         print(f"{'[*]' if _nc else '🔄'} Monitoring mode started (interval: {interval_minutes} min)")
@@ -353,9 +350,9 @@ def main(argv: List[str] | None = None) -> int:
         unexpected_error_count = 0
         while not stop_requested:
             run_count += 1
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"Run #{run_count} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
 
             try:
                 _run_single_analysis(
@@ -367,9 +364,9 @@ def main(argv: List[str] | None = None) -> int:
                 unexpected_error_count = 0
             except AzureHttpError as exc:
                 unexpected_error_count = 0
-                logger.error(f"Azure API request failed: {exc}")
+                logger.error(f"Azure API request failed: {exc}")  # noqa: TRY400 - traceback is noise for API failures
                 logger.info("Continuing despite error...")
-            except Exception as exc:  # noqa: BLE001
+            except Exception:
                 unexpected_error_count += 1
                 logger.exception(
                     "Unexpected error in unattended run (%d/%d)",
@@ -377,7 +374,7 @@ def main(argv: List[str] | None = None) -> int:
                     MAX_UNATTENDED_FAILURES,
                 )
                 if unexpected_error_count >= MAX_UNATTENDED_FAILURES:
-                    logger.error(
+                    logger.error(  # noqa: TRY400 - traceback already emitted immediately above
                         "Stopping unattended mode after %d consecutive unexpected errors",
                         MAX_UNATTENDED_FAILURES,
                     )
@@ -406,19 +403,18 @@ def main(argv: List[str] | None = None) -> int:
         return 0
 
     # Normal mode: run once
-    else:
-        try:
-            _run_single_analysis(
-                args=args,
-                config=config,
-                logger=logger,
-                save_results=args.save_results,
-            )
-        except AzureHttpError as exc:
-            logger.error("Azure API request failed: %s", exc)
-            return 2
+    try:
+        _run_single_analysis(
+            args=args,
+            config=config,
+            logger=logger,
+            save_results=args.save_results,
+        )
+    except AzureHttpError as exc:
+        logger.error("Azure API request failed: %s", exc)  # noqa: TRY400 - user-facing API failure should stay concise
+        return 2
 
-        return 0
+    return 0
 
 
 def _run_single_analysis(
@@ -443,20 +439,14 @@ def _run_single_analysis(
     authenticator = AzureAuthenticator()
     client = AzureRestClient(authenticator)
 
-    placement_scores = (
-        fetch_placement_scores(client, config)
-        if config.enable_placement
-        else []
-    )
+    placement_scores = fetch_placement_scores(client, config) if config.enable_placement else []
     historical_metrics = fetch_historical_metrics(client, config)
 
     candidates = merge_datasets(placement_scores, historical_metrics)
 
     # Filter by hardware requirements (before ranking to reduce dataset)
     # Use config values so config-file settings (cpu_arch, etc.) are honored
-    effective_no_max_limit = (
-        getattr(args, "no_max_limit", False) or getattr(args, "explicit_sizes", False)
-    )
+    effective_no_max_limit = getattr(args, "no_max_limit", False) or getattr(args, "explicit_sizes", False)
     candidates = filter_by_requirements(
         candidates,
         min_vcpu=args.min_vcpu,
@@ -516,7 +506,7 @@ def _run_single_analysis(
                 show_baseline=config.baseline_sku is not None,
             )
         except OSError as exc:
-            logger.error("Failed to export CSV to %s: %s", args.csv, exc)
+            logger.error("Failed to export CSV to %s: %s", args.csv, exc)  # noqa: TRY400 - expected filesystem failure path
             emit_error(f"{'[x]' if _nc else '❌'} Failed to export CSV to: {args.csv} ({exc})\n")
         else:
             logger.info("Results exported to CSV: %s", args.csv)
@@ -535,7 +525,11 @@ def _run_single_analysis(
                     encoding="utf-8",
                 )
             except OSError as exc:
-                logger.error("Failed to save report to %s: %s", config.save_report, exc)
+                logger.error(  # noqa: TRY400 - expected filesystem failure path
+                    "Failed to save report to %s: %s",
+                    config.save_report,
+                    exc,
+                )
                 emit_error(f"{'[x]' if _nc else '❌'} Failed to save report to: {config.save_report} ({exc})\n")
             else:
                 logger.info("Saved report to %s", config.save_report)
@@ -574,16 +568,21 @@ def _run_single_analysis(
     # Print color legend if colors are enabled
     if not args.no_color:
         from colorama import Fore, Style
+
         emit("\nColor Legend:")
-        emit(f"  Eviction Rate: {Fore.BLUE}<5%{Style.RESET_ALL} | "
-             f"{Fore.GREEN}5-<10%{Style.RESET_ALL} | "
-             f"{Fore.YELLOW}10-<15%{Style.RESET_ALL} | "
-             f"{Fore.RED}15-<25%{Style.RESET_ALL} | "
-             f"{Fore.RED}{Style.BRIGHT}≥25%{Style.RESET_ALL}")
+        emit(
+            f"  Eviction Rate: {Fore.BLUE}<5%{Style.RESET_ALL} | "
+            f"{Fore.GREEN}5-<10%{Style.RESET_ALL} | "
+            f"{Fore.YELLOW}10-<15%{Style.RESET_ALL} | "
+            f"{Fore.RED}15-<25%{Style.RESET_ALL} | "
+            f"{Fore.RED}{Style.BRIGHT}≥25%{Style.RESET_ALL}"
+        )
         if config.enable_placement:
-            emit(f"  Placement:     {Fore.GREEN}High{Style.RESET_ALL} | "
-                 f"{Fore.YELLOW}Medium{Style.RESET_ALL} | "
-                 f"{Fore.RED}Low{Style.RESET_ALL}")
+            emit(
+                f"  Placement:     {Fore.GREEN}High{Style.RESET_ALL} | "
+                f"{Fore.YELLOW}Medium{Style.RESET_ALL} | "
+                f"{Fore.RED}Low{Style.RESET_ALL}"
+            )
 
     summary_lines = summarize_top_candidates(ranked)
     if summary_lines:
@@ -604,7 +603,7 @@ def _run_single_analysis(
         )
 
 
-def _build_report(candidates: List[Any]) -> Dict[str, Any]:
+def _build_report(candidates: list[Any]) -> dict[str, Any]:
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "candidates": [
@@ -633,7 +632,7 @@ def _build_report(candidates: List[Any]) -> Dict[str, Any]:
 
 
 def _merge_notes(*notes: Any) -> Any:
-    parts: List[str] = []
+    parts: list[str] = []
     for note in notes:
         if isinstance(note, str) and note and note not in parts:
             parts.append(note)

@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Iterable
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, cast
 
 from . import cache
 from .config import ToolConfig
@@ -15,15 +16,14 @@ logger = logging.getLogger("spotvm")
 
 RESOURCE_GRAPH_API_VERSION = "2022-10-01"
 RESOURCE_GRAPH_ENDPOINT = (
-    "https://management.azure.com/providers/Microsoft.ResourceGraph/resources"
-    f"?api-version={RESOURCE_GRAPH_API_VERSION}"
+    f"https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version={RESOURCE_GRAPH_API_VERSION}"
 )
 
 
 def fetch_historical_metrics(
     client: AzureRestClient,
     config: ToolConfig,
-) -> List[HistoricalMetrics]:
+) -> list[HistoricalMetrics]:
     price_query = _build_price_query(config)
     eviction_query = _build_eviction_query(config)
 
@@ -36,7 +36,7 @@ def fetch_historical_metrics(
     logger.debug("Price rows returned: %d", len(price_rows))
     logger.debug("Eviction rows returned: %d", len(eviction_rows))
 
-    price_map: Dict[tuple[str, str], dict] = {}
+    price_map: dict[tuple[str, str], dict] = {}
     for row in price_rows:
         key = (
             row.get("skuName", "").lower(),
@@ -44,7 +44,7 @@ def fetch_historical_metrics(
         )
         price_map[key] = row
 
-    eviction_map: Dict[tuple[str, str], dict] = {}
+    eviction_map: dict[tuple[str, str], dict] = {}
     for row in eviction_rows:
         key = (
             row.get("skuName", "").lower(),
@@ -52,21 +52,13 @@ def fetch_historical_metrics(
         )
         eviction_map[key] = row
 
-    metrics: List[HistoricalMetrics] = []
+    metrics: list[HistoricalMetrics] = []
     keys = set(price_map.keys()) | set(eviction_map.keys())
     for sku, region in sorted(keys):
         price_entry = price_map.get((sku, region))
         eviction_entry = eviction_map.get((sku, region))
-        region_display = (
-            (price_entry or {}).get("location")
-            or (eviction_entry or {}).get("location")
-            or region
-        )
-        sku_display = (
-            (price_entry or {}).get("skuName")
-            or (eviction_entry or {}).get("skuName")
-            or sku
-        )
+        region_display = (price_entry or {}).get("location") or (eviction_entry or {}).get("location") or region
+        sku_display = (price_entry or {}).get("skuName") or (eviction_entry or {}).get("skuName") or sku
 
         price_usd, price_dt = _extract_latest_price(price_entry)
         eviction_rate, eviction_dt = _extract_eviction(eviction_entry)
@@ -89,7 +81,7 @@ def _execute_query(
     config: ToolConfig,
     query: str,
     cache_prefix: str,
-) -> List[dict]:
+) -> list[dict[str, Any]]:
     # SpotResources table works differently than regular resources
     # Azure Portal uses authorizationScopeFilter to query across all accessible scopes
     payload = {
@@ -104,9 +96,15 @@ def _execute_query(
 
     cache_key = _cache_key(cache_prefix, payload)
     cached = cache.load(cache_key, config.cache_ttl_minutes)
-    if cached:
-        logger.debug("Using cached %s data", cache_prefix)
-        return cached.get("data", [])
+    if cached is not None:
+        if not isinstance(cached, dict):
+            logger.warning("Ignoring malformed cached %s data", cache_prefix)
+        else:
+            cached_data = cached.get("data", [])
+            if isinstance(cached_data, list):
+                logger.debug("Using cached %s data", cache_prefix)
+                return cast(list[dict[str, Any]], cached_data)
+            logger.warning("Ignoring malformed cached %s data", cache_prefix)
 
     logger.debug("Executing %s query against Resource Graph API", cache_prefix)
     response = client.post_json(
@@ -120,7 +118,7 @@ def _execute_query(
     if response.get("data"):
         logger.debug("Sample data item: %s", response["data"][0] if response["data"] else "N/A")
     cache.store(cache_key, response, config.cache_ttl_minutes)
-    return response.get("data", [])
+    return cast(list[dict[str, Any]], response.get("data", []))
 
 
 def _cache_key(prefix: str, payload: dict) -> str:
@@ -169,7 +167,7 @@ def _in_list(values: Iterable[str]) -> str:
     return ", ".join(f"'{value}'" for value in values)
 
 
-def _extract_latest_price(entry: Optional[dict]) -> tuple[Optional[float], Optional[datetime]]:
+def _extract_latest_price(entry: dict | None) -> tuple[float | None, datetime | None]:
     if not entry:
         return None, None
     raw_prices = entry.get("spotPrices")
@@ -192,7 +190,7 @@ def _extract_latest_price(entry: Optional[dict]) -> tuple[Optional[float], Optio
     return price, timestamp
 
 
-def _extract_eviction(entry: Optional[dict]) -> tuple[Optional[float], Optional[datetime]]:
+def _extract_eviction(entry: dict | None) -> tuple[float | None, datetime | None]:
     if not entry:
         return None, None
 
@@ -243,7 +241,7 @@ def _ensure_list(value: Any) -> list:
     return []
 
 
-def _to_float(value: Any) -> Optional[float]:
+def _to_float(value: Any) -> float | None:
     if value is None:
         return None
     try:
@@ -254,7 +252,7 @@ def _to_float(value: Any) -> Optional[float]:
         return None
 
 
-def _parse_datetime_string(value: Any) -> Optional[datetime]:
+def _parse_datetime_string(value: Any) -> datetime | None:
     if not value:
         return None
     if isinstance(value, (int, float)):
@@ -265,9 +263,10 @@ def _parse_datetime_string(value: Any) -> Optional[datetime]:
             dt = datetime.fromisoformat(cleaned)
             if dt.tzinfo is None and value.endswith("Z"):
                 dt = dt.replace(tzinfo=timezone.utc)
-            return dt
         except ValueError:
             logger.debug("Could not parse datetime string: %r", value)
-            return None
+        else:
+            return dt
+        return None
     logger.debug("Unsupported datetime type %s: %r", type(value).__name__, value)
     return None

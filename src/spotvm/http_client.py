@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, cast
 
 import requests
 
 from .auth import AzureAuthenticator
+
+logger = logging.getLogger("spotvm")
 
 
 @dataclass
@@ -20,20 +23,23 @@ class AzureRestClient:
     def __post_init__(self) -> None:
         if not self.user_agent:
             from . import __version__
+
             self.user_agent = f"spotvm/{__version__}"
         self._session = requests.Session()
-        self._session.headers.update({
-            "Content-Type": "application/json",
-            "User-Agent": self.user_agent,
-        })
+        self._session.headers.update(
+            {
+                "Content-Type": "application/json",
+                "User-Agent": self.user_agent,
+            }
+        )
 
     def post_json(
         self,
         url: str,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         retry_attempts: int = 4,
         retry_backoff_seconds: float = 2.0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         body = json.dumps(payload)
         for attempt in range(retry_attempts):
             token = self.authenticator.get_token()
@@ -45,34 +51,43 @@ class AzureRestClient:
             )
             if response.status_code in {429, 500, 502, 503, 504} and attempt + 1 < retry_attempts:
                 delay = self._retry_delay(response, retry_backoff_seconds, attempt)
+                logger.warning(
+                    "Retrying Azure API request after %s from %s in %.1fs (%d/%d)",
+                    response.status_code,
+                    url,
+                    delay,
+                    attempt + 1,
+                    retry_attempts - 1,
+                )
                 time.sleep(delay)
                 continue
             if not response.ok:
                 raise AzureHttpError(url, response.status_code, response.text)
             try:
-                return response.json()
+                return cast(dict[str, Any], response.json())
             except requests.exceptions.JSONDecodeError as exc:
                 raise AzureHttpError(
-                    url, response.status_code,
+                    url,
+                    response.status_code,
                     f"Response was not valid JSON: {response.text[:200]}",
                 ) from exc
         raise AzureHttpError(url, response.status_code, response.text)
 
     def _retry_delay(self, response: requests.Response, backoff: float, attempt: int) -> float:
-        import logging
         retry_after = response.headers.get("Retry-After")
-        if retry_after:
+        if isinstance(retry_after, str) and retry_after:
             try:
                 return float(retry_after)
             except ValueError:
-                logging.getLogger(__name__).debug(
-                    "Ignoring non-numeric Retry-After header: %r", retry_after,
+                logger.debug(
+                    "Ignoring non-numeric Retry-After header: %r",
+                    retry_after,
                 )
-        return backoff * (2**attempt)
+        return float(backoff * (2**attempt))
 
 
 class AzureHttpError(RuntimeError):
-    def __init__(self, url: str, status_code: int, body: Optional[str] = None):
+    def __init__(self, url: str, status_code: int, body: str | None = None):
         message = f"Azure API request failed ({status_code}) for {url}"
         if body:
             snippet = body.strip()

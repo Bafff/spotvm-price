@@ -45,3 +45,24 @@ def test_store_warns_and_skips_cache_write_on_oserror(tmp_path, monkeypatch, cap
 
     assert not cache_path.exists()
     assert "Failed to write cache file" in caplog.text
+
+
+def test_clear_warns_and_continues_on_unlink_oserror(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(cache, "CACHE_DIR", tmp_path)
+    cache_path = tmp_path / "stale.json"
+    cache_path.write_text("{}", encoding="utf-8")
+
+    original_unlink = Path.unlink
+
+    def raising_unlink(self: Path, *args, **kwargs):
+        if self == cache_path:
+            raise PermissionError("locked")
+        return original_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", raising_unlink)
+
+    with caplog.at_level(logging.WARNING, logger="spotvm"):
+        cache.clear()
+
+    assert cache_path.exists()
+    assert "Failed to remove cache file" in caplog.text
