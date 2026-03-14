@@ -26,7 +26,7 @@ from .config import VALID_CPU_ARCHS, ToolConfig, load_config_file, merge_cli_ove
 from .http_client import AzureHttpError, AzureRestClient
 from .placement_score import fetch_placement_scores
 from .reporting import RenderOptions, export_to_csv, initialize_color_output, render_table
-from .resource_graph import fetch_historical_metrics
+from .resource_graph import ResourceGraphRequest, fetch_historical_metrics
 from .vm_specs import discover_skus
 
 MAX_UNATTENDED_FAILURES = 3
@@ -60,6 +60,17 @@ def _build_analysis_run_request(args: argparse.Namespace, *, save_results: bool)
         csv=args.csv,
         results_dir=args.results_dir,
         save_results=save_results,
+    )
+
+
+def _build_resource_graph_request(config: ToolConfig) -> ResourceGraphRequest:
+    return ResourceGraphRequest(
+        regions=config.regions,
+        sizes=config.sizes,
+        os_type=config.os_type,
+        cache_ttl_minutes=config.cache_ttl_minutes,
+        retry_attempts=config.retry_attempts,
+        retry_backoff_seconds=config.retry_backoff_seconds,
     )
 
 
@@ -493,7 +504,8 @@ def _run_single_analysis(
     client = AzureRestClient(authenticator)
 
     placement_scores = fetch_placement_scores(client, config) if config.enable_placement else []
-    historical_metrics = fetch_historical_metrics(client, config)
+    resource_graph_request = _build_resource_graph_request(config)
+    historical_metrics = fetch_historical_metrics(client, resource_graph_request)
 
     candidates = merge_datasets(placement_scores, historical_metrics)
 

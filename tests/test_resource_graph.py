@@ -4,8 +4,8 @@ import logging
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-from spotvm.config import ToolConfig
 from spotvm.resource_graph import (
+    ResourceGraphRequest,
     _ensure_list,
     _execute_query,
     _extract_eviction,
@@ -15,6 +15,19 @@ from spotvm.resource_graph import (
     _to_float,
     fetch_historical_metrics,
 )
+
+
+def _request(**overrides):
+    defaults = {
+        "regions": ["eastus"],
+        "sizes": ["Standard_D4as_v5"],
+        "os_type": "linux",
+        "cache_ttl_minutes": 15,
+        "retry_attempts": 4,
+        "retry_backoff_seconds": 2.0,
+    }
+    defaults.update(overrides)
+    return ResourceGraphRequest(**defaults)
 
 
 def test_extract_latest_price_logs_malformed_json(caplog):
@@ -78,10 +91,10 @@ def test_execute_query_ignores_malformed_cached_payload(monkeypatch, caplog):
 
     client = MagicMock()
     client.post_json.return_value = {"data": []}
-    config = ToolConfig(regions=["eastus"], sizes=["Standard_D4as_v5"])
+    request = _request()
 
     with caplog.at_level(logging.WARNING, logger="spotvm"):
-        result = _execute_query(client, config, "resources | take 1", "price")
+        result = _execute_query(client, request, "resources | take 1", "price")
 
     assert result == []
     assert client.post_json.called
@@ -94,10 +107,10 @@ def test_fetch_historical_metrics_does_not_log_full_queries(monkeypatch, caplog)
     monkeypatch.setattr("spotvm.resource_graph._execute_query", lambda *args, **kwargs: [])
 
     client = MagicMock()
-    config = ToolConfig(regions=["eastus"], sizes=["Standard_D4as_v5"])
+    request = _request()
 
     with caplog.at_level(logging.DEBUG, logger="spotvm"):
-        metrics = fetch_historical_metrics(client, config)
+        metrics = fetch_historical_metrics(client, request)
 
     assert metrics == []
     assert "PRICE_QUERY_SECRET" not in caplog.text
@@ -118,10 +131,10 @@ def test_execute_query_does_not_log_sample_payload_contents(monkeypatch, caplog)
             }
         ]
     }
-    config = ToolConfig(regions=["eastus"], sizes=["Standard_D4as_v5"])
+    request = _request()
 
     with caplog.at_level(logging.DEBUG, logger="spotvm"):
-        rows = _execute_query(client, config, "resources | take 1", "price")
+        rows = _execute_query(client, request, "resources | take 1", "price")
 
     assert rows == client.post_json.return_value["data"]
     assert "SUPER-SECRET-PAYLOAD" not in caplog.text
@@ -141,9 +154,9 @@ def test_execute_query_uses_resource_graph_endpoint_builder(monkeypatch):
 
     client = MagicMock()
     client.post_json.return_value = {"data": []}
-    config = ToolConfig(regions=["eastus"], sizes=["Standard_D4as_v5"])
+    request = _request()
 
-    _execute_query(client, config, "resources | take 1", "price")
+    _execute_query(client, request, "resources | take 1", "price")
 
     assert client.post_json.call_args.args[0] == sentinel_endpoint
 

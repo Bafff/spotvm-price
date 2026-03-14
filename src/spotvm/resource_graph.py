@@ -4,12 +4,12 @@ import json
 import logging
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, cast
 from urllib.parse import urlunsplit
 
 from . import cache
-from .config import ToolConfig
 from .http_client import AzureRestClient
 from .models import HistoricalMetrics
 
@@ -22,20 +22,30 @@ MIN_PLAUSIBLE_UNIX_TIMESTAMP = datetime(2015, 1, 1, tzinfo=timezone.utc).timesta
 MAX_PLAUSIBLE_UNIX_TIMESTAMP = datetime(2041, 1, 1, tzinfo=timezone.utc).timestamp()
 
 
+@dataclass(frozen=True)
+class ResourceGraphRequest:
+    regions: list[str]
+    sizes: list[str]
+    os_type: str
+    cache_ttl_minutes: int
+    retry_attempts: int
+    retry_backoff_seconds: float
+
+
 def fetch_historical_metrics(
     client: AzureRestClient,
-    config: ToolConfig,
+    request: ResourceGraphRequest,
 ) -> list[HistoricalMetrics]:
-    price_query = _build_price_query(config)
-    eviction_query = _build_eviction_query(config)
+    price_query = _build_price_query(request)
+    eviction_query = _build_eviction_query(request)
     logger.debug(
         "Built Resource Graph queries for %d SKU filters across %d regions",
-        len(config.sizes),
-        len(config.regions),
+        len(request.sizes),
+        len(request.regions),
     )
 
-    price_rows = _execute_query(client, config, price_query, "price")
-    eviction_rows = _execute_query(client, config, eviction_query, "eviction")
+    price_rows = _execute_query(client, request, price_query, "price")
+    eviction_rows = _execute_query(client, request, eviction_query, "eviction")
 
     logger.debug("Price rows returned: %d", len(price_rows))
     logger.debug("Eviction rows returned: %d", len(eviction_rows))
@@ -82,7 +92,7 @@ def fetch_historical_metrics(
 
 def _execute_query(
     client: AzureRestClient,
-    config: ToolConfig,
+    request: ResourceGraphRequest,
     query: str,
     cache_prefix: str,
 ) -> list[dict[str, Any]]:
@@ -97,7 +107,7 @@ def _execute_query(
     }
 
     cache_key = _cache_key(cache_prefix, payload)
-    cached = cache.load(cache_key, config.cache_ttl_minutes)
+    cached = cache.load(cache_key, request.cache_ttl_minutes)
     if cached is not None:
         if not isinstance(cached, dict):
             logger.warning("Ignoring malformed cached %s data", cache_prefix)
@@ -112,12 +122,12 @@ def _execute_query(
     response = client.post_json(
         _resource_graph_endpoint(),
         payload,
-        retry_attempts=config.retry_attempts,
-        retry_backoff_seconds=config.retry_backoff_seconds,
+        retry_attempts=request.retry_attempts,
+        retry_backoff_seconds=request.retry_backoff_seconds,
     )
     logger.debug("Response keys: %s", list(response.keys()))
     logger.debug("Response data length: %d", len(response.get("data", [])))
-    cache.store(cache_key, response, config.cache_ttl_minutes)
+    cache.store(cache_key, response, request.cache_ttl_minutes)
     return cast(list[dict[str, Any]], response.get("data", []))
 
 
@@ -138,10 +148,10 @@ def _cache_key(prefix: str, payload: dict) -> str:
     return f"resource-graph:{prefix}:{serialized}"
 
 
-def _build_price_query(config: ToolConfig) -> str:
-    region_filter = _in_expression("location", config.regions)
-    sku_list = _in_list(config.sizes)
-    os_filter = f"| where osType =~ '{config.os_type}'" if config.os_type else ""
+def _build_price_query(request: ResourceGraphRequest) -> str:
+    region_filter = _in_expression("location", request.regions)
+    sku_list = _in_list(request.sizes)
+    os_filter = f"| where osType =~ '{request.os_type}'" if request.os_type else ""
     return (
         "spotresources\n"
         "| where type =~ 'microsoft.compute/skuspotpricehistory/ostype/location'\n"
@@ -155,9 +165,9 @@ def _build_price_query(config: ToolConfig) -> str:
     )
 
 
-def _build_eviction_query(config: ToolConfig) -> str:
-    region_filter = _in_expression("location", config.regions)
-    sku_list = _in_list(config.sizes)
+def _build_eviction_query(request: ResourceGraphRequest) -> str:
+    region_filter = _in_expression("location", request.regions)
+    sku_list = _in_list(request.sizes)
     return (
         "spotresources\n"
         "| where type =~ 'microsoft.compute/skuspotevictionrate/location'\n"

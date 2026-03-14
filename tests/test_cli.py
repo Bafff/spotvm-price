@@ -13,6 +13,7 @@ import pytest
 from spotvm import reporting
 from spotvm.cli import AnalysisRunRequest, _run_single_analysis, build_parser, main
 from spotvm.config import ToolConfig
+from spotvm.resource_graph import ResourceGraphRequest
 
 
 def _analysis_args(**overrides):
@@ -459,7 +460,14 @@ class TestMainWithMocks:
         mock_render_table.return_value = "RANKED TABLE"
 
         args = _analysis_args(min_vcpu=4, min_ram=16, explicit_sizes=True)
-        config = ToolConfig(regions=["centralus"], sizes=["Standard_D64s_v5"])
+        config = ToolConfig(
+            regions=["centralus"],
+            sizes=["Standard_D64s_v5"],
+            os_type="windows",
+            cache_ttl_minutes=30,
+            retry_attempts=6,
+            retry_backoff_seconds=3.5,
+        )
 
         _run_single_analysis(
             request=args,
@@ -635,7 +643,14 @@ class TestMainWithMocks:
             min_performance=80.0,
             results_dir=tmp_path / "results",
         )
-        config = ToolConfig(regions=["centralus"], sizes=["Standard_D64s_v5"])
+        config = ToolConfig(
+            regions=["centralus"],
+            sizes=["Standard_D64s_v5"],
+            os_type="windows",
+            cache_ttl_minutes=30,
+            retry_attempts=6,
+            retry_backoff_seconds=3.5,
+        )
 
         _run_single_analysis(
             request=request,
@@ -658,6 +673,14 @@ class TestMainWithMocks:
             max_eviction=10.0,
             min_performance=80.0,
         )
+        hist_request = mock_fetch_hist.call_args.args[1]
+        assert isinstance(hist_request, ResourceGraphRequest)
+        assert hist_request.regions == ["centralus"]
+        assert hist_request.sizes == ["Standard_D64s_v5"]
+        assert hist_request.os_type == "windows"
+        assert hist_request.cache_ttl_minutes == 30
+        assert hist_request.retry_attempts == 6
+        assert hist_request.retry_backoff_seconds == 3.5
 
     @patch("spotvm.cli._run_single_analysis")
     @patch("spotvm.cli.discover_skus")
