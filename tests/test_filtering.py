@@ -1,18 +1,18 @@
 """Tests for filtering and auto-discovery functionality."""
 
-from datetime import datetime
 import logging
-from pathlib import Path
 import re
+from datetime import datetime
+from pathlib import Path
 
 import pytest
 
 from spotvm.analysis import filter_by_cost, filter_by_requirements
 from spotvm.models import CandidateInsight
 from spotvm.vm_specs import (
-    discover_skus,
     detect_cpu_architecture,
     detect_cpu_vendor,
+    discover_skus,
     get_vm_spec,
     hardware_window_tiers,
     known_hardware_tiers,
@@ -526,7 +526,6 @@ class TestFilterByCost:
         )
 
         assert len(filtered) == 1
-
 
     def test_filter_zero_max_price(self, sample_candidates):
         """Zero max_price should filter candidates with any positive price (not skip filter)."""

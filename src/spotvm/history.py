@@ -12,11 +12,9 @@ import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from .config import ToolConfig
 from .models import CandidateInsight
-
 
 logger = logging.getLogger("spotvm")
 
@@ -26,12 +24,12 @@ class RunSnapshot:
     """Snapshot of a single tool run with all results."""
 
     timestamp: str  # ISO 8601 format
-    config: Dict[str, Optional[str | List[str]]]  # Config used for this run
-    candidates: List[Dict[str, Optional[str | float | int | bool]]]  # All candidate results
+    config: dict[str, str | list[str] | None]  # Config used for this run
+    candidates: list[dict[str, str | float | int | bool | None]]  # All candidate results
 
 
 def save_run_results(
-    candidates: List[CandidateInsight],
+    candidates: list[CandidateInsight],
     config: ToolConfig,
     results_dir: Path,
 ) -> Path:
@@ -89,8 +87,8 @@ def save_run_results(
 
 def load_historical_runs(
     results_dir: Path,
-    depth: Optional[int] = None,
-) -> List[RunSnapshot]:
+    depth: int | None = None,
+) -> list[RunSnapshot]:
     """Load previous run snapshots from disk.
 
     Args:
@@ -132,7 +130,7 @@ def load_historical_runs(
 
 
 def generate_history_csv(
-    snapshots: List[RunSnapshot],
+    snapshots: list[RunSnapshot],
     output_path: Path,
 ) -> int:
     """Generate unified CSV file from multiple run snapshots.
@@ -161,12 +159,22 @@ def generate_history_csv(
                     "region": candidate.get("region"),
                     "zone": candidate.get("availability_zone") or "",
                     "price_usd": candidate.get("price_usd") if candidate.get("price_usd") is not None else "",
-                    "eviction_rate": candidate.get("eviction_rate") if candidate.get("eviction_rate") is not None else "",
+                    "eviction_rate": candidate.get("eviction_rate")
+                    if candidate.get("eviction_rate") is not None
+                    else "",
                     "placement_score": candidate.get("placement_score") or "",
-                    "quota_available": candidate.get("quota_available") if candidate.get("quota_available") is not None else "",
-                    "performance_relative": candidate.get("performance_relative") if candidate.get("performance_relative") is not None else "",
-                    "price_per_performance": candidate.get("price_per_performance") if candidate.get("price_per_performance") is not None else "",
-                    "recommendation_rank": candidate.get("recommendation_rank") if candidate.get("recommendation_rank") is not None else "",
+                    "quota_available": candidate.get("quota_available")
+                    if candidate.get("quota_available") is not None
+                    else "",
+                    "performance_relative": candidate.get("performance_relative")
+                    if candidate.get("performance_relative") is not None
+                    else "",
+                    "price_per_performance": candidate.get("price_per_performance")
+                    if candidate.get("price_per_performance") is not None
+                    else "",
+                    "recommendation_rank": candidate.get("recommendation_rank")
+                    if candidate.get("recommendation_rank") is not None
+                    else "",
                 }
             )
 
@@ -197,8 +205,8 @@ def generate_history_csv(
 
 def analyze_history(
     results_dir: Path,
-    depth: Optional[int] = None,
-    output_path: Optional[Path] = None,
+    depth: int | None = None,
+    output_path: Path | None = None,
 ) -> tuple[int, int, Path]:
     """Analyze historical runs and generate unified CSV.
 

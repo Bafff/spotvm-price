@@ -2,49 +2,49 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Optional
-
+from typing import Literal
 
 PerformanceBasis = Literal["coremark", "heuristic"]
+CPUArchitecture = Literal["x64", "arm"]
 
 
 @dataclass
 class PlacementScoreResult:
     region: str
     vm_size: str
-    placement_score: Optional[str]
-    quota_available: Optional[bool]
-    availability_zone: Optional[str] = None
-    error_detail: Optional[str] = None
+    placement_score: str | None
+    quota_available: bool | None
+    availability_zone: str | None = None
+    error_detail: str | None = None
 
 
 @dataclass
 class HistoricalMetrics:
     region: str
     vm_size: str
-    price_usd: Optional[float]
-    price_last_updated: Optional[datetime]
-    eviction_rate: Optional[float]
-    eviction_last_updated: Optional[datetime]
+    price_usd: float | None
+    price_last_updated: datetime | None
+    eviction_rate: float | None
+    eviction_last_updated: datetime | None
 
 
 @dataclass
 class CandidateInsight:
     region: str
     vm_size: str
-    placement_score: Optional[str]
-    quota_available: Optional[bool]
-    price_usd: Optional[float]
-    price_last_updated: Optional[datetime]
-    eviction_rate: Optional[float]
-    eviction_last_updated: Optional[datetime]
-    availability_zone: Optional[str] = None
-    recommendation_rank: Optional[int] = None
-    notes: Optional[str] = None
-    performance_relative: Optional[float] = None  # % relative to baseline
-    price_per_performance: Optional[float] = None  # USD per performance unit
-    performance_basis: Optional[PerformanceBasis] = None
-    performance_note: Optional[str] = None
-    cpu_arch: Optional[str] = None  # "x64" or "arm"
-    coremark_score: Optional[int] = None  # CoreMark benchmark score
-    coremark_per_vcpu: Optional[float] = None  # CoreMark per vCPU (efficiency metric)
+    placement_score: str | None
+    quota_available: bool | None
+    price_usd: float | None
+    price_last_updated: datetime | None
+    eviction_rate: float | None
+    eviction_last_updated: datetime | None
+    availability_zone: str | None = None
+    recommendation_rank: int | None = None
+    notes: str | None = None
+    performance_relative: float | None = None  # % relative to baseline
+    price_per_performance: float | None = None  # USD per performance unit
+    performance_basis: PerformanceBasis | None = None
+    performance_note: str | None = None
+    cpu_arch: CPUArchitecture | None = None
+    coremark_score: int | None = None  # CoreMark benchmark score
+    coremark_per_vcpu: float | None = None  # CoreMark per vCPU (efficiency metric)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 import json
 import logging
-from typing import Iterable, List
+from collections.abc import Iterable
 
 from . import cache
 from .config import ToolConfig
@@ -16,26 +16,28 @@ PLACEMENT_API_VERSION = "2025-06-05"
 PLACEMENT_ENDPOINT_TEMPLATE = (
     "https://management.azure.com/subscriptions/{subscription_id}"
     "/providers/Microsoft.Compute/locations/{location}/placementScores/spot/generate"
-    "?api-version="
-    + PLACEMENT_API_VERSION
+    "?api-version=" + PLACEMENT_API_VERSION
 )
 
 
 def fetch_placement_scores(
     client: AzureRestClient,
     config: ToolConfig,
-) -> List[PlacementScoreResult]:
+) -> list[PlacementScoreResult]:
     """Fetch placement scores, observing Azure's batching limits."""
 
-    results: List[PlacementScoreResult] = []
+    results: list[PlacementScoreResult] = []
     for region_batch in _batched(config.regions, config.max_regions_per_request):
         for size_batch in _batched(config.sizes, config.max_sizes_per_request):
             payload = _build_payload(region_batch, size_batch, config)
             cache_key = _cache_key("placement", payload, config.subscription_id)
             cached = cache.load(cache_key, config.cache_ttl_minutes)
-            if cached:
-                results.extend(_parse_response(cached))
-                continue
+            if cached is not None:
+                if not isinstance(cached, dict):
+                    logger.warning("Ignoring malformed cached placement data for %s", region_batch[0])
+                else:
+                    results.extend(_parse_response(cached))
+                    continue
             endpoint = PLACEMENT_ENDPOINT_TEMPLATE.format(
                 subscription_id=config.subscription_id,
                 location=region_batch[0],
@@ -51,7 +53,7 @@ def fetch_placement_scores(
     return results
 
 
-def _build_payload(regions: List[str], sizes: List[str], config: ToolConfig) -> dict:
+def _build_payload(regions: list[str], sizes: list[str], config: ToolConfig) -> dict:
     return {
         "desiredLocations": regions,
         "desiredSizes": [{"sku": size} for size in sizes],
@@ -60,11 +62,11 @@ def _build_payload(regions: List[str], sizes: List[str], config: ToolConfig) -> 
     }
 
 
-def _parse_response(payload: dict) -> List[PlacementScoreResult]:
+def _parse_response(payload: dict) -> list[PlacementScoreResult]:
     placement_scores = payload.get("placementScores")
     if placement_scores is None:
         placement_scores = payload.get("properties", {}).get("placementScores", [])
-    results: List[PlacementScoreResult] = []
+    results: list[PlacementScoreResult] = []
     for item in placement_scores:
         vm_size = item.get("sku") or item.get("vmSize") or item.get("name")
         if not vm_size:
@@ -85,16 +87,12 @@ def _cache_key(prefix: str, payload: dict, subscription_id: str) -> str:
 
 
 def _build_result(vm_size: str, entry: dict) -> PlacementScoreResult:
-    region = entry.get("location") or entry.get("region")
+    raw_region = entry.get("location") or entry.get("region")
+    region = raw_region if isinstance(raw_region, str) else ""
     score = entry.get("score")
     quota = entry.get("isQuotaAvailable")
     availability_zone = entry.get("availabilityZone") or entry.get("zone")
-    message = (
-        entry.get("statusMessage")
-        or entry.get("message")
-        or entry.get("status")
-        or entry.get("code")
-    )
+    message = entry.get("statusMessage") or entry.get("message") or entry.get("status") or entry.get("code")
     return PlacementScoreResult(
         region=region,
         vm_size=vm_size,
@@ -105,7 +103,7 @@ def _build_result(vm_size: str, entry: dict) -> PlacementScoreResult:
     )
 
 
-def _batched(values: Iterable[str], batch_size: int) -> Iterable[List[str]]:
+def _batched(values: Iterable[str], batch_size: int) -> Iterable[list[str]]:
     iterator = iter(values)
     while True:
         chunk = list(itertools.islice(iterator, batch_size))

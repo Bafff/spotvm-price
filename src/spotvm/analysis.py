@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, Iterable, List, Optional, Tuple
+from collections.abc import Iterable
 
-from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
+from .models import CandidateInsight, CPUArchitecture, HistoricalMetrics, PlacementScoreResult
 from .vm_specs import (
     calculate_relative_performance_details,
     detect_cpu_architecture,
@@ -19,32 +19,30 @@ PLACEMENT_ORDER = {"high": 3, "medium": 2, "low": 1}
 def merge_datasets(
     placement_scores: Iterable[PlacementScoreResult],
     historical_metrics: Iterable[HistoricalMetrics],
-) -> List[CandidateInsight]:
+) -> list[CandidateInsight]:
     """Combine placement and historical metrics per SKU/region."""
 
-    placement_map: Dict[Tuple[str, str, Optional[str]], PlacementScoreResult] = {}
-    for entry in placement_scores:
-        key = (
-            (entry.region or "").lower(),
-            (entry.vm_size or "").lower(),
-            (entry.availability_zone or "").lower() if entry.availability_zone else None,
+    placement_map: dict[tuple[str, str, str | None], PlacementScoreResult] = {}
+    for placement_entry in placement_scores:
+        placement_key = (
+            (placement_entry.region or "").lower(),
+            (placement_entry.vm_size or "").lower(),
+            (placement_entry.availability_zone or "").lower() if placement_entry.availability_zone else None,
         )
-        placement_map[key] = entry
+        placement_map[placement_key] = placement_entry
 
-    metrics_map: Dict[Tuple[str, str], HistoricalMetrics] = {}
-    for entry in historical_metrics:
-        key = ((entry.region or "").lower(), (entry.vm_size or "").lower())
-        metrics_map[key] = entry
+    metrics_map: dict[tuple[str, str], HistoricalMetrics] = {}
+    for historical_entry in historical_metrics:
+        metrics_key = ((historical_entry.region or "").lower(), (historical_entry.vm_size or "").lower())
+        metrics_map[metrics_key] = historical_entry
 
-    keys = set(metrics_map.keys())
-    keys.update((k[0], k[1]) for k in placement_map.keys())
+    keys: set[tuple[str, str]] = set(metrics_map)
+    keys.update((k[0], k[1]) for k in placement_map)
 
-    combined: List[CandidateInsight] = []
+    combined: list[CandidateInsight] = []
     for region_key, sku_key in sorted(keys):
         matching_placement_entries = [
-            value
-            for key, value in placement_map.items()
-            if key[0] == region_key and key[1] == sku_key
+            value for key, value in placement_map.items() if key[0] == region_key and key[1] == sku_key
         ]
         if not matching_placement_entries:
             # Create a synthetic placement entry so knowledge of historical data still surfaces.
@@ -62,27 +60,27 @@ def merge_datasets(
             ]
 
         metrics = metrics_map.get((region_key, sku_key))
-        for entry in matching_placement_entries:
-            vm_size = entry.vm_size or metrics.vm_size if metrics else sku_key
+        for placement_entry in matching_placement_entries:
+            vm_size = placement_entry.vm_size or metrics.vm_size if metrics else sku_key
             combined.append(
                 CandidateInsight(
-                    region=entry.region or metrics.region if metrics else region_key,
+                    region=placement_entry.region or metrics.region if metrics else region_key,
                     vm_size=vm_size,
-                    placement_score=entry.placement_score,
-                    quota_available=entry.quota_available,
+                    placement_score=placement_entry.placement_score,
+                    quota_available=placement_entry.quota_available,
                     price_usd=metrics.price_usd if metrics else None,
                     price_last_updated=metrics.price_last_updated if metrics else None,
                     eviction_rate=metrics.eviction_rate if metrics else None,
                     eviction_last_updated=metrics.eviction_last_updated if metrics else None,
-                    availability_zone=entry.availability_zone,
-                    notes=entry.error_detail,
+                    availability_zone=placement_entry.availability_zone,
+                    notes=placement_entry.error_detail,
                     cpu_arch=detect_cpu_architecture(vm_size) if vm_size else None,
                 )
             )
     return combined
 
 
-def rank_candidates(candidates: List[CandidateInsight]) -> List[CandidateInsight]:
+def rank_candidates(candidates: list[CandidateInsight]) -> list[CandidateInsight]:
     def sort_key(item: CandidateInsight) -> tuple:
         score_rank = PLACEMENT_ORDER.get(
             (item.placement_score or "").lower(),
@@ -105,9 +103,9 @@ def rank_candidates(candidates: List[CandidateInsight]) -> List[CandidateInsight
 
 
 def enrich_with_performance(
-    candidates: List[CandidateInsight],
-    baseline_sku: Optional[str] = None,
-) -> List[CandidateInsight]:
+    candidates: list[CandidateInsight],
+    baseline_sku: str | None = None,
+) -> list[CandidateInsight]:
     """Calculate performance metrics relative to baseline SKU.
 
     Args:
@@ -143,8 +141,8 @@ def enrich_with_performance(
 
 
 def enrich_with_coremark(
-    candidates: List[CandidateInsight],
-) -> List[CandidateInsight]:
+    candidates: list[CandidateInsight],
+) -> list[CandidateInsight]:
     """Enrich candidates with CoreMark benchmark data.
 
     Adds CoreMark absolute score and per-vCPU efficiency metric from VM specifications.
@@ -165,9 +163,9 @@ def enrich_with_coremark(
 
 
 def summarize_top_candidates(
-    candidates: List[CandidateInsight],
+    candidates: list[CandidateInsight],
     limit: int = 3,
-) -> List[str]:
+) -> list[str]:
     summary = []
     for item in candidates[:limit]:
         parts = [
@@ -188,12 +186,12 @@ def summarize_top_candidates(
 
 
 def filter_by_requirements(
-    candidates: List[CandidateInsight],
-    min_vcpu: Optional[int] = None,
-    min_ram: Optional[int] = None,
-    cpu_arch: Optional[str] = None,
+    candidates: list[CandidateInsight],
+    min_vcpu: int | None = None,
+    min_ram: int | None = None,
+    cpu_arch: CPUArchitecture | None = None,
     no_max_limit: bool = False,
-) -> List[CandidateInsight]:
+) -> list[CandidateInsight]:
     """Filter candidates by hardware requirements (vCPU, RAM, CPU architecture).
 
     Removes candidates that don't meet minimum vCPU or RAM requirements,
@@ -229,19 +227,15 @@ def filter_by_requirements(
             if not candidate_arch and candidate.vm_size:
                 candidate_arch = detect_cpu_architecture(candidate.vm_size)
             if not candidate_arch:
-                logger.warning(
-                    f"Cannot determine architecture for {candidate.vm_size}, excluding from results"
-                )
+                logger.warning(f"Cannot determine architecture for {candidate.vm_size}, excluding from results")
                 filtered_count += 1
                 continue
-            candidate_arch = candidate_arch.lower()
+            normalized_candidate_arch = candidate_arch.lower()
             # Normalize: "intel", "amd" -> "x64"; "arm" stays "arm"
-            if candidate_arch in ("intel", "amd"):
-                candidate_arch = "x64"
-            if candidate_arch != cpu_arch.lower():
-                logger.debug(
-                    f"Filtered {candidate.vm_size}: arch {candidate_arch} != {cpu_arch}"
-                )
+            if normalized_candidate_arch in ("intel", "amd"):
+                normalized_candidate_arch = "x64"
+            if normalized_candidate_arch != cpu_arch.lower():
+                logger.debug(f"Filtered {candidate.vm_size}: arch {normalized_candidate_arch} != {cpu_arch}")
                 filtered_count += 1
                 continue
 
@@ -270,9 +264,7 @@ def filter_by_requirements(
             dimension="vcpu",
             no_max_limit=no_max_limit,
         ):
-            logger.debug(
-                f"Filtered {candidate.vm_size}: {spec.vcpus} vCPU does not match requested window"
-            )
+            logger.debug(f"Filtered {candidate.vm_size}: {spec.vcpus} vCPU does not match requested window")
             filtered_count += 1
             continue
 
@@ -283,9 +275,7 @@ def filter_by_requirements(
             dimension="ram",
             no_max_limit=no_max_limit,
         ):
-            logger.debug(
-                f"Filtered {candidate.vm_size}: {spec.ram_gb} GB RAM does not match requested window"
-            )
+            logger.debug(f"Filtered {candidate.vm_size}: {spec.ram_gb} GB RAM does not match requested window")
             filtered_count += 1
             continue
 
@@ -300,19 +290,18 @@ def filter_by_requirements(
         if cpu_arch is not None:
             parts.append(f"arch={cpu_arch}")
         logger.info(
-            f"Filtered out {filtered_count} candidate(s) not meeting "
-            f"hardware requirements ({', '.join(parts)})"
+            f"Filtered out {filtered_count} candidate(s) not meeting hardware requirements ({', '.join(parts)})"
         )
 
     return filtered
 
 
 def filter_by_cost(
-    candidates: List[CandidateInsight],
-    max_price: Optional[float] = None,
-    max_eviction: Optional[float] = None,
-    min_performance: Optional[float] = None,
-) -> List[CandidateInsight]:
+    candidates: list[CandidateInsight],
+    max_price: float | None = None,
+    max_eviction: float | None = None,
+    min_performance: float | None = None,
+) -> list[CandidateInsight]:
     """Filter candidates by cost and performance constraints.
 
     Removes candidates that exceed maximum price, eviction rate, or don't
@@ -353,7 +342,11 @@ def filter_by_cost(
             continue
 
         # Check performance constraint
-        if min_performance is not None and candidate.performance_relative is not None and candidate.performance_relative < min_performance:
+        if (
+            min_performance is not None
+            and candidate.performance_relative is not None
+            and candidate.performance_relative < min_performance
+        ):
             logger.debug(
                 f"Filtered {candidate.vm_size} in {candidate.region}: "
                 f"performance {candidate.performance_relative:.0f}% < {min_performance}% min"
@@ -371,9 +364,6 @@ def filter_by_cost(
             parts.append(f"eviction<={max_eviction}%")
         if min_performance is not None:
             parts.append(f"performance>={min_performance}%")
-        logger.info(
-            f"Filtered out {filtered_count} candidate(s) not meeting cost constraints "
-            f"({', '.join(parts)})"
-        )
+        logger.info(f"Filtered out {filtered_count} candidate(s) not meeting cost constraints ({', '.join(parts)})")
 
     return filtered

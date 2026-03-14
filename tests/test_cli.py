@@ -5,26 +5,27 @@ from __future__ import annotations
 import json
 import logging
 from types import SimpleNamespace
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from spotvm.cli import build_parser, main, _run_single_analysis
+import pytest
+
+from spotvm.cli import _run_single_analysis, build_parser, main
 from spotvm.config import ToolConfig
 
 
 def _analysis_args(**overrides):
-    defaults = dict(
-        no_color=True,
-        min_vcpu=None,
-        min_ram=None,
-        no_max_limit=False,
-        explicit_sizes=False,
-        max_price=None,
-        max_eviction=None,
-        min_performance=None,
-        csv=None,
-        results_dir=None,
-    )
+    defaults = {
+        "no_color": True,
+        "min_vcpu": None,
+        "min_ram": None,
+        "no_max_limit": False,
+        "explicit_sizes": False,
+        "max_price": None,
+        "max_eviction": None,
+        "min_performance": None,
+        "csv": None,
+        "results_dir": None,
+    }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
 
@@ -49,36 +50,54 @@ class TestBuildParser:
 
     def test_placement_check_without_subscription_errors(self):
         with pytest.raises(SystemExit):
-            main([
-                "--regions", "centralus",
-                "--sizes", "Standard_D4s_v5",
-                "--placement-check",
-            ])
+            main(
+                [
+                    "--regions",
+                    "centralus",
+                    "--sizes",
+                    "Standard_D4s_v5",
+                    "--placement-check",
+                ]
+            )
 
     def test_availability_zones_without_placement_errors(self):
         with pytest.raises(SystemExit):
-            main([
-                "--regions", "centralus",
-                "--sizes", "Standard_D4s_v5",
-                "--availability-zones",
-            ])
+            main(
+                [
+                    "--regions",
+                    "centralus",
+                    "--sizes",
+                    "Standard_D4s_v5",
+                    "--availability-zones",
+                ]
+            )
 
     @pytest.mark.parametrize("desired_count", [1, 5])
     def test_desired_count_without_placement_errors(self, desired_count):
         with pytest.raises(SystemExit):
-            main([
-                "--regions", "centralus",
-                "--sizes", "Standard_D4s_v5",
-                "--desired-count", str(desired_count),
-            ])
+            main(
+                [
+                    "--regions",
+                    "centralus",
+                    "--sizes",
+                    "Standard_D4s_v5",
+                    "--desired-count",
+                    str(desired_count),
+                ]
+            )
 
     def test_min_performance_without_baseline_errors(self):
         with pytest.raises(SystemExit):
-            main([
-                "--regions", "centralus",
-                "--sizes", "Standard_D4s_v5",
-                "--min-performance", "80",
-            ])
+            main(
+                [
+                    "--regions",
+                    "centralus",
+                    "--sizes",
+                    "Standard_D4s_v5",
+                    "--min-performance",
+                    "80",
+                ]
+            )
 
     @pytest.mark.parametrize(
         ("config_payload", "error_text"),
@@ -128,10 +147,13 @@ class TestBuildParser:
         config_path = tmp_path / "spotvm.json"
         config_path.write_text(json.dumps(config.to_dict()), encoding="utf-8")
 
-        rc = main([
-            "--config", str(config_path),
-            "--no-color",
-        ])
+        rc = main(
+            [
+                "--config",
+                str(config_path),
+                "--no-color",
+            ]
+        )
 
         assert rc == 0
         called_config = mock_run_single_analysis.call_args.kwargs["config"]
@@ -140,21 +162,33 @@ class TestBuildParser:
 
     def test_parser_accepts_all_documented_args(self):
         parser = build_parser()
-        args = parser.parse_args([
-            "--regions", "centralus",
-            "--sizes", "Standard_D4s_v5",
-            "--os-type", "linux",
-            "--no-color",
-            "--baseline-sku", "Standard_D4as_v6",
-            "--min-vcpu", "4",
-            "--min-ram", "8",
-            "--no-max-limit",
-            "--cpu-arch", "x64",
-            "--max-price", "0.10",
-            "--max-eviction", "10",
-            "--limit", "5",
-            "--verbose",
-        ])
+        args = parser.parse_args(
+            [
+                "--regions",
+                "centralus",
+                "--sizes",
+                "Standard_D4s_v5",
+                "--os-type",
+                "linux",
+                "--no-color",
+                "--baseline-sku",
+                "Standard_D4as_v6",
+                "--min-vcpu",
+                "4",
+                "--min-ram",
+                "8",
+                "--no-max-limit",
+                "--cpu-arch",
+                "x64",
+                "--max-price",
+                "0.10",
+                "--max-eviction",
+                "10",
+                "--limit",
+                "5",
+                "--verbose",
+            ]
+        )
         assert args.regions == ["centralus"]
         assert args.sizes == ["Standard_D4s_v5"]
         assert args.cpu_arch == "x64"
@@ -183,12 +217,14 @@ class TestToolConfigValidation:
 
     def test_no_subscription_without_placement_succeeds(self):
         from spotvm.config import ToolConfig
+
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
         assert config.subscription_id == ""
         assert config.enable_placement is False
 
     def test_pricing_only_config_omits_placement_fields(self):
         from spotvm.config import ToolConfig
+
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
         payload = config.to_dict()
         assert "desired_count" not in payload
@@ -196,34 +232,42 @@ class TestToolConfigValidation:
 
     def test_placement_without_subscription_fails(self):
         from spotvm.config import ToolConfig
+
         with pytest.raises(ValueError, match="subscription_id is required"):
             ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], enable_placement=True)
 
     def test_non_default_desired_count_without_placement_fails(self):
         from spotvm.config import ToolConfig
+
         with pytest.raises(ValueError, match="desired_count requires enable_placement"):
             ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], desired_count=2)
 
     def test_availability_zones_without_placement_fails(self):
         from spotvm.config import ToolConfig
+
         with pytest.raises(ValueError, match="availability_zones requires enable_placement"):
             ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], availability_zones=True)
 
     def test_placement_with_subscription_succeeds(self):
         from spotvm.config import ToolConfig
+
         config = ToolConfig(
-            regions=["centralus"], sizes=["Standard_D4s_v5"],
-            enable_placement=True, subscription_id="abc-123",
+            regions=["centralus"],
+            sizes=["Standard_D4s_v5"],
+            enable_placement=True,
+            subscription_id="abc-123",
         )
         assert config.enable_placement is True
 
     def test_invalid_cpu_arch_fails(self):
         from spotvm.config import ToolConfig
+
         with pytest.raises(ValueError, match="cpu_arch"):
             ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], cpu_arch="mips")
 
     def test_valid_cpu_arch_normalizes(self):
         from spotvm.config import ToolConfig
+
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], cpu_arch="X64")
         assert config.cpu_arch == "x64"
 
@@ -234,15 +278,17 @@ class TestMainWithMocks:
     @patch("spotvm.cli.AzureAuthenticator")
     @patch("spotvm.cli.AzureRestClient")
     @patch("spotvm.cli.fetch_historical_metrics")
-    def test_basic_run_returns_zero(
-        self, mock_fetch_hist, mock_client_cls, mock_auth_cls, capsys
-    ):
+    def test_basic_run_returns_zero(self, mock_fetch_hist, mock_client_cls, mock_auth_cls, capsys):
         mock_fetch_hist.return_value = []
-        rc = main([
-            "--regions", "centralus",
-            "--sizes", "Standard_D4s_v5",
-            "--no-color",
-        ])
+        rc = main(
+            [
+                "--regions",
+                "centralus",
+                "--sizes",
+                "Standard_D4s_v5",
+                "--no-color",
+            ]
+        )
         assert rc == 0
         mock_fetch_hist.assert_called_once()
 
@@ -254,11 +300,15 @@ class TestMainWithMocks:
         self, mock_fetch_hist, mock_fetch_placement, mock_client_cls, mock_auth_cls, capsys
     ):
         mock_fetch_hist.return_value = []
-        rc = main([
-            "--regions", "centralus",
-            "--sizes", "Standard_D4s_v5",
-            "--no-color",
-        ])
+        rc = main(
+            [
+                "--regions",
+                "centralus",
+                "--sizes",
+                "Standard_D4s_v5",
+                "--no-color",
+            ]
+        )
         assert rc == 0
         mock_fetch_hist.assert_called_once()
         mock_fetch_placement.assert_not_called()
@@ -266,15 +316,17 @@ class TestMainWithMocks:
     @patch("spotvm.cli.AzureAuthenticator")
     @patch("spotvm.cli.AzureRestClient")
     @patch("spotvm.cli.fetch_historical_metrics")
-    def test_no_color_flag_works(
-        self, mock_fetch_hist, mock_client_cls, mock_auth_cls, capsys
-    ):
+    def test_no_color_flag_works(self, mock_fetch_hist, mock_client_cls, mock_auth_cls, capsys):
         mock_fetch_hist.return_value = []
-        rc = main([
-            "--regions", "centralus",
-            "--sizes", "Standard_D4s_v5",
-            "--no-color",
-        ])
+        rc = main(
+            [
+                "--regions",
+                "centralus",
+                "--sizes",
+                "Standard_D4s_v5",
+                "--no-color",
+            ]
+        )
         assert rc == 0
         captured = capsys.readouterr()
         # No ANSI escape codes in output
@@ -289,13 +341,18 @@ class TestMainWithMocks:
     ):
         mock_fetch_hist.return_value = []
         mock_fetch_placement.return_value = []
-        rc = main([
-            "--subscription-id", "00000000-0000-0000-0000-000000000000",
-            "--regions", "centralus",
-            "--sizes", "Standard_D4s_v5",
-            "--placement-check",
-            "--no-color",
-        ])
+        rc = main(
+            [
+                "--subscription-id",
+                "00000000-0000-0000-0000-000000000000",
+                "--regions",
+                "centralus",
+                "--sizes",
+                "Standard_D4s_v5",
+                "--placement-check",
+                "--no-color",
+            ]
+        )
         assert rc == 0
         mock_fetch_placement.assert_called_once()
 
@@ -439,10 +496,13 @@ class TestMainWithMocks:
         )
         mock_discover_skus.return_value = ["Standard_D2ps_v5"]
 
-        rc = main([
-            "--config", str(config_path),
-            "--no-color",
-        ])
+        rc = main(
+            [
+                "--config",
+                str(config_path),
+                "--no-color",
+            ]
+        )
 
         assert rc == 0
         mock_discover_skus.assert_not_called()
@@ -457,13 +517,19 @@ class TestMainWithMocks:
         self,
         mock_run_single_analysis,
     ):
-        rc = main([
-            "--regions", "centralus",
-            "--sizes", "Standard_D64s_v5",
-            "--min-vcpu", "4",
-            "--min-ram", "16",
-            "--no-color",
-        ])
+        rc = main(
+            [
+                "--regions",
+                "centralus",
+                "--sizes",
+                "Standard_D64s_v5",
+                "--min-vcpu",
+                "4",
+                "--min-ram",
+                "16",
+                "--no-color",
+            ]
+        )
 
         assert rc == 0
         args = mock_run_single_analysis.call_args.kwargs["args"]
@@ -489,10 +555,13 @@ class TestMainWithMocks:
         )
         mock_discover_skus.return_value = ["Standard_D2ps_v5"]
 
-        rc = main([
-            "--config", str(config_path),
-            "--no-color",
-        ])
+        rc = main(
+            [
+                "--config",
+                str(config_path),
+                "--no-color",
+            ]
+        )
 
         assert rc == 0
         mock_discover_skus.assert_called_once_with(
@@ -524,10 +593,13 @@ class TestMainWithMocks:
         )
         mock_discover_skus.return_value = ["Standard_D2ps_v5"]
 
-        rc = main([
-            "--config", str(config_path),
-            "--no-color",
-        ])
+        rc = main(
+            [
+                "--config",
+                str(config_path),
+                "--no-color",
+            ]
+        )
 
         assert rc == 0
         mock_discover_skus.assert_called_once_with(
@@ -547,12 +619,16 @@ class TestMainWithMocks:
     ):
         mock_discover_skus.return_value = ["Standard_D4as_v5"]
 
-        rc = main([
-            "--regions", "centralus",
-            "--min-vcpu", "4",
-            "--no-max-limit",
-            "--no-color",
-        ])
+        rc = main(
+            [
+                "--regions",
+                "centralus",
+                "--min-vcpu",
+                "4",
+                "--no-max-limit",
+                "--no-color",
+            ]
+        )
 
         assert rc == 0
         mock_discover_skus.assert_called_once_with(
@@ -577,12 +653,17 @@ class TestMainWithMocks:
         capsys,
     ):
         with caplog.at_level(logging.ERROR, logger="spotvm"):
-            rc = main([
-                "--regions", "centralus",
-                "--sizes", "Standard_D4s_v5",
-                "--run-unattended", "1",
-                "--no-color",
-            ])
+            rc = main(
+                [
+                    "--regions",
+                    "centralus",
+                    "--sizes",
+                    "Standard_D4s_v5",
+                    "--run-unattended",
+                    "1",
+                    "--no-color",
+                ]
+            )
 
         assert rc == 1
         assert mock_run_single_analysis.call_count == 1

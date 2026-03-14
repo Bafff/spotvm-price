@@ -1,15 +1,14 @@
 import csv
 from datetime import datetime
-from pathlib import Path
 
-from spotvm.models import CandidateInsight
 from spotvm import reporting
+from spotvm.models import CandidateInsight
 from spotvm.reporting import (
-    render_table,
-    export_to_csv,
     _colorize_eviction,
     _colorize_placement,
     _strip_ansi,
+    export_to_csv,
+    render_table,
     set_colors_enabled,
 )
 
@@ -158,23 +157,23 @@ def test_colorize_eviction_rates():
     bright_red_result = _colorize_eviction(30.0)  # >=25% should be bright red
 
     # Verify colors are applied (contains ANSI codes)
-    assert '\x1b[' in blue_result  # Contains ANSI escape codes
-    assert '\x1b[' in green_result
-    assert '\x1b[' in yellow_result
-    assert '\x1b[' in red_result
-    assert '\x1b[' in bright_red_result
+    assert "\x1b[" in blue_result  # Contains ANSI escape codes
+    assert "\x1b[" in green_result
+    assert "\x1b[" in yellow_result
+    assert "\x1b[" in red_result
+    assert "\x1b[" in bright_red_result
 
     # Verify percentage formatting is preserved
-    assert '3.0%' in blue_result
-    assert '7.0%' in green_result
-    assert '12.0%' in yellow_result
-    assert '20.0%' in red_result
-    assert '30.0%' in bright_red_result
+    assert "3.0%" in blue_result
+    assert "7.0%" in green_result
+    assert "12.0%" in yellow_result
+    assert "20.0%" in red_result
+    assert "30.0%" in bright_red_result
 
     # Test with colors disabled
     set_colors_enabled(False)
     no_color_result = _colorize_eviction(12.0)
-    assert '\x1b[' not in no_color_result  # No ANSI codes
+    assert "\x1b[" not in no_color_result  # No ANSI codes
     assert no_color_result == "12.0%"
 
     # Re-enable for other tests
@@ -190,14 +189,14 @@ def test_colorize_placement_scores():
     low_result = _colorize_placement("Low")
 
     # Verify colors are applied
-    assert '\x1b[' in high_result  # Green
-    assert '\x1b[' in medium_result  # Yellow
-    assert '\x1b[' in low_result  # Red
+    assert "\x1b[" in high_result  # Green
+    assert "\x1b[" in medium_result  # Yellow
+    assert "\x1b[" in low_result  # Red
 
     # Verify text is preserved
-    assert 'High' in high_result
-    assert 'Medium' in medium_result
-    assert 'Low' in low_result
+    assert "High" in high_result
+    assert "Medium" in medium_result
+    assert "Low" in low_result
 
 
 def test_strip_ansi():
@@ -207,21 +206,21 @@ def test_strip_ansi():
     stripped = _strip_ansi(colored)
 
     assert stripped == "Red Text"
-    assert '\x1b[' not in stripped
+    assert "\x1b[" not in stripped
 
 
 def _candidate(**kwargs):
     """Create a CandidateInsight with sensible defaults for required fields."""
-    defaults = dict(
-        region="eastus",
-        vm_size="Standard_D2s_v4",
-        placement_score=None,
-        quota_available=None,
-        price_usd=None,
-        price_last_updated=None,
-        eviction_rate=None,
-        eviction_last_updated=None,
-    )
+    defaults = {
+        "region": "eastus",
+        "vm_size": "Standard_D2s_v4",
+        "placement_score": None,
+        "quota_available": None,
+        "price_usd": None,
+        "price_last_updated": None,
+        "eviction_rate": None,
+        "eviction_last_updated": None,
+    }
     defaults.update(kwargs)
     return CandidateInsight(**defaults)
 
@@ -230,8 +229,9 @@ def test_render_table_hides_placement_columns():
     """Placement and Quota columns are omitted when show_placement=False."""
     set_colors_enabled(False)
     candidates = [
-        _candidate(placement_score="High", quota_available=True, price_usd=0.05,
-                   eviction_rate=3.0, recommendation_rank=1),
+        _candidate(
+            placement_score="High", quota_available=True, price_usd=0.05, eviction_rate=3.0, recommendation_rank=1
+        ),
     ]
     table = render_table(candidates, show_placement=False)
     assert "Placement" not in table
@@ -244,8 +244,13 @@ def test_render_table_hides_baseline_columns():
     """Perf % and Price/Perf columns are omitted when show_baseline=False."""
     set_colors_enabled(False)
     candidates = [
-        _candidate(price_usd=0.05, eviction_rate=3.0, recommendation_rank=1,
-                   performance_relative=120.0, price_per_performance=0.0004),
+        _candidate(
+            price_usd=0.05,
+            eviction_rate=3.0,
+            recommendation_rank=1,
+            performance_relative=120.0,
+            price_per_performance=0.0004,
+        ),
     ]
     table_without = render_table(candidates, show_baseline=False)
     assert "Perf %" not in table_without
@@ -259,8 +264,9 @@ def test_render_table_hides_baseline_columns():
 def test_export_to_csv_hides_placement_columns(tmp_path):
     """CSV omits Placement Score and Quota Available when show_placement=False."""
     candidates = [
-        _candidate(placement_score="High", quota_available=True, price_usd=0.05,
-                   eviction_rate=3.0, recommendation_rank=1),
+        _candidate(
+            placement_score="High", quota_available=True, price_usd=0.05, eviction_rate=3.0, recommendation_rank=1
+        ),
     ]
     csv_path = tmp_path / "no_placement.csv"
     export_to_csv(candidates, csv_path, show_placement=False)
@@ -279,8 +285,13 @@ def test_export_to_csv_hides_placement_columns(tmp_path):
 def test_export_to_csv_hides_baseline_columns(tmp_path):
     """CSV omits Performance and Price per Performance when show_baseline=False."""
     candidates = [
-        _candidate(price_usd=0.05, eviction_rate=3.0, recommendation_rank=1,
-                   performance_relative=100.0, price_per_performance=0.0005),
+        _candidate(
+            price_usd=0.05,
+            eviction_rate=3.0,
+            recommendation_rank=1,
+            performance_relative=100.0,
+            price_per_performance=0.0005,
+        ),
     ]
     csv_path = tmp_path / "no_baseline.csv"
     export_to_csv(candidates, csv_path, show_baseline=False)
@@ -297,8 +308,9 @@ def test_render_table_auto_hides_empty_columns():
     set_colors_enabled(False)
     candidates = [
         _candidate(price_usd=0.05, eviction_rate=3.0, recommendation_rank=1),
-        _candidate(region="westus", vm_size="Standard_D4s_v4",
-                   price_usd=0.08, eviction_rate=5.0, recommendation_rank=2),
+        _candidate(
+            region="westus", vm_size="Standard_D4s_v4", price_usd=0.08, eviction_rate=5.0, recommendation_rank=2
+        ),
     ]
     table = render_table(candidates, show_placement=False, show_baseline=False)
     # Zone should be auto-hidden (all empty)
@@ -312,10 +324,10 @@ def test_render_table_keeps_column_with_one_value():
     """A column with at least one non-empty value is kept."""
     set_colors_enabled(False)
     candidates = [
-        _candidate(price_usd=0.05, eviction_rate=3.0, recommendation_rank=1,
-                   availability_zone="1"),
-        _candidate(region="westus", vm_size="Standard_D4s_v4",
-                   price_usd=0.08, eviction_rate=5.0, recommendation_rank=2),
+        _candidate(price_usd=0.05, eviction_rate=3.0, recommendation_rank=1, availability_zone="1"),
+        _candidate(
+            region="westus", vm_size="Standard_D4s_v4", price_usd=0.08, eviction_rate=5.0, recommendation_rank=2
+        ),
     ]
     table = render_table(candidates, show_placement=False, show_baseline=False)
     assert "Zone" in table

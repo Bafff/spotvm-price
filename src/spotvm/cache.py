@@ -5,8 +5,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Optional
-
+from typing import Any
 
 CACHE_DIR = Path.home() / ".cache" / "spotvm"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -17,7 +16,7 @@ def _key_digest(key: str) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
-def load(key: str, ttl_minutes: int) -> Optional[Any]:
+def load(key: str, ttl_minutes: int) -> Any | None:
     digest = _key_digest(key)
     path = CACHE_DIR / f"{digest}.json"
     if not path.exists():
@@ -68,4 +67,7 @@ def store(key: str, data: Any, ttl_minutes: int) -> None:
 
 def clear() -> None:
     for file in CACHE_DIR.glob("*.json"):
-        file.unlink(missing_ok=True)
+        try:
+            file.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("Failed to remove cache file %s: %s", file, exc)
