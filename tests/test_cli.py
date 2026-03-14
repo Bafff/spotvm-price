@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from spotvm import reporting
 from spotvm.cli import AnalysisRunRequest, _run_single_analysis, build_parser, main
 from spotvm.config import ToolConfig
+from spotvm.models import HistoricalMetrics
 from spotvm.placement_score import PlacementScoreRequest
 from spotvm.resource_graph import ResourceGraphRequest
 
@@ -33,6 +34,43 @@ def _analysis_args(**overrides):
     }
     defaults.update(overrides)
     return AnalysisRunRequest(**defaults)
+
+
+def _historical_metric(
+    vm_size: str,
+    *,
+    region: str = "centralus",
+    price_usd: float = 0.08,
+    eviction_rate: float = 5.0,
+) -> HistoricalMetrics:
+    timestamp = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    return HistoricalMetrics(
+        region=region,
+        vm_size=vm_size,
+        price_usd=price_usd,
+        price_last_updated=timestamp,
+        eviction_rate=eviction_rate,
+        eviction_last_updated=timestamp,
+    )
+
+
+def _stub_analysis_fetches(monkeypatch, *, historical_metrics, placement_scores=None):
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr("spotvm.cli.AzureAuthenticator", lambda: object())
+    monkeypatch.setattr("spotvm.cli.AzureRestClient", lambda authenticator: object())
+
+    def fake_fetch_historical_metrics(client, request):
+        seen["historical_request"] = request
+        return list(historical_metrics)
+
+    def fake_fetch_placement_scores(client, request):
+        seen["placement_request"] = request
+        return list(placement_scores or [])
+
+    monkeypatch.setattr("spotvm.cli.fetch_historical_metrics", fake_fetch_historical_metrics)
+    monkeypatch.setattr("spotvm.cli.fetch_placement_scores", fake_fetch_placement_scores)
+    return seen
 
 
 class TestBuildParser:
@@ -369,130 +407,47 @@ class TestMainWithMocks:
         assert placement_request.desired_count == 5
         assert placement_request.availability_zones is True
 
-    @patch("spotvm.cli.AzureAuthenticator")
-    @patch("spotvm.cli.AzureRestClient")
-    @patch("spotvm.cli.fetch_historical_metrics")
-    @patch("spotvm.cli.filter_by_cost")
-    @patch("spotvm.cli.enrich_with_coremark")
-    @patch("spotvm.cli.enrich_with_performance")
-    @patch("spotvm.cli.rank_candidates")
-    @patch("spotvm.cli.filter_by_requirements")
-    @patch("spotvm.cli.merge_datasets")
-    @patch("spotvm.cli.summarize_top_candidates")
-    @patch("spotvm.cli.render_table")
-    def test_successful_run_prints_ranked_table(
-        self,
-        mock_render_table,
-        mock_summarize,
-        mock_merge,
-        mock_filter_requirements,
-        mock_rank,
-        mock_enrich_performance,
-        mock_enrich_coremark,
-        mock_filter_cost,
-        mock_fetch_hist,
-        mock_client_cls,
-        mock_auth_cls,
-        capsys,
-    ):
-        candidate = object()
-        mock_fetch_hist.return_value = []
-        mock_merge.return_value = [candidate]
-        mock_filter_requirements.return_value = [candidate]
-        mock_rank.return_value = [candidate]
-        mock_enrich_performance.return_value = [candidate]
-        mock_enrich_coremark.return_value = [candidate]
-        mock_filter_cost.return_value = [candidate]
-        mock_summarize.return_value = []
-        mock_render_table.return_value = "RANKED TABLE"
-
-        args = _analysis_args()
-        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
-
-        _run_single_analysis(
-            request=args,
-            config=config,
-            logger=MagicMock(),
-        )
-
-        captured = capsys.readouterr()
-        assert "RANKED TABLE" in captured.out
-        mock_filter_requirements.assert_called_once_with(
-            [candidate],
-            min_vcpu=None,
-            min_ram=None,
-            cpu_arch=None,
-            no_max_limit=False,
-        )
-        mock_render_table.assert_called_once_with(
-            [candidate],
-            show_placement=False,
-            show_baseline=False,
-            render_options=reporting.RenderOptions(colors_enabled=False),
-        )
-
-    @patch("spotvm.cli.AzureAuthenticator")
-    @patch("spotvm.cli.AzureRestClient")
-    @patch("spotvm.cli.fetch_historical_metrics")
-    @patch("spotvm.cli.filter_by_cost")
-    @patch("spotvm.cli.enrich_with_coremark")
-    @patch("spotvm.cli.enrich_with_performance")
-    @patch("spotvm.cli.rank_candidates")
-    @patch("spotvm.cli.filter_by_requirements")
-    @patch("spotvm.cli.merge_datasets")
-    @patch("spotvm.cli.summarize_top_candidates")
-    @patch("spotvm.cli.render_table")
-    def test_explicit_sizes_bypass_bounded_hardware_window(
-        self,
-        mock_render_table,
-        mock_summarize,
-        mock_merge,
-        mock_filter_requirements,
-        mock_rank,
-        mock_enrich_performance,
-        mock_enrich_coremark,
-        mock_filter_cost,
-        mock_fetch_hist,
-        mock_client_cls,
-        mock_auth_cls,
-        capsys,
-    ):
-        candidate = object()
-        mock_fetch_hist.return_value = []
-        mock_merge.return_value = [candidate]
-        mock_filter_requirements.return_value = [candidate]
-        mock_rank.return_value = [candidate]
-        mock_enrich_performance.return_value = [candidate]
-        mock_enrich_coremark.return_value = [candidate]
-        mock_filter_cost.return_value = [candidate]
-        mock_summarize.return_value = []
-        mock_render_table.return_value = "RANKED TABLE"
-
-        args = _analysis_args(min_vcpu=4, min_ram=16, explicit_sizes=True)
-        config = ToolConfig(
-            regions=["centralus"],
-            sizes=["Standard_D64s_v5"],
-            os_type="windows",
-            cache_ttl_minutes=30,
-            retry_attempts=6,
-            retry_backoff_seconds=3.5,
+    def test_successful_run_prints_ranked_table(self, monkeypatch, capsys):
+        _stub_analysis_fetches(
+            monkeypatch,
+            historical_metrics=[_historical_metric("Standard_D4s_v5")],
         )
 
         _run_single_analysis(
-            request=args,
-            config=config,
-            logger=MagicMock(),
+            request=_analysis_args(),
+            config=ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"]),
+            logger=logging.getLogger("test-cli"),
         )
 
         captured = capsys.readouterr()
-        assert "RANKED TABLE" in captured.out
-        mock_filter_requirements.assert_called_once_with(
-            [candidate],
-            min_vcpu=4,
-            min_ram=16,
-            cpu_arch=None,
-            no_max_limit=True,
+        assert "Standard_D4s_v5" in captured.out
+        assert "centralus" in captured.out
+        assert "Placement" not in captured.out
+
+    def test_explicit_sizes_bypass_bounded_hardware_window(self, monkeypatch, capsys):
+        _stub_analysis_fetches(
+            monkeypatch,
+            historical_metrics=[_historical_metric("Standard_D64s_v5", price_usd=0.80)],
         )
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D64s_v5"])
+
+        _run_single_analysis(
+            request=_analysis_args(min_vcpu=4, min_ram=16),
+            config=config,
+            logger=logging.getLogger("test-cli"),
+        )
+
+        bounded = capsys.readouterr()
+        assert "No candidates match the specified filters" in bounded.out
+
+        _run_single_analysis(
+            request=_analysis_args(min_vcpu=4, min_ram=16, explicit_sizes=True),
+            config=config,
+            logger=logging.getLogger("test-cli"),
+        )
+
+        explicit = capsys.readouterr()
+        assert "Standard_D64s_v5" in explicit.out
 
     @patch("spotvm.cli._run_single_analysis")
     @patch("spotvm.cli.discover_skus")
@@ -605,91 +560,53 @@ class TestMainWithMocks:
         assert request.results_dir == results_dir
         assert request.save_results is True
 
-    @patch("spotvm.cli.AzureAuthenticator")
-    @patch("spotvm.cli.AzureRestClient")
-    @patch("spotvm.cli.fetch_historical_metrics")
-    @patch("spotvm.cli.filter_by_cost")
-    @patch("spotvm.cli.enrich_with_coremark")
-    @patch("spotvm.cli.enrich_with_performance")
-    @patch("spotvm.cli.rank_candidates")
-    @patch("spotvm.cli.filter_by_requirements")
-    @patch("spotvm.cli.merge_datasets")
-    @patch("spotvm.cli.summarize_top_candidates")
-    @patch("spotvm.cli.render_table")
-    def test_run_single_analysis_uses_analysis_run_request(
-        self,
-        mock_render_table,
-        mock_summarize,
-        mock_merge,
-        mock_filter_requirements,
-        mock_rank,
-        mock_enrich_performance,
-        mock_enrich_coremark,
-        mock_filter_cost,
-        mock_fetch_hist,
-        mock_client_cls,
-        mock_auth_cls,
-        capsys,
-        tmp_path,
-    ):
-        candidate = object()
-        mock_fetch_hist.return_value = []
-        mock_merge.return_value = [candidate]
-        mock_filter_requirements.return_value = [candidate]
-        mock_rank.return_value = [candidate]
-        mock_enrich_performance.return_value = [candidate]
-        mock_enrich_coremark.return_value = [candidate]
-        mock_filter_cost.return_value = [candidate]
-        mock_summarize.return_value = []
-        mock_render_table.return_value = "RANKED TABLE"
+    def test_run_single_analysis_uses_analysis_run_request(self, monkeypatch, capsys, tmp_path):
+        seen = _stub_analysis_fetches(
+            monkeypatch,
+            historical_metrics=[
+                _historical_metric("Standard_D4s_v5", price_usd=0.08, eviction_rate=5.0),
+                _historical_metric("Standard_D2s_v5", price_usd=0.04, eviction_rate=5.0),
+                _historical_metric("Standard_D8s_v5", price_usd=0.20, eviction_rate=5.0),
+                _historical_metric("Standard_D16s_v5", price_usd=0.09, eviction_rate=20.0),
+            ],
+        )
 
         request = _analysis_args(
-            min_vcpu=4,
-            min_ram=16,
-            explicit_sizes=True,
             max_price=0.10,
             max_eviction=10.0,
-            min_performance=80.0,
+            min_performance=90.0,
             results_dir=tmp_path / "results",
         )
         config = ToolConfig(
             regions=["centralus"],
-            sizes=["Standard_D64s_v5"],
+            sizes=["Standard_D4s_v5", "Standard_D2s_v5", "Standard_D8s_v5", "Standard_D16s_v5"],
             os_type="windows",
             cache_ttl_minutes=30,
             retry_attempts=6,
             retry_backoff_seconds=3.5,
+            baseline_sku="Standard_D4s_v5",
         )
 
         _run_single_analysis(
             request=request,
             config=config,
-            logger=MagicMock(),
+            logger=logging.getLogger("test-cli"),
         )
 
         captured = capsys.readouterr()
-        assert "RANKED TABLE" in captured.out
-        mock_filter_requirements.assert_called_once_with(
-            [candidate],
-            min_vcpu=4,
-            min_ram=16,
-            cpu_arch=None,
-            no_max_limit=True,
-        )
-        mock_filter_cost.assert_called_once_with(
-            [candidate],
-            max_price=0.10,
-            max_eviction=10.0,
-            min_performance=80.0,
-        )
-        hist_request = mock_fetch_hist.call_args.args[1]
+        assert "Standard_D4s_v5" in captured.out
+        assert "Standard_D2s_v5" not in captured.out
+        assert "Standard_D8s_v5" not in captured.out
+        assert "Standard_D16s_v5" not in captured.out
+        hist_request = seen["historical_request"]
         assert isinstance(hist_request, ResourceGraphRequest)
         assert hist_request.regions == ["centralus"]
-        assert hist_request.sizes == ["Standard_D64s_v5"]
+        assert hist_request.sizes == ["Standard_D4s_v5", "Standard_D2s_v5", "Standard_D8s_v5", "Standard_D16s_v5"]
         assert hist_request.os_type == "windows"
         assert hist_request.cache_ttl_minutes == 30
         assert hist_request.retry_attempts == 6
         assert hist_request.retry_backoff_seconds == 3.5
+        assert "placement_request" not in seen
 
     @patch("spotvm.cli._run_single_analysis")
     @patch("spotvm.cli.discover_skus")
