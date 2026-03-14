@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import re
 import sys
+import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
@@ -369,11 +370,31 @@ def export_to_csv(
         }
         rows.append([all_cells[c] for c in columns])
 
-    with csv_path.open("w", newline="", encoding="utf-8") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(columns)
-        for row in rows:
-            writer.writerow(row)
+    _write_csv_atomic(csv_path, columns, rows)
+
+
+def _write_csv_atomic(csv_path: Path, columns: list[str], rows: list[list[str]]) -> None:
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            newline="",
+            encoding="utf-8",
+            dir=csv_path.parent,
+            prefix=f".{csv_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as csvfile:
+            temp_path = Path(csvfile.name)
+            writer = csv.writer(csvfile)
+            writer.writerow(columns)
+            for row in rows:
+                writer.writerow(row)
+        temp_path.replace(csv_path)
+    except Exception:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        raise
 
 
 def _csv_format_quota(value: bool | None) -> str:

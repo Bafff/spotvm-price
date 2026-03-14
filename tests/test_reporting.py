@@ -1,6 +1,9 @@
 import csv
+import tempfile
 from datetime import datetime
+from pathlib import Path
 
+import pytest
 from spotvm import reporting
 from spotvm.models import CandidateInsight
 from spotvm.reporting import (
@@ -142,6 +145,106 @@ def test_export_to_csv(tmp_path):
     assert row2["Price (USD/hr)"] == ""  # None should be empty string
     assert row2["Eviction Rate (%)"] == ""  # None should be empty string
     assert row2["Notes"] == "Data not found"
+
+
+def test_export_to_csv_does_not_open_final_path_for_writing(tmp_path, monkeypatch):
+    candidates = [
+        _candidate(
+            placement_score="High",
+            quota_available=True,
+            price_usd=0.05,
+            eviction_rate=3.0,
+            recommendation_rank=1,
+        ),
+    ]
+    csv_path = tmp_path / "atomic_export.csv"
+
+    original_open = Path.open
+
+    def raising_open(self: Path, *args, **kwargs):
+        mode = kwargs.get("mode", args[0] if args else "r")
+        if self == csv_path and "w" in mode:
+            raise PermissionError("final path write disabled")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", raising_open)
+
+    export_to_csv(candidates, csv_path)
+
+    with csv_path.open("r", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+
+    assert rows[0]["Region"] == "eastus"
+    assert rows[0]["Placement Score"] == "High"
+
+
+def test_export_to_csv_preserves_existing_file_when_replace_fails(tmp_path, monkeypatch):
+    candidates = [
+        _candidate(
+            placement_score="High",
+            quota_available=True,
+            price_usd=0.05,
+            eviction_rate=3.0,
+            recommendation_rank=1,
+        ),
+    ]
+    csv_path = tmp_path / "atomic_export.csv"
+    csv_path.write_text("old,data\n1,2\n", encoding="utf-8")
+
+    original_replace = Path.replace
+
+    def raising_replace(self: Path, target: Path):
+        if target == csv_path:
+            raise PermissionError("replace blocked")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", raising_replace)
+
+    with pytest.raises(PermissionError, match="replace blocked"):
+        export_to_csv(candidates, csv_path)
+
+    assert csv_path.read_text(encoding="utf-8") == "old,data\n1,2\n"
+    assert list(tmp_path.glob(f".{csv_path.name}.*.tmp")) == []
+
+
+def test_export_to_csv_cleans_up_temp_file_when_temp_write_fails(tmp_path, monkeypatch):
+    candidates = [
+        _candidate(
+            placement_score="High",
+            quota_available=True,
+            price_usd=0.05,
+            eviction_rate=3.0,
+            recommendation_rank=1,
+        ),
+    ]
+    csv_path = tmp_path / "atomic_export.csv"
+    original_named_temporary_file = tempfile.NamedTemporaryFile
+
+    def failing_named_temporary_file(*args, **kwargs):
+        handle = original_named_temporary_file(*args, **kwargs)
+
+        class FailingHandle:
+            name = handle.name
+
+            def __enter__(self):
+                handle.__enter__()
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return handle.__exit__(exc_type, exc, tb)
+
+            def write(self, *args, **kwargs):
+                raise OSError("temp write failed")
+
+        return FailingHandle()
+
+    monkeypatch.setattr(reporting.tempfile, "NamedTemporaryFile", failing_named_temporary_file)
+
+    with pytest.raises(OSError, match="temp write failed"):
+        export_to_csv(candidates, csv_path)
+
+    assert not csv_path.exists()
+    assert list(tmp_path.glob(f".{csv_path.name}.*.tmp")) == []
 
 
 def test_colorize_eviction_rates():

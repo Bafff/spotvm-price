@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -60,7 +61,7 @@ def store(key: str, data: Any, ttl_minutes: int) -> None:
         "data": data,
     }
     try:
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _write_text_atomic(path, json.dumps(payload, indent=2))
     except OSError as exc:
         logger.warning("Failed to write cache file %s: %s", path, exc)
 
@@ -71,3 +72,23 @@ def clear() -> None:
             file.unlink(missing_ok=True)
         except OSError as exc:
             logger.warning("Failed to remove cache file %s: %s", file, exc)
+
+
+def _write_text_atomic(path: Path, payload: str) -> None:
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+            handle.write(payload)
+        temp_path.replace(path)
+    except Exception:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        raise
