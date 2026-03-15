@@ -23,6 +23,11 @@ Keep this batch narrow. Do not start the full architecture split.
 
 ## Review Workflow
 
+For every batch:
+
+- Run a local Claude review on the uncommitted diff before committing.
+- Fix valid findings, push back on invalid ones with evidence, and only then commit.
+
 Before implementation:
 
 - Run a planning review with Claude on the target `cli.py` diff/area.
