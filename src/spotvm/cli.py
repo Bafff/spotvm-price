@@ -591,23 +591,14 @@ def _persist_analysis_outputs(
 ) -> bool:
     _nc = request.no_color
 
-    # Save results for historical analysis if requested (even if empty,
-    # so automation/unattended monitoring records that a run completed)
-    if request.save_results:
-        from .history import save_run_results
-
-        try:
-            saved_path = save_run_results(
-                candidates=ranked,
-                config=config,
-                results_dir=request.results_dir,
-            )
-        except OSError as exc:
-            logger.warning("Failed to save run results: %s", exc)
-            emit_error(f"Failed to save run results: {exc}")
-        else:
-            logger.info("Results saved to %s", saved_path)
-            emit(f"{'[OK]' if _nc else '✅'} Results saved to: {saved_path}\n")
+    _save_run_results_if_requested(
+        ranked,
+        request=request,
+        config=config,
+        logger=logger,
+        emit=emit,
+        emit_error=emit_error,
+    )
 
     # Export to CSV if requested (even if empty, so downstream tools see the run)
     if request.csv:
@@ -629,27 +620,76 @@ def _persist_analysis_outputs(
             logger.info("Results exported to CSV: %s", request.csv)
             emit(f"{'[OK]' if _nc else '✅'} CSV exported to: {request.csv}\n")
 
-    # Emit JSON / save report (even if empty)
-    if config.emit_json or config.save_report:
-        report_payload = _build_report(ranked)
-        if config.emit_json:
-            print(json.dumps(report_payload, indent=2, default=_json_serializer), file=sys.stdout)
-        if config.save_report:
-            try:
-                _write_json_atomic(config.save_report, report_payload)
-            except OSError as exc:
-                logger.error(  # noqa: TRY400 - expected filesystem failure path
-                    "Failed to save report to %s: %s",
-                    config.save_report,
-                    exc,
-                )
-                emit_error(f"{'[x]' if _nc else '❌'} Failed to save report to: {config.save_report} ({exc})\n")
-            else:
-                logger.info("Saved report to %s", config.save_report)
-        if config.emit_json:
-            return True
+    return _emit_report_if_requested(
+        ranked,
+        request=request,
+        config=config,
+        logger=logger,
+        emit_error=emit_error,
+    )
 
-    return False
+
+def _save_run_results_if_requested(
+    ranked: list[Any],
+    *,
+    request: AnalysisRunRequest,
+    config: ToolConfig,
+    logger: logging.Logger,
+    emit,
+    emit_error,
+) -> None:
+    if not request.save_results:
+        return
+
+    # Save results for historical analysis even if the candidate list is empty,
+    # so unattended monitoring still records that a run completed.
+    from .history import save_run_results
+
+    try:
+        saved_path = save_run_results(
+            candidates=ranked,
+            config=config,
+            results_dir=request.results_dir,
+        )
+    except OSError as exc:
+        logger.warning("Failed to save run results: %s", exc)
+        emit_error(f"Failed to save run results: {exc}")
+    else:
+        _nc = request.no_color
+        logger.info("Results saved to %s", saved_path)
+        emit(f"{'[OK]' if _nc else '✅'} Results saved to: {saved_path}\n")
+
+
+def _emit_report_if_requested(
+    ranked: list[Any],
+    *,
+    request: AnalysisRunRequest,
+    config: ToolConfig,
+    logger: logging.Logger,
+    emit_error,
+) -> bool:
+    if not (config.emit_json or config.save_report):
+        return False
+
+    report_payload = _build_report(ranked)
+    if config.emit_json:
+        print(json.dumps(report_payload, indent=2, default=_json_serializer), file=sys.stdout)
+    if config.save_report:
+        try:
+            _write_json_atomic(config.save_report, report_payload)
+        except OSError as exc:
+            _nc = request.no_color
+            logger.error(  # noqa: TRY400 - expected filesystem failure path
+                "Failed to save report to %s: %s",
+                config.save_report,
+                exc,
+            )
+            emit_error(f"{'[x]' if _nc else '❌'} Failed to save report to: {config.save_report} ({exc})\n")
+        else:
+            logger.info("Saved report to %s", config.save_report)
+
+    return config.emit_json
+
 
 
 def _render_analysis_results(
