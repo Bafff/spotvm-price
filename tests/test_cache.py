@@ -1,11 +1,44 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
 import tempfile
 from pathlib import Path
 
 import spotvm.cache as cache
+
+
+def test_importing_cache_module_does_not_create_cache_dir(tmp_path, monkeypatch):
+    mkdir_calls: list[Path] = []
+    module_path = Path(cache.__file__)
+    original_mkdir = Path.mkdir
+
+    def tracking_mkdir(self: Path, *args, **kwargs):
+        mkdir_calls.append(self)
+        return original_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(Path, "mkdir", tracking_mkdir)
+
+    spec = importlib.util.spec_from_file_location("spotvm_cache_import_probe", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    probe_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe_module)
+
+    assert mkdir_calls == []
+
+
+def test_store_creates_cache_dir_lazily_when_missing(tmp_path, monkeypatch):
+    cache_dir = tmp_path / "nested" / "spotvm-cache"
+    monkeypatch.setattr(cache, "CACHE_DIR", cache_dir)
+
+    stored = cache.store("example", {"value": 1}, ttl_minutes=15)
+
+    assert stored is True
+    assert cache_dir.exists()
+    assert (cache_dir / f"{cache._key_digest('example')}.json").exists()
 
 
 def test_remove_cache_file_returns_true_on_success(tmp_path):

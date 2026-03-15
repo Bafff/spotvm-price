@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 CACHE_DIR = Path.home() / ".cache" / "spotvm"
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
 logger = logging.getLogger("spotvm")
 
 
@@ -64,6 +63,7 @@ def store(key: str, data: Any, ttl_minutes: int) -> bool:
         "data": data,
     }
     try:
+        _ensure_cache_dir(path.parent)
         _write_text_atomic(path, json.dumps(payload, indent=2))
     except OSError as exc:
         logger.warning("Failed to write cache file %s: %s", path, exc)
@@ -74,6 +74,10 @@ def store(key: str, data: Any, ttl_minutes: int) -> bool:
 def clear() -> None:
     for file in CACHE_DIR.glob("*.json"):
         _remove_cache_file(file, "")
+
+
+def _ensure_cache_dir(cache_dir: Path) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
 
 def _write_text_atomic(path: Path, payload: str) -> None:
