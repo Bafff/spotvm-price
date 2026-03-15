@@ -19,10 +19,12 @@ from spotvm.cli import (
     _add_history_arguments,
     _build_ranked_candidates,
     _build_runtime_config,
+    _discover_requested_sizes,
     _emit_report_if_requested,
     _fetch_analysis_inputs,
     _persist_analysis_outputs,
     _render_analysis_results,
+    _resolve_effective_cpu_arch,
     _resolve_requested_sizes,
     _run_analysis_mode,
     _run_history_analysis,
@@ -394,6 +396,66 @@ class TestBuildParser:
 
         assert "effective default" in help_text
         assert "placement-check" in help_text
+
+    def test_resolve_effective_cpu_arch_normalizes_config_value(self):
+        parser = build_parser()
+        args = parser.parse_args(["--config", "ignored.json"])
+
+        cpu_arch = _resolve_effective_cpu_arch(
+            parser=parser,
+            args=args,
+            base_config={"cpu_arch": "ARM"},
+        )
+
+        assert cpu_arch == "arm"
+
+    def test_resolve_effective_cpu_arch_exits_when_parser_error_is_overridden(self):
+        parser = build_parser()
+        args = parser.parse_args(["--config", "ignored.json"])
+        parser.error = MagicMock(return_value=None)
+
+        with pytest.raises(SystemExit) as excinfo:
+            _resolve_effective_cpu_arch(
+                parser=parser,
+                args=args,
+                base_config={"cpu_arch": 123},
+            )
+
+        assert excinfo.value.code == 2
+        parser.error.assert_called_once()
+
+    @patch("spotvm.cli.discover_skus", return_value=["Standard_D2ps_v5", "Standard_D4ps_v5"])
+    def test_discover_requested_sizes_logs_requirements_and_summary(self, mock_discover_skus):
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "--regions",
+                "centralus",
+                "--min-vcpu",
+                "4",
+                "--min-ram",
+                "16",
+            ]
+        )
+        logger = MagicMock()
+
+        sizes, attempted = _discover_requested_sizes(
+            args=args,
+            effective_cpu_arch="arm",
+            logger=logger,
+        )
+
+        assert attempted is True
+        assert sizes == ["Standard_D2ps_v5", "Standard_D4ps_v5"]
+        mock_discover_skus.assert_called_once_with(
+            min_vcpu=4,
+            min_ram=16,
+            cpu_arch="arm",
+        )
+        logger.info.assert_any_call(
+            "No --sizes specified, auto-discovering SKUs matching requirements (vCPU≥4, RAM≥16 GB, arch=arm)"
+        )
+        logger.info.assert_any_call("Auto-discovered 2 SKUs: Standard_D2ps_v5, Standard_D4ps_v5")
 
     @patch("spotvm.cli.discover_skus")
     def test_resolve_requested_sizes_uses_existing_sizes_without_auto_discovery(self, mock_discover_skus):
