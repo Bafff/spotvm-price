@@ -97,7 +97,7 @@ def test_merge_datasets_keeps_distinct_zone_candidates_for_same_sku_and_region()
     assert all(candidate.price_usd == 0.12 for candidate in merged)
 
 
-def test_merge_datasets_keeps_lowercased_lookup_keys_for_placement_only_rows():
+def test_merge_datasets_normalizes_casing_via_lookup_keys_for_placement_only_rows():
     placement_scores = [
         PlacementScoreResult(
             region="EastUS",

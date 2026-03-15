@@ -5,6 +5,7 @@ from collections.abc import Iterable
 
 from .models import CandidateInsight, CPUArchitecture, HistoricalMetrics, PlacementScoreResult
 from .vm_specs import (
+    VMSpec,
     calculate_relative_performance_details,
     detect_cpu_architecture,
     get_vm_spec,
@@ -327,7 +328,7 @@ def _normalized_architecture(candidate_arch: str) -> str:
 
 def _matches_hardware_requirements(
     candidate: CandidateInsight,
-    spec,
+    spec: VMSpec | None,
     min_vcpu: int | None,
     min_ram: int | None,
     no_max_limit: bool,
