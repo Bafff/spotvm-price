@@ -8,6 +8,36 @@ from pathlib import Path
 import spotvm.cache as cache
 
 
+def test_remove_cache_file_returns_true_on_success(tmp_path):
+    cache_path = tmp_path / "stale.json"
+    cache_path.write_text("{}", encoding="utf-8")
+
+    removed = cache._remove_cache_file(cache_path, "expired")
+
+    assert removed is True
+    assert not cache_path.exists()
+
+
+def test_remove_cache_file_returns_false_and_logs_on_oserror(tmp_path, monkeypatch, caplog):
+    cache_path = tmp_path / "stale.json"
+    cache_path.write_text("{}", encoding="utf-8")
+    original_unlink = Path.unlink
+
+    def raising_unlink(self: Path, *args, **kwargs):
+        if self == cache_path:
+            raise PermissionError("locked")
+        return original_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", raising_unlink)
+
+    with caplog.at_level(logging.WARNING, logger="spotvm"):
+        removed = cache._remove_cache_file(cache_path, "expired")
+
+    assert removed is False
+    assert cache_path.exists()
+    assert "Failed to remove expired cache file" in caplog.text
+
+
 def test_load_returns_cache_miss_and_warns_on_oserror(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(cache, "CACHE_DIR", tmp_path)
     cache_path = tmp_path / f"{cache._key_digest('example')}.json"
@@ -43,8 +73,9 @@ def test_store_does_not_depend_on_path_write_text(tmp_path, monkeypatch, caplog)
     monkeypatch.setattr(Path, "write_text", raising_write_text)
 
     with caplog.at_level(logging.WARNING, logger="spotvm"):
-        cache.store("example", {"value": 1}, ttl_minutes=15)
+        stored = cache.store("example", {"value": 1}, ttl_minutes=15)
 
+    assert stored is True
     assert "Failed to write cache file" not in caplog.text
     payload = json.loads(cache_path.read_text(encoding="utf-8"))
     assert payload["data"] == {"value": 1}
@@ -66,8 +97,9 @@ def test_store_preserves_existing_cache_file_when_atomic_replace_fails(tmp_path,
     monkeypatch.setattr(Path, "replace", raising_replace)
 
     with caplog.at_level(logging.WARNING, logger="spotvm"):
-        cache.store("example", {"value": "new"}, ttl_minutes=15)
+        stored = cache.store("example", {"value": "new"}, ttl_minutes=15)
 
+    assert stored is False
     payload = json.loads(cache_path.read_text(encoding="utf-8"))
     assert payload["data"] == {"value": "old"}
     assert "Failed to write cache file" in caplog.text
@@ -100,8 +132,9 @@ def test_store_cleans_up_temp_file_when_temp_write_fails(tmp_path, monkeypatch, 
     monkeypatch.setattr(cache.tempfile, "NamedTemporaryFile", failing_named_temporary_file)
 
     with caplog.at_level(logging.WARNING, logger="spotvm"):
-        cache.store("example", {"value": 1}, ttl_minutes=15)
+        stored = cache.store("example", {"value": 1}, ttl_minutes=15)
 
+    assert stored is False
     assert "Failed to write cache file" in caplog.text
     assert not cache_path.exists()
     assert list(tmp_path.glob(f".{cache_path.name}.*.tmp")) == []
