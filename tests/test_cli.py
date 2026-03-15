@@ -17,6 +17,7 @@ from spotvm.cli import (
     _emit_report_if_requested,
     _persist_analysis_outputs,
     _render_analysis_results,
+    _run_history_analysis,
     _run_single_analysis,
     _save_run_results_if_requested,
     build_parser,
@@ -336,6 +337,69 @@ class TestToolConfigValidation:
 
 class TestMainWithMocks:
     """Tests for main() with mocked Azure API calls."""
+
+    @patch("spotvm.cli._run_single_analysis")
+    @patch("spotvm.cli._run_history_analysis", return_value=0)
+    def test_main_analyze_history_delegates_and_skips_single_run(
+        self,
+        mock_run_history_analysis,
+        mock_run_single_analysis,
+        tmp_path,
+    ):
+        results_dir = tmp_path / "results"
+        history_output = tmp_path / "custom-history.csv"
+
+        rc = main(
+            [
+                "--analyze-history",
+                "--results-dir",
+                str(results_dir),
+                "--history-depth",
+                "7",
+                "--history-output",
+                str(history_output),
+                "--no-color",
+            ]
+        )
+
+        assert rc == 0
+        mock_run_history_analysis.assert_called_once()
+        kwargs = mock_run_history_analysis.call_args.kwargs
+        assert kwargs["results_dir"] == results_dir
+        assert kwargs["depth"] == 7
+        assert kwargs["history_output"] == history_output
+        mock_run_single_analysis.assert_not_called()
+
+    @patch("spotvm.history.analyze_history", return_value=(3, 9, Path("/tmp/history.csv")))
+    def test_run_history_analysis_uses_default_output_path_and_prints_summary(
+        self,
+        mock_analyze_history,
+        tmp_path,
+        capsys,
+    ):
+        results_dir = tmp_path / "results"
+        logger = MagicMock()
+
+        rc = _run_history_analysis(
+            results_dir=results_dir,
+            depth=None,
+            history_output=None,
+            logger=logger,
+            emit=_stdout_emitter,
+        )
+
+        assert rc == 0
+        mock_analyze_history.assert_called_once_with(
+            results_dir=results_dir,
+            depth=None,
+            output_path=results_dir / "history.csv",
+        )
+        logger.info.assert_called_once_with("Analyzing historical data from %s", results_dir)
+        captured = capsys.readouterr()
+        assert "Historical Analysis Complete:" in captured.out
+        assert "Runs analyzed: 3" in captured.out
+        assert "Data points: 9" in captured.out
+        assert "Python: pd.read_csv('/tmp/history.csv')" in captured.out
 
     @patch("spotvm.cli.AzureAuthenticator")
     @patch("spotvm.cli.AzureRestClient")

@@ -279,28 +279,12 @@ def main(argv: list[str] | None = None) -> int:
 
     # Handle --analyze-history mode (separate from normal runs)
     if args.analyze_history:
-        from .history import analyze_history
-
-        results_dir = args.results_dir
-        history_output = args.history_output or (results_dir / "history.csv")
-
-        logger.info("Analyzing historical data from %s", results_dir)
-        num_runs, num_datapoints, csv_path = analyze_history(
-            results_dir=results_dir,
+        return _run_history_analysis(
+            results_dir=args.results_dir,
             depth=args.history_depth,
-            output_path=history_output,
+            history_output=args.history_output,
+            logger=logger,
         )
-
-        print("Historical Analysis Complete:")
-        print(f"  Runs analyzed: {num_runs}")
-        print(f"  Data points: {num_datapoints}")
-        print(f"  CSV output: {csv_path}")
-        print("\nUse this CSV for visualization with tools like:")
-        print(f"  - Excel/Google Sheets: Import {csv_path}")
-        print(f"  - Python: pd.read_csv('{csv_path}')")
-        print("  - Grafana: CSV data source plugin")
-
-        return 0
 
     base_config: dict[str, Any] = {}
     if args.config:
@@ -473,6 +457,37 @@ def main(argv: list[str] | None = None) -> int:
     except AzureHttpError as exc:
         logger.error("Azure API request failed: %s", exc)  # noqa: TRY400 - user-facing API failure should stay concise
         return 2
+
+    return 0
+
+
+def _run_history_analysis(
+    *,
+    results_dir: Path,
+    depth: int | None,
+    history_output: Path | None,
+    logger: logging.Logger,
+    emit=print,
+) -> int:
+    from .history import analyze_history
+
+    output_path = history_output or (results_dir / "history.csv")
+
+    logger.info("Analyzing historical data from %s", results_dir)
+    num_runs, num_datapoints, csv_path = analyze_history(
+        results_dir=results_dir,
+        depth=depth,
+        output_path=output_path,
+    )
+
+    emit("Historical Analysis Complete:")
+    emit(f"  Runs analyzed: {num_runs}")
+    emit(f"  Data points: {num_datapoints}")
+    emit(f"  CSV output: {csv_path}")
+    emit("\nUse this CSV for visualization with tools like:")
+    emit(f"  - Excel/Google Sheets: Import {csv_path}")
+    emit(f"  - Python: pd.read_csv('{csv_path}')")
+    emit("  - Grafana: CSV data source plugin")
 
     return 0
 
