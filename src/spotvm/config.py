@@ -9,7 +9,7 @@ from typing import Any, cast
 from .models import CPUArchitecture
 
 try:
-    import yaml  # type: ignore
+    import yaml
 except ImportError:  # pragma: no cover - optional dependency
     yaml = None
 
@@ -45,31 +45,11 @@ class ToolConfig:
     def __post_init__(self) -> None:
         self.regions = _clean_list(self.regions)
         self.sizes = _clean_list(self.sizes)
-        if self.enable_placement and not self.subscription_id:
-            raise ValueError(
-                "subscription_id is required when --placement-check is enabled. "
-                "Provide --subscription-id or remove --placement-check."
-            )
-        if self.availability_zones and not self.enable_placement:
-            raise ValueError("availability_zones requires enable_placement")
-        if not self.regions:
-            raise ValueError("At least one region must be supplied")
-        if not self.sizes:
-            raise ValueError(
-                "At least one VM size must be supplied via --sizes, OR use --min-vcpu/--min-ram for auto-discovery"
-            )
-        if self.desired_count <= 0:
-            raise ValueError("desired_count must be positive")
-        if self.desired_count != 1 and not self.enable_placement:
-            raise ValueError("desired_count requires enable_placement")
-        self.os_type = self.os_type.lower()
-        if self.os_type not in VALID_OS_TYPES:
-            raise ValueError(f"os_type must be one of {sorted(VALID_OS_TYPES)}")
-        if self.cpu_arch is not None:
-            normalized_cpu_arch = self.cpu_arch.lower()
-            if normalized_cpu_arch not in VALID_CPU_ARCHS:
-                raise ValueError(f"cpu_arch must be one of {sorted(VALID_CPU_ARCHS)}")
-            self.cpu_arch = cast(CPUArchitecture, normalized_cpu_arch)
+        _validate_placement_mode(self)
+        _validate_required_lists(self.regions, self.sizes)
+        _validate_desired_count(self.desired_count, self.enable_placement)
+        self.os_type = _normalize_os_type(self.os_type)
+        self.cpu_arch = _normalize_cpu_arch(self.cpu_arch)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ToolConfig:
@@ -105,6 +85,48 @@ class ToolConfig:
 
 def _clean_list(values: Iterable[str]) -> list[str]:
     return [v.strip() for v in values if v and v.strip()]
+
+
+def _validate_placement_mode(config: ToolConfig) -> None:
+    if config.enable_placement and not config.subscription_id:
+        raise ValueError(
+            "subscription_id is required when --placement-check is enabled. "
+            "Provide --subscription-id or remove --placement-check."
+        )
+    if config.availability_zones and not config.enable_placement:
+        raise ValueError("availability_zones requires enable_placement")
+
+
+def _validate_required_lists(regions: list[str], sizes: list[str]) -> None:
+    if not regions:
+        raise ValueError("At least one region must be supplied")
+    if not sizes:
+        raise ValueError(
+            "At least one VM size must be supplied via --sizes, OR use --min-vcpu/--min-ram for auto-discovery"
+        )
+
+
+def _validate_desired_count(desired_count: int, enable_placement: bool) -> None:
+    if desired_count <= 0:
+        raise ValueError("desired_count must be positive")
+    if desired_count != 1 and not enable_placement:
+        raise ValueError("desired_count requires enable_placement")
+
+
+def _normalize_os_type(os_type: str) -> str:
+    normalized_os_type = os_type.lower()
+    if normalized_os_type not in VALID_OS_TYPES:
+        raise ValueError(f"os_type must be one of {sorted(VALID_OS_TYPES)}")
+    return normalized_os_type
+
+
+def _normalize_cpu_arch(cpu_arch: CPUArchitecture | None) -> CPUArchitecture | None:
+    if cpu_arch is None:
+        return None
+    normalized_cpu_arch = cpu_arch.lower()
+    if normalized_cpu_arch not in VALID_CPU_ARCHS:
+        raise ValueError(f"cpu_arch must be one of {sorted(VALID_CPU_ARCHS)}")
+    return cast(CPUArchitecture, normalized_cpu_arch)
 
 
 def load_config_file(path: Path) -> dict[str, Any]:
