@@ -379,82 +379,13 @@ def main(argv: list[str] | None = None) -> int:
 
     # Unattended mode: run continuously
     if args.run_unattended:
-        request = replace(request, save_results=True)
-        interval_minutes = args.run_unattended
-
-        logger.info(
-            f"Starting unattended monitoring mode: running every {interval_minutes} minutes. Press Ctrl+C to stop."
+        return _run_unattended_monitoring(
+            request=replace(request, save_results=True),
+            config=config,
+            logger=logger,
+            interval_minutes=args.run_unattended,
+            run_single_analysis=_run_single_analysis,
         )
-        _nc = request.no_color
-        print(f"{'[*]' if _nc else '🔄'} Monitoring mode started (interval: {interval_minutes} min)")
-        print(f"{'[>]' if _nc else '📊'} Results will be saved to: {request.results_dir}/runs/")
-        print(f"{'[!]' if _nc else '⏸️ '} Press Ctrl+C to stop\n")
-
-        # Setup signal handler for graceful shutdown
-        stop_requested = False
-
-        def signal_handler(signum, frame):
-            nonlocal stop_requested
-            stop_requested = True
-            print(f"\n{'[x]' if _nc else '⏹️ '} Stop requested, finishing current run...")
-
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-
-        run_count = 0
-        unexpected_error_count = 0
-        while not stop_requested:
-            run_count += 1
-            print(f"\n{'=' * 60}")
-            print(f"Run #{run_count} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            print(f"{'=' * 60}")
-
-            try:
-                _run_single_analysis(
-                    request=request,
-                    config=config,
-                    logger=logger,
-                )
-                unexpected_error_count = 0
-            except AzureHttpError as exc:
-                unexpected_error_count = 0
-                logger.error(f"Azure API request failed: {exc}")  # noqa: TRY400 - traceback is noise for API failures
-                logger.info("Continuing despite error...")
-            except Exception:
-                unexpected_error_count += 1
-                logger.exception(
-                    "Unexpected error in unattended run (%d/%d)",
-                    unexpected_error_count,
-                    MAX_UNATTENDED_FAILURES,
-                )
-                if unexpected_error_count >= MAX_UNATTENDED_FAILURES:
-                    logger.error(  # noqa: TRY400 - traceback already emitted immediately above
-                        "Stopping unattended mode after %d consecutive unexpected errors",
-                        MAX_UNATTENDED_FAILURES,
-                    )
-                    print(
-                        f"\n{'[x]' if _nc else '❌'} Stopping monitoring after "
-                        f"{MAX_UNATTENDED_FAILURES} consecutive unexpected errors."
-                    )
-                    return 1
-                logger.info("Continuing despite error...")
-
-            if not stop_requested:
-                next_run = datetime.now() + timedelta(minutes=interval_minutes)
-
-                logger.info(f"Next run at {next_run.strftime('%H:%M:%S')}")
-                print(f"\n{'[.]' if _nc else '💤'} Sleeping for {interval_minutes} minutes...")
-                print(f"   Next run at: {next_run.strftime('%H:%M:%S')}")
-
-                # Sleep in small intervals to allow quicker Ctrl+C response
-                sleep_seconds = interval_minutes * 60
-                for _ in range(sleep_seconds):
-                    if stop_requested:
-                        break
-                    time.sleep(1)
-
-        print(f"\n{'[OK]' if _nc else '✅'} Monitoring stopped after {run_count} run(s)")
-        return 0
 
     # Normal mode: run once
     try:
@@ -467,6 +398,99 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("Azure API request failed: %s", exc)  # noqa: TRY400 - user-facing API failure should stay concise
         return 2
 
+    return 0
+
+
+def _run_unattended_monitoring(
+    *,
+    request: AnalysisRunRequest,
+    config: ToolConfig,
+    logger: logging.Logger,
+    interval_minutes: int,
+    run_single_analysis,
+    emit=print,
+    sleep=None,
+    install_signal_handlers: bool = True,
+    should_stop=None,
+) -> int:
+    logger.info(
+        f"Starting unattended monitoring mode: running every {interval_minutes} minutes. Press Ctrl+C to stop."
+    )
+    _nc = request.no_color
+    emit(f"{'[*]' if _nc else '🔄'} Monitoring mode started (interval: {interval_minutes} min)")
+    emit(f"{'[>]' if _nc else '📊'} Results will be saved to: {request.results_dir}/runs/")
+    emit(f"{'[!]' if _nc else '⏸️ '} Press Ctrl+C to stop\n")
+
+    stop_requested = False
+
+    def signal_handler(signum, frame):
+        nonlocal stop_requested
+        stop_requested = True
+        emit(f"\n{'[x]' if _nc else '⏹️ '} Stop requested, finishing current run...")
+
+    if install_signal_handlers:
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
+    if sleep is None:
+        sleep = time.sleep
+
+    if should_stop is None:
+        def should_stop() -> bool:
+            return stop_requested
+
+    run_count = 0
+    unexpected_error_count = 0
+    while not should_stop():
+        run_count += 1
+        emit(f"\n{'=' * 60}")
+        emit(f"Run #{run_count} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        emit(f"{'=' * 60}")
+
+        try:
+            run_single_analysis(
+                request=request,
+                config=config,
+                logger=logger,
+            )
+            unexpected_error_count = 0
+        except AzureHttpError as exc:
+            unexpected_error_count = 0
+            logger.error(f"Azure API request failed: {exc}")  # noqa: TRY400 - traceback is noise for API failures
+            logger.info("Continuing despite error...")
+        except Exception:
+            unexpected_error_count += 1
+            logger.exception(
+                "Unexpected error in unattended run (%d/%d)",
+                unexpected_error_count,
+                MAX_UNATTENDED_FAILURES,
+            )
+            if unexpected_error_count >= MAX_UNATTENDED_FAILURES:
+                logger.error(  # noqa: TRY400 - traceback already emitted immediately above
+                    "Stopping unattended mode after %d consecutive unexpected errors",
+                    MAX_UNATTENDED_FAILURES,
+                )
+                emit(
+                    f"\n{'[x]' if _nc else '❌'} Stopping monitoring after "
+                    f"{MAX_UNATTENDED_FAILURES} consecutive unexpected errors."
+                )
+                return 1
+            logger.info("Continuing despite error...")
+
+        if not should_stop():
+            next_run = datetime.now() + timedelta(minutes=interval_minutes)
+
+            logger.info(f"Next run at {next_run.strftime('%H:%M:%S')}")
+            emit(f"\n{'[.]' if _nc else '💤'} Sleeping for {interval_minutes} minutes...")
+            emit(f"   Next run at: {next_run.strftime('%H:%M:%S')}")
+
+            sleep_seconds = interval_minutes * 60
+            for _ in range(sleep_seconds):
+                if should_stop():
+                    break
+                sleep(1)
+
+    emit(f"\n{'[OK]' if _nc else '✅'} Monitoring stopped after {run_count} run(s)")
     return 0
 
 

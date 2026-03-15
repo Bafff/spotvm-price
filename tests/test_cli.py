@@ -22,11 +22,13 @@ from spotvm.cli import (
     _render_analysis_results,
     _run_history_analysis,
     _run_single_analysis,
+    _run_unattended_monitoring,
     _save_run_results_if_requested,
     build_parser,
     main,
 )
 from spotvm.config import ToolConfig
+from spotvm.http_client import AzureHttpError
 from spotvm.models import HistoricalMetrics
 from spotvm.placement_score import PlacementScoreRequest
 from spotvm.reporting import RenderOptions
@@ -465,6 +467,122 @@ class TestMainWithMocks:
         assert "Runs analyzed: 3" in captured.out
         assert "Data points: 9" in captured.out
         assert "Python: pd.read_csv('/tmp/history.csv')" in captured.out
+
+    @patch("spotvm.cli.MAX_UNATTENDED_FAILURES", 1)
+    @patch("spotvm.cli.time.sleep")
+    @patch("spotvm.cli.signal.signal")
+    def test_run_unattended_monitoring_stops_after_unexpected_failure_threshold(
+        self,
+        mock_signal,
+        mock_sleep,
+        capsys,
+    ):
+        logger = MagicMock()
+        request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+        run_single_analysis = MagicMock(side_effect=RuntimeError("boom"))
+
+        rc = _run_unattended_monitoring(
+            request=request,
+            config=config,
+            logger=logger,
+            interval_minutes=1,
+            run_single_analysis=run_single_analysis,
+            emit=_stdout_emitter,
+        )
+
+        assert rc == 1
+        assert run_single_analysis.call_count == 1
+        mock_sleep.assert_not_called()
+        logger.exception.assert_called_once()
+        logger.error.assert_called_once_with(
+            "Stopping unattended mode after %d consecutive unexpected errors",
+            1,
+        )
+        captured = capsys.readouterr()
+        assert "Stopping monitoring after 1 consecutive unexpected errors" in captured.out
+
+    @patch("spotvm.cli.MAX_UNATTENDED_FAILURES", 1)
+    @patch("spotvm.cli.signal.signal")
+    def test_run_unattended_monitoring_treats_azure_http_errors_as_non_fatal(
+        self,
+        mock_signal,
+        capsys,
+    ):
+        logger = MagicMock()
+        request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+        run_single_analysis = MagicMock(
+            side_effect=[
+                AzureHttpError("https://example.test", 429, "busy"),
+                RuntimeError("boom"),
+            ]
+        )
+        should_stop_calls = iter([False, False, False])
+
+        def should_stop() -> bool:
+            return next(should_stop_calls)
+
+        rc = _run_unattended_monitoring(
+            request=request,
+            config=config,
+            logger=logger,
+            interval_minutes=0,
+            run_single_analysis=run_single_analysis,
+            emit=_stdout_emitter,
+            sleep=lambda seconds: None,
+            should_stop=should_stop,
+        )
+
+        assert rc == 1
+        assert run_single_analysis.call_count == 2
+        mock_signal.assert_called()
+        logger.exception.assert_called_once()
+        logger.error.assert_any_call(
+            "Azure API request failed: Azure API request failed (429) for https://example.test: busy"
+        )
+        logger.error.assert_any_call(
+            "Stopping unattended mode after %d consecutive unexpected errors",
+            1,
+        )
+        captured = capsys.readouterr()
+        assert "Stopping monitoring after 1 consecutive unexpected errors" in captured.out
+
+    @patch("spotvm.cli.signal.signal")
+    def test_run_unattended_monitoring_returns_zero_after_single_success_when_stop_requested(
+        self,
+        mock_signal,
+        capsys,
+    ):
+        logger = MagicMock()
+        request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+
+        def fake_run_single_analysis(*, request, config, logger):
+            return None
+
+        should_stop_calls = iter([False, True, True])
+
+        def should_stop() -> bool:
+            return next(should_stop_calls)
+
+        rc = _run_unattended_monitoring(
+            request=request,
+            config=config,
+            logger=logger,
+            interval_minutes=1,
+            run_single_analysis=fake_run_single_analysis,
+            emit=_stdout_emitter,
+            sleep=lambda seconds: None,
+            install_signal_handlers=False,
+            should_stop=should_stop,
+        )
+
+        assert rc == 0
+        mock_signal.assert_not_called()
+        captured = capsys.readouterr()
+        assert "Monitoring mode started" in captured.out
+        assert "Monitoring stopped after 1 run(s)" in captured.out
 
     @patch("spotvm.cli.AzureAuthenticator")
     @patch("spotvm.cli.AzureRestClient")
