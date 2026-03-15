@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import sys
@@ -14,6 +15,8 @@ import pytest
 
 from spotvm.cli import (
     AnalysisRunRequest,
+    _add_filtering_arguments,
+    _add_history_arguments,
     _emit_report_if_requested,
     _persist_analysis_outputs,
     _render_analysis_results,
@@ -95,6 +98,68 @@ def _stub_analysis_fetches(monkeypatch, *, historical_metrics, placement_scores=
 
 class TestBuildParser:
     """Tests for argument parsing."""
+
+    def test_add_filtering_arguments_accepts_hardware_and_cost_filters(self):
+        parser = argparse.ArgumentParser()
+        _add_filtering_arguments(parser)
+
+        args = parser.parse_args(
+            [
+                "--min-vcpu",
+                "4",
+                "--min-ram",
+                "8",
+                "--no-max-limit",
+                "--cpu-arch",
+                "arm",
+                "--max-price",
+                "0.10",
+                "--max-eviction",
+                "15",
+                "--min-performance",
+                "90",
+            ]
+        )
+
+        assert args.min_vcpu == 4
+        assert args.min_ram == 8
+        assert args.no_max_limit is True
+        assert args.cpu_arch == "arm"
+        assert args.max_price == 0.10
+        assert args.max_eviction == 15.0
+        assert args.min_performance == 90.0
+
+    def test_add_history_arguments_accepts_history_and_export_flags(self, tmp_path):
+        parser = argparse.ArgumentParser()
+        _add_history_arguments(parser)
+        results_dir = tmp_path / "results"
+        history_output = tmp_path / "history.csv"
+        csv_output = tmp_path / "results.csv"
+
+        args = parser.parse_args(
+            [
+                "--save-results",
+                "--run-unattended",
+                "15",
+                "--results-dir",
+                str(results_dir),
+                "--analyze-history",
+                "--history-depth",
+                "7",
+                "--history-output",
+                str(history_output),
+                "--csv",
+                str(csv_output),
+            ]
+        )
+
+        assert args.save_results is True
+        assert args.run_unattended == 15
+        assert args.results_dir == results_dir
+        assert args.analyze_history is True
+        assert args.history_depth == 7
+        assert args.history_output == history_output
+        assert args.csv == csv_output
 
     def test_no_args_shows_help(self, capsys):
         rc = main([])

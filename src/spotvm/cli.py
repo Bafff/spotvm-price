@@ -104,6 +104,13 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    _add_base_arguments(parser)
+    _add_filtering_arguments(parser)
+    _add_history_arguments(parser)
+    return parser
+
+
+def _add_base_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--subscription-id",
         help="Azure subscription ID (only required with --placement-check)",
@@ -173,6 +180,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Baseline VM size for relative performance comparison (e.g., Standard_D4as_v6 = 100%%)",
     )
 
+
+def _add_filtering_arguments(parser: argparse.ArgumentParser) -> None:
     # Requirements-based filtering
     parser.add_argument(
         "--min-vcpu",
@@ -213,6 +222,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Minimum performance relative to baseline in percentage (requires --baseline-sku, e.g., 80 for 80%%)",
     )
 
+
+def _add_history_arguments(parser: argparse.ArgumentParser) -> None:
     # Historical data features
     parser.add_argument(
         "--save-results",
@@ -254,8 +265,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Export results to CSV file (e.g., results.csv)",
     )
-
-    return parser
 
 
 def main(argv: list[str] | None = None) -> int:
