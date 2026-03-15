@@ -299,38 +299,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.config:
         base_config = load_config_file(args.config)
 
-    # Auto-discover SKUs only when neither CLI nor config specifies sizes.
-    # cpu_arch can come from config here; min_vcpu/min_ram are still CLI-only.
-    sizes = args.sizes if args.sizes is not None else base_config.get("sizes")
-    args.explicit_sizes = bool(sizes)
-    effective_cpu_arch = args.cpu_arch if args.cpu_arch is not None else base_config.get("cpu_arch")
-    if effective_cpu_arch is not None:
-        if not isinstance(effective_cpu_arch, str):
-            parser.error(f"cpu_arch must be one of {sorted(VALID_CPU_ARCHS)}")
-        effective_cpu_arch = effective_cpu_arch.lower()
-        if effective_cpu_arch not in VALID_CPU_ARCHS:
-            parser.error(f"cpu_arch must be one of {sorted(VALID_CPU_ARCHS)}")
-    if not sizes and (args.min_vcpu is not None or args.min_ram is not None or effective_cpu_arch is not None):
-        requirements = []
-        if args.min_vcpu is not None:
-            requirements.append(f"vCPU≥{args.min_vcpu}")
-        if args.min_ram is not None:
-            requirements.append(f"RAM≥{args.min_ram} GB")
-        if effective_cpu_arch:
-            requirements.append(f"arch={effective_cpu_arch}")
-        logger.info(f"No --sizes specified, auto-discovering SKUs matching requirements ({', '.join(requirements)})")
-        discover_kwargs = {
-            "min_vcpu": args.min_vcpu,
-            "min_ram": args.min_ram,
-            "cpu_arch": effective_cpu_arch,
-        }
-        if args.no_max_limit:
-            discover_kwargs["no_max_limit"] = True
-        sizes = discover_skus(**discover_kwargs)
-        if not sizes:
-            logger.error("No SKUs found matching specified requirements")
-            return 1
-        logger.info(f"Auto-discovered {len(sizes)} SKUs: {', '.join(sizes[:5])}{'...' if len(sizes) > 5 else ''}")
+    sizes, auto_discovery_attempted = _resolve_requested_sizes(
+        parser=parser,
+        args=args,
+        base_config=base_config,
+        logger=logger,
+    )
+    if auto_discovery_attempted and not sizes:
+        logger.error("No SKUs found matching specified requirements")
+        return 1
 
     overrides: dict[str, Any] = {
         "subscription_id": args.subscription_id,
@@ -492,6 +469,48 @@ def _run_unattended_monitoring(
 
     emit(f"\n{'[OK]' if _nc else '✅'} Monitoring stopped after {run_count} run(s)")
     return 0
+
+
+def _resolve_requested_sizes(
+    *,
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    base_config: dict[str, Any],
+    logger: logging.Logger,
+) -> tuple[list[str] | None, bool]:
+    # Auto-discover SKUs only when neither CLI nor config specifies sizes.
+    # cpu_arch can come from config here; min_vcpu/min_ram are still CLI-only.
+    sizes = args.sizes if args.sizes is not None else base_config.get("sizes")
+    args.explicit_sizes = bool(sizes)
+    effective_cpu_arch = args.cpu_arch if args.cpu_arch is not None else base_config.get("cpu_arch")
+    if effective_cpu_arch is not None:
+        if not isinstance(effective_cpu_arch, str):
+            parser.error(f"cpu_arch must be one of {sorted(VALID_CPU_ARCHS)}")
+        effective_cpu_arch = effective_cpu_arch.lower()
+        if effective_cpu_arch not in VALID_CPU_ARCHS:
+            parser.error(f"cpu_arch must be one of {sorted(VALID_CPU_ARCHS)}")
+    auto_discovery_attempted = False
+    if not sizes and (args.min_vcpu is not None or args.min_ram is not None or effective_cpu_arch is not None):
+        auto_discovery_attempted = True
+        requirements = []
+        if args.min_vcpu is not None:
+            requirements.append(f"vCPU≥{args.min_vcpu}")
+        if args.min_ram is not None:
+            requirements.append(f"RAM≥{args.min_ram} GB")
+        if effective_cpu_arch:
+            requirements.append(f"arch={effective_cpu_arch}")
+        logger.info(f"No --sizes specified, auto-discovering SKUs matching requirements ({', '.join(requirements)})")
+        discover_kwargs = {
+            "min_vcpu": args.min_vcpu,
+            "min_ram": args.min_ram,
+            "cpu_arch": effective_cpu_arch,
+        }
+        if args.no_max_limit:
+            discover_kwargs["no_max_limit"] = True
+        sizes = discover_skus(**discover_kwargs)
+        if sizes:
+            logger.info(f"Auto-discovered {len(sizes)} SKUs: {', '.join(sizes[:5])}{'...' if len(sizes) > 5 else ''}")
+    return sizes, auto_discovery_attempted
 
 
 def _run_history_analysis(

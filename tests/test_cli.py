@@ -20,6 +20,7 @@ from spotvm.cli import (
     _emit_report_if_requested,
     _persist_analysis_outputs,
     _render_analysis_results,
+    _resolve_requested_sizes,
     _run_history_analysis,
     _run_single_analysis,
     _run_unattended_monitoring,
@@ -340,6 +341,85 @@ class TestBuildParser:
 
         assert "effective default" in help_text
         assert "placement-check" in help_text
+
+    @patch("spotvm.cli.discover_skus")
+    def test_resolve_requested_sizes_uses_existing_sizes_without_auto_discovery(self, mock_discover_skus):
+        parser = build_parser()
+        args = parser.parse_args(["--config", "ignored.json"])
+        logger = MagicMock()
+        base_config = {
+            "regions": ["centralus"],
+            "sizes": ["Standard_D4ps_v5"],
+            "cpu_arch": "arm",
+        }
+
+        sizes, auto_discovery_attempted = _resolve_requested_sizes(
+            parser=parser,
+            args=args,
+            base_config=base_config,
+            logger=logger,
+        )
+
+        assert sizes == ["Standard_D4ps_v5"]
+        assert auto_discovery_attempted is False
+        assert args.explicit_sizes is True
+        mock_discover_skus.assert_not_called()
+
+    @patch("spotvm.cli.discover_skus", return_value=["Standard_D2ps_v5"])
+    def test_resolve_requested_sizes_normalizes_config_cpu_arch_before_auto_discovery(self, mock_discover_skus):
+        parser = build_parser()
+        args = parser.parse_args(["--config", "ignored.json"])
+        logger = MagicMock()
+        base_config = {
+            "regions": ["centralus"],
+            "cpu_arch": "ARM",
+        }
+
+        sizes, auto_discovery_attempted = _resolve_requested_sizes(
+            parser=parser,
+            args=args,
+            base_config=base_config,
+            logger=logger,
+        )
+
+        assert sizes == ["Standard_D2ps_v5"]
+        assert auto_discovery_attempted is True
+        assert args.explicit_sizes is False
+        mock_discover_skus.assert_called_once_with(
+            min_vcpu=None,
+            min_ram=None,
+            cpu_arch="arm",
+        )
+
+    @patch("spotvm.cli.discover_skus", return_value=["Standard_D4as_v5"])
+    def test_resolve_requested_sizes_passes_no_max_limit_to_auto_discovery(self, mock_discover_skus):
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "--regions",
+                "centralus",
+                "--min-vcpu",
+                "4",
+                "--no-max-limit",
+            ]
+        )
+        logger = MagicMock()
+
+        sizes, auto_discovery_attempted = _resolve_requested_sizes(
+            parser=parser,
+            args=args,
+            base_config={},
+            logger=logger,
+        )
+
+        assert sizes == ["Standard_D4as_v5"]
+        assert auto_discovery_attempted is True
+        mock_discover_skus.assert_called_once_with(
+            min_vcpu=4,
+            min_ram=None,
+            cpu_arch=None,
+            no_max_limit=True,
+        )
 
 
 class TestToolConfigValidation:
@@ -716,43 +796,6 @@ class TestMainWithMocks:
         assert "Standard_D64s_v5" in explicit.out
 
     @patch("spotvm.cli._run_single_analysis")
-    @patch("spotvm.cli.discover_skus")
-    def test_config_sizes_do_not_trigger_auto_discovery(
-        self,
-        mock_discover_skus,
-        mock_run_single_analysis,
-        tmp_path,
-    ):
-        config_path = tmp_path / "spotvm.json"
-        config_path.write_text(
-            json.dumps(
-                {
-                    "regions": ["centralus"],
-                    "sizes": ["Standard_D4ps_v5"],
-                    "cpu_arch": "arm",
-                }
-            ),
-            encoding="utf-8",
-        )
-        mock_discover_skus.return_value = ["Standard_D2ps_v5"]
-
-        rc = main(
-            [
-                "--config",
-                str(config_path),
-                "--no-color",
-            ]
-        )
-
-        assert rc == 0
-        mock_discover_skus.assert_not_called()
-        request = mock_run_single_analysis.call_args.kwargs["request"]
-        assert request.explicit_sizes is True
-        config = mock_run_single_analysis.call_args.kwargs["config"]
-        assert config.sizes == ["Standard_D4ps_v5"]
-        assert config.cpu_arch == "arm"
-
-    @patch("spotvm.cli._run_single_analysis")
     def test_cli_sizes_mark_run_as_explicit_for_hardware_window(
         self,
         mock_run_single_analysis,
@@ -873,111 +916,6 @@ class TestMainWithMocks:
         assert hist_request.retry_attempts == 6
         assert hist_request.retry_backoff_seconds == 3.5
         assert "placement_request" not in seen
-
-    @patch("spotvm.cli._run_single_analysis")
-    @patch("spotvm.cli.discover_skus")
-    def test_config_cpu_arch_triggers_auto_discovery(
-        self,
-        mock_discover_skus,
-        mock_run_single_analysis,
-        tmp_path,
-    ):
-        config_path = tmp_path / "spotvm.json"
-        config_path.write_text(
-            json.dumps(
-                {
-                    "regions": ["centralus"],
-                    "cpu_arch": "arm",
-                }
-            ),
-            encoding="utf-8",
-        )
-        mock_discover_skus.return_value = ["Standard_D2ps_v5"]
-
-        rc = main(
-            [
-                "--config",
-                str(config_path),
-                "--no-color",
-            ]
-        )
-
-        assert rc == 0
-        mock_discover_skus.assert_called_once_with(
-            min_vcpu=None,
-            min_ram=None,
-            cpu_arch="arm",
-        )
-        config = mock_run_single_analysis.call_args.kwargs["config"]
-        assert config.sizes == ["Standard_D2ps_v5"]
-        assert config.cpu_arch == "arm"
-
-    @patch("spotvm.cli._run_single_analysis")
-    @patch("spotvm.cli.discover_skus")
-    def test_config_cpu_arch_is_normalized_before_auto_discovery(
-        self,
-        mock_discover_skus,
-        mock_run_single_analysis,
-        tmp_path,
-    ):
-        config_path = tmp_path / "spotvm.json"
-        config_path.write_text(
-            json.dumps(
-                {
-                    "regions": ["centralus"],
-                    "cpu_arch": "ARM",
-                }
-            ),
-            encoding="utf-8",
-        )
-        mock_discover_skus.return_value = ["Standard_D2ps_v5"]
-
-        rc = main(
-            [
-                "--config",
-                str(config_path),
-                "--no-color",
-            ]
-        )
-
-        assert rc == 0
-        mock_discover_skus.assert_called_once_with(
-            min_vcpu=None,
-            min_ram=None,
-            cpu_arch="arm",
-        )
-        config = mock_run_single_analysis.call_args.kwargs["config"]
-        assert config.cpu_arch == "arm"
-
-    @patch("spotvm.cli._run_single_analysis")
-    @patch("spotvm.cli.discover_skus")
-    def test_main_passes_no_max_limit_through_to_auto_discovery(
-        self,
-        mock_discover_skus,
-        mock_run_single_analysis,
-    ):
-        mock_discover_skus.return_value = ["Standard_D4as_v5"]
-
-        rc = main(
-            [
-                "--regions",
-                "centralus",
-                "--min-vcpu",
-                "4",
-                "--no-max-limit",
-                "--no-color",
-            ]
-        )
-
-        assert rc == 0
-        mock_discover_skus.assert_called_once_with(
-            min_vcpu=4,
-            min_ram=None,
-            cpu_arch=None,
-            no_max_limit=True,
-        )
-        config = mock_run_single_analysis.call_args.kwargs["config"]
-        assert config.sizes == ["Standard_D4as_v5"]
 
     @patch("spotvm.cli.MAX_UNATTENDED_FAILURES", 1)
     @patch("spotvm.cli.time.sleep")
