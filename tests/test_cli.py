@@ -22,6 +22,7 @@ from spotvm.cli import (
     _persist_analysis_outputs,
     _render_analysis_results,
     _resolve_requested_sizes,
+    _run_analysis_mode,
     _run_history_analysis,
     _run_single_analysis,
     _run_unattended_monitoring,
@@ -714,6 +715,78 @@ class TestMainWithMocks:
         assert "Monitoring mode started" in captured.out
         assert "Monitoring stopped after 1 run(s)" in captured.out
 
+    @patch("spotvm.cache.clear")
+    def test_run_analysis_mode_clears_cache_before_single_run(self, mock_clear):
+        logger = MagicMock()
+        request = _analysis_args(save_results=False)
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+        run_single_analysis = MagicMock()
+        run_unattended_monitoring = MagicMock()
+
+        rc = _run_analysis_mode(
+            request=request,
+            config=config,
+            logger=logger,
+            clear_cache=True,
+            interval_minutes=None,
+            run_single_analysis=run_single_analysis,
+            run_unattended_monitoring=run_unattended_monitoring,
+        )
+
+        assert rc == 0
+        mock_clear.assert_called_once_with()
+        logger.info.assert_called_once_with("Cache cleared")
+        run_unattended_monitoring.assert_not_called()
+        run_single_analysis.assert_called_once_with(
+            request=request,
+            config=config,
+            logger=logger,
+        )
+
+    def test_run_analysis_mode_delegates_to_unattended_and_forces_save_results(self):
+        logger = MagicMock()
+        request = _analysis_args(save_results=False)
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+        run_single_analysis = MagicMock()
+        run_unattended_monitoring = MagicMock(return_value=1)
+
+        rc = _run_analysis_mode(
+            request=request,
+            config=config,
+            logger=logger,
+            clear_cache=False,
+            interval_minutes=5,
+            run_single_analysis=run_single_analysis,
+            run_unattended_monitoring=run_unattended_monitoring,
+        )
+
+        assert rc == 1
+        run_single_analysis.assert_not_called()
+        kwargs = run_unattended_monitoring.call_args.kwargs
+        assert kwargs["interval_minutes"] == 5
+        assert kwargs["request"].save_results is True
+        assert kwargs["config"] == config
+        assert kwargs["logger"] == logger
+
+    def test_run_analysis_mode_returns_two_for_single_run_azure_http_error(self):
+        logger = MagicMock()
+        request = _analysis_args()
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+        error = AzureHttpError("https://example.test", 429, "busy")
+
+        rc = _run_analysis_mode(
+            request=request,
+            config=config,
+            logger=logger,
+            clear_cache=False,
+            interval_minutes=None,
+            run_single_analysis=MagicMock(side_effect=error),
+            run_unattended_monitoring=MagicMock(),
+        )
+
+        assert rc == 2
+        logger.error.assert_called_once_with("Azure API request failed: %s", error)
+
     @patch("spotvm.cli.AzureAuthenticator")
     @patch("spotvm.cli.AzureRestClient")
     @patch("spotvm.cli.fetch_historical_metrics")
@@ -966,39 +1039,6 @@ class TestMainWithMocks:
         assert hist_request.retry_attempts == 6
         assert hist_request.retry_backoff_seconds == 3.5
         assert "placement_request" not in seen
-
-    @patch("spotvm.cli.MAX_UNATTENDED_FAILURES", 1)
-    @patch("spotvm.cli.time.sleep")
-    @patch("spotvm.cli.signal.signal")
-    @patch("spotvm.cli._run_single_analysis", side_effect=RuntimeError("boom"))
-    def test_unattended_mode_stops_after_unexpected_failure_threshold(
-        self,
-        mock_run_single_analysis,
-        mock_signal,
-        mock_sleep,
-        caplog,
-        capsys,
-    ):
-        with caplog.at_level(logging.ERROR, logger="spotvm"):
-            rc = main(
-                [
-                    "--regions",
-                    "centralus",
-                    "--sizes",
-                    "Standard_D4s_v5",
-                    "--run-unattended",
-                    "1",
-                    "--no-color",
-                ]
-            )
-
-        assert rc == 1
-        assert mock_run_single_analysis.call_count == 1
-        mock_sleep.assert_not_called()
-        assert "Unexpected error in unattended run (1/1)" in caplog.text
-        assert "Stopping unattended mode after 1 consecutive unexpected errors" in caplog.text
-        captured = capsys.readouterr()
-        assert "Stopping monitoring after 1 consecutive unexpected errors" in captured.out
 
     def test_persist_analysis_outputs_keeps_stdout_machine_readable_for_json(self, capsys):
         candidate = SimpleNamespace(

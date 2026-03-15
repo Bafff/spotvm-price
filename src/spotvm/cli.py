@@ -315,37 +315,16 @@ def main(argv: list[str] | None = None) -> int:
         base_config=base_config,
         sizes=sizes,
     )
-
     request = _build_analysis_run_request(args, save_results=args.save_results)
-
-    if args.clear_cache:
-        from . import cache
-
-        cache.clear()
-        logger.info("Cache cleared")
-
-    # Unattended mode: run continuously
-    if args.run_unattended:
-        return _run_unattended_monitoring(
-            request=replace(request, save_results=True),
-            config=config,
-            logger=logger,
-            interval_minutes=args.run_unattended,
-            run_single_analysis=_run_single_analysis,
-        )
-
-    # Normal mode: run once
-    try:
-        _run_single_analysis(
-            request=request,
-            config=config,
-            logger=logger,
-        )
-    except AzureHttpError as exc:
-        logger.error("Azure API request failed: %s", exc)  # noqa: TRY400 - user-facing API failure should stay concise
-        return 2
-
-    return 0
+    return _run_analysis_mode(
+        request=request,
+        config=config,
+        logger=logger,
+        clear_cache=args.clear_cache,
+        interval_minutes=args.run_unattended,
+        run_single_analysis=_run_single_analysis,
+        run_unattended_monitoring=_run_unattended_monitoring,
+    )
 
 
 def _build_runtime_config(
@@ -391,6 +370,44 @@ def _build_runtime_config(
     except (TypeError, ValueError) as exc:
         parser.error(str(exc))
         raise SystemExit(2) from exc
+
+
+def _run_analysis_mode(
+    *,
+    request: AnalysisRunRequest,
+    config: ToolConfig,
+    logger: logging.Logger,
+    clear_cache: bool,
+    interval_minutes: int | None,
+    run_single_analysis,
+    run_unattended_monitoring,
+) -> int:
+    if clear_cache:
+        from . import cache
+
+        cache.clear()
+        logger.info("Cache cleared")
+
+    if interval_minutes:
+        return run_unattended_monitoring(
+            request=replace(request, save_results=True),
+            config=config,
+            logger=logger,
+            interval_minutes=interval_minutes,
+            run_single_analysis=run_single_analysis,
+        )
+
+    try:
+        run_single_analysis(
+            request=request,
+            config=config,
+            logger=logger,
+        )
+    except AzureHttpError as exc:
+        logger.error("Azure API request failed: %s", exc)  # noqa: TRY400 - user-facing API failure should stay concise
+        return 2
+
+    return 0
 
 
 def _run_unattended_monitoring(
