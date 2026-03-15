@@ -17,6 +17,7 @@ from spotvm.cli import (
     AnalysisRunRequest,
     _add_filtering_arguments,
     _add_history_arguments,
+    _build_runtime_config,
     _emit_report_if_requested,
     _persist_analysis_outputs,
     _render_analysis_results,
@@ -269,27 +270,76 @@ class TestBuildParser:
         captured = capsys.readouterr()
         assert error_text in captured.err
 
-    @patch("spotvm.cli._run_single_analysis")
-    def test_pricing_only_config_accepts_default_desired_count(self, mock_run_single_analysis, tmp_path):
-        config = ToolConfig(
-            regions=["centralus"],
-            sizes=["Standard_D4s_v5"],
-        )
-        config_path = tmp_path / "spotvm.json"
-        config_path.write_text(json.dumps(config.to_dict()), encoding="utf-8")
-
-        rc = main(
+    def test_build_runtime_config_accepts_pricing_only_defaults(self):
+        parser = build_parser()
+        args = parser.parse_args(
             [
-                "--config",
-                str(config_path),
-                "--no-color",
+                "--regions",
+                "centralus",
+                "--sizes",
+                "Standard_D4s_v5",
             ]
         )
 
-        assert rc == 0
-        called_config = mock_run_single_analysis.call_args.kwargs["config"]
-        assert called_config.desired_count == 1
-        assert called_config.enable_placement is False
+        config = _build_runtime_config(
+            parser=parser,
+            args=args,
+            base_config={},
+            sizes=args.sizes,
+        )
+
+        assert config.desired_count == 1
+        assert config.enable_placement is False
+
+    def test_build_runtime_config_uses_config_placement_for_cli_desired_count(self):
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "--config",
+                "ignored.json",
+                "--desired-count",
+                "5",
+            ]
+        )
+        base_config = {
+            "regions": ["centralus"],
+            "sizes": ["Standard_D4s_v5"],
+            "enable_placement": True,
+            "subscription_id": "sub-id",
+        }
+
+        config = _build_runtime_config(
+            parser=parser,
+            args=args,
+            base_config=base_config,
+            sizes=base_config["sizes"],
+        )
+
+        assert config.enable_placement is True
+        assert config.desired_count == 5
+
+    def test_build_runtime_config_exits_when_parser_error_is_overridden(self):
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "--regions",
+                "centralus",
+                "--sizes",
+                "Standard_D4s_v5",
+            ]
+        )
+        parser.error = MagicMock(return_value=None)
+
+        with pytest.raises(SystemExit) as excinfo:
+            _build_runtime_config(
+                parser=parser,
+                args=args,
+                base_config={"cpu_arch": "mips"},
+                sizes=args.sizes,
+            )
+
+        assert excinfo.value.code == 2
+        parser.error.assert_called_once()
 
     def test_parser_accepts_all_documented_args(self):
         parser = build_parser()

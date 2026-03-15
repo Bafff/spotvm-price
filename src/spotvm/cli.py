@@ -309,6 +309,52 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("No SKUs found matching specified requirements")
         return 1
 
+    config = _build_runtime_config(
+        parser=parser,
+        args=args,
+        base_config=base_config,
+        sizes=sizes,
+    )
+
+    request = _build_analysis_run_request(args, save_results=args.save_results)
+
+    if args.clear_cache:
+        from . import cache
+
+        cache.clear()
+        logger.info("Cache cleared")
+
+    # Unattended mode: run continuously
+    if args.run_unattended:
+        return _run_unattended_monitoring(
+            request=replace(request, save_results=True),
+            config=config,
+            logger=logger,
+            interval_minutes=args.run_unattended,
+            run_single_analysis=_run_single_analysis,
+        )
+
+    # Normal mode: run once
+    try:
+        _run_single_analysis(
+            request=request,
+            config=config,
+            logger=logger,
+        )
+    except AzureHttpError as exc:
+        logger.error("Azure API request failed: %s", exc)  # noqa: TRY400 - user-facing API failure should stay concise
+        return 2
+
+    return 0
+
+
+def _build_runtime_config(
+    *,
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    base_config: dict[str, Any],
+    sizes: list[str] | None,
+) -> ToolConfig:
     overrides: dict[str, Any] = {
         "subscription_id": args.subscription_id,
         "regions": args.regions,
@@ -341,41 +387,10 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--min-performance requires --baseline-sku (on CLI or in config)")
 
     try:
-        config = ToolConfig.from_dict(config_data)
+        return ToolConfig.from_dict(config_data)
     except (TypeError, ValueError) as exc:
         parser.error(str(exc))
-        return 1
-
-    request = _build_analysis_run_request(args, save_results=args.save_results)
-
-    if args.clear_cache:
-        from . import cache
-
-        cache.clear()
-        logger.info("Cache cleared")
-
-    # Unattended mode: run continuously
-    if args.run_unattended:
-        return _run_unattended_monitoring(
-            request=replace(request, save_results=True),
-            config=config,
-            logger=logger,
-            interval_minutes=args.run_unattended,
-            run_single_analysis=_run_single_analysis,
-        )
-
-    # Normal mode: run once
-    try:
-        _run_single_analysis(
-            request=request,
-            config=config,
-            logger=logger,
-        )
-    except AzureHttpError as exc:
-        logger.error("Azure API request failed: %s", exc)  # noqa: TRY400 - user-facing API failure should stay concise
-        return 2
-
-    return 0
+        raise SystemExit(2) from exc
 
 
 def _run_unattended_monitoring(
