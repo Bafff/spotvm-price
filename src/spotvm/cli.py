@@ -598,6 +598,53 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
         raise
 
 
+def _fetch_analysis_inputs(
+    *,
+    client: AzureRestClient,
+    config: ToolConfig,
+) -> tuple[list[Any], list[Any]]:
+    placement_scores: list[Any] = []
+    if config.enable_placement:
+        placement_request = _build_placement_score_request(config)
+        placement_scores = fetch_placement_scores(client, placement_request)
+    resource_graph_request = _build_resource_graph_request(config)
+    historical_metrics = fetch_historical_metrics(client, resource_graph_request)
+    return placement_scores, historical_metrics
+
+
+def _build_ranked_candidates(
+    *,
+    placement_scores: list[Any],
+    historical_metrics: list[Any],
+    request: AnalysisRunRequest,
+    config: ToolConfig,
+) -> list[Any]:
+    candidates = merge_datasets(placement_scores, historical_metrics)
+
+    effective_no_max_limit = request.no_max_limit or request.explicit_sizes
+    candidates = filter_by_requirements(
+        candidates,
+        min_vcpu=request.min_vcpu,
+        min_ram=request.min_ram,
+        cpu_arch=config.cpu_arch,
+        no_max_limit=effective_no_max_limit,
+    )
+
+    ranked = rank_candidates(candidates)
+    ranked = enrich_with_performance(ranked, config.baseline_sku)
+    ranked = enrich_with_coremark(ranked)
+    ranked = filter_by_cost(
+        ranked,
+        max_price=request.max_price,
+        max_eviction=request.max_eviction,
+        min_performance=request.min_performance,
+    )
+
+    if config.result_limit:
+        ranked = ranked[: config.result_limit]
+    return ranked
+
+
 def _run_single_analysis(
     request: AnalysisRunRequest,
     config: ToolConfig,
@@ -616,41 +663,16 @@ def _run_single_analysis(
 
     authenticator = AzureAuthenticator()
     client = AzureRestClient(authenticator)
-
-    placement_scores = []
-    if config.enable_placement:
-        placement_request = _build_placement_score_request(config)
-        placement_scores = fetch_placement_scores(client, placement_request)
-    resource_graph_request = _build_resource_graph_request(config)
-    historical_metrics = fetch_historical_metrics(client, resource_graph_request)
-
-    candidates = merge_datasets(placement_scores, historical_metrics)
-
-    # Filter by hardware requirements (before ranking to reduce dataset)
-    # Use config values so config-file settings (cpu_arch, etc.) are honored
-    effective_no_max_limit = request.no_max_limit or request.explicit_sizes
-    candidates = filter_by_requirements(
-        candidates,
-        min_vcpu=request.min_vcpu,
-        min_ram=request.min_ram,
-        cpu_arch=config.cpu_arch,
-        no_max_limit=effective_no_max_limit,
+    placement_scores, historical_metrics = _fetch_analysis_inputs(
+        client=client,
+        config=config,
     )
-
-    ranked = rank_candidates(candidates)
-    ranked = enrich_with_performance(ranked, config.baseline_sku)
-    ranked = enrich_with_coremark(ranked)  # Add CoreMark benchmark data
-
-    # Filter by cost constraints (after enrichment for min_performance filter)
-    ranked = filter_by_cost(
-        ranked,
-        max_price=request.max_price,
-        max_eviction=request.max_eviction,
-        min_performance=request.min_performance,
+    ranked = _build_ranked_candidates(
+        placement_scores=placement_scores,
+        historical_metrics=historical_metrics,
+        request=request,
+        config=config,
     )
-
-    if config.result_limit:
-        ranked = ranked[: config.result_limit]
 
     def emit(*values: Any, **kwargs: Any) -> None:
         if config.emit_json:

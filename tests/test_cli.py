@@ -17,8 +17,10 @@ from spotvm.cli import (
     AnalysisRunRequest,
     _add_filtering_arguments,
     _add_history_arguments,
+    _build_ranked_candidates,
     _build_runtime_config,
     _emit_report_if_requested,
+    _fetch_analysis_inputs,
     _persist_analysis_outputs,
     _render_analysis_results,
     _resolve_requested_sizes,
@@ -892,6 +894,60 @@ class TestMainWithMocks:
         assert "Standard_D4s_v5" in captured.out
         assert "centralus" in captured.out
         assert "Placement" not in captured.out
+
+    def test_fetch_analysis_inputs_requests_placement_and_history_data(self, monkeypatch):
+        placement_marker = object()
+        historical_metric = _historical_metric("Standard_D4s_v5")
+        seen = _stub_analysis_fetches(
+            monkeypatch,
+            historical_metrics=[historical_metric],
+            placement_scores=[placement_marker],
+        )
+        config = ToolConfig(
+            subscription_id="sub-id",
+            regions=["centralus"],
+            sizes=["Standard_D4s_v5"],
+            enable_placement=True,
+        )
+
+        placement_scores, historical_metrics = _fetch_analysis_inputs(
+            client=object(),
+            config=config,
+        )
+
+        assert placement_scores == [placement_marker]
+        assert historical_metrics == [historical_metric]
+        placement_request = seen["placement_request"]
+        assert isinstance(placement_request, PlacementScoreRequest)
+        assert placement_request.subscription_id == "sub-id"
+        historical_request = seen["historical_request"]
+        assert isinstance(historical_request, ResourceGraphRequest)
+        assert historical_request.sizes == ["Standard_D4s_v5"]
+
+    def test_build_ranked_candidates_applies_filters_and_result_limit(self):
+        ranked = _build_ranked_candidates(
+            placement_scores=[],
+            historical_metrics=[
+                _historical_metric("Standard_D4s_v5", price_usd=0.08, eviction_rate=5.0),
+                _historical_metric("Standard_D2s_v5", price_usd=0.04, eviction_rate=5.0),
+                _historical_metric("Standard_D8s_v5", price_usd=0.20, eviction_rate=5.0),
+                _historical_metric("Standard_D16s_v5", price_usd=0.09, eviction_rate=20.0),
+            ],
+            request=_analysis_args(
+                max_price=0.10,
+                max_eviction=10.0,
+                min_performance=90.0,
+            ),
+            config=ToolConfig(
+                regions=["centralus"],
+                sizes=["Standard_D4s_v5", "Standard_D2s_v5", "Standard_D8s_v5", "Standard_D16s_v5"],
+                baseline_sku="Standard_D4s_v5",
+                result_limit=1,
+            ),
+        )
+
+        assert [candidate.vm_size for candidate in ranked] == ["Standard_D4s_v5"]
+        assert ranked[0].performance_relative == 100.0
 
     def test_explicit_sizes_bypass_bounded_hardware_window(self, monkeypatch, capsys):
         _stub_analysis_fetches(
