@@ -561,6 +561,36 @@ def _run_single_analysis(
     def emit_error(*values: Any, **kwargs: Any) -> None:
         print(*values, file=sys.stderr, **kwargs)
 
+    if _persist_analysis_outputs(
+        ranked,
+        request=request,
+        config=config,
+        logger=logger,
+        emit=emit,
+        emit_error=emit_error,
+    ):
+        return
+
+    _render_analysis_results(
+        ranked,
+        request=request,
+        config=config,
+        render_options=render_options,
+        emit=emit,
+    )
+
+
+def _persist_analysis_outputs(
+    ranked: list[Any],
+    *,
+    request: AnalysisRunRequest,
+    config: ToolConfig,
+    logger: logging.Logger,
+    emit,
+    emit_error,
+) -> bool:
+    _nc = request.no_color
+
     # Save results for historical analysis if requested (even if empty,
     # so automation/unattended monitoring records that a run completed)
     if request.save_results:
@@ -617,8 +647,19 @@ def _run_single_analysis(
             else:
                 logger.info("Saved report to %s", config.save_report)
         if config.emit_json:
-            return
+            return True
 
+    return False
+
+
+def _render_analysis_results(
+    ranked: list[Any],
+    *,
+    request: AnalysisRunRequest,
+    config: ToolConfig,
+    render_options: RenderOptions,
+    emit,
+) -> None:
     if not ranked:
         emit("No candidates match the specified filters. Try relaxing constraints.")
         return

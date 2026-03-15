@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,10 +12,18 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from spotvm.cli import AnalysisRunRequest, _run_single_analysis, build_parser, main
+from spotvm.cli import (
+    AnalysisRunRequest,
+    _persist_analysis_outputs,
+    _render_analysis_results,
+    _run_single_analysis,
+    build_parser,
+    main,
+)
 from spotvm.config import ToolConfig
 from spotvm.models import HistoricalMetrics
 from spotvm.placement_score import PlacementScoreRequest
+from spotvm.reporting import RenderOptions
 from spotvm.resource_graph import ResourceGraphRequest
 
 
@@ -52,6 +61,14 @@ def _historical_metric(
         eviction_rate=eviction_rate,
         eviction_last_updated=timestamp,
     )
+
+
+def _stdout_emitter(*values, **kwargs):
+    print(*values, **kwargs)  # noqa: T201
+
+
+def _stderr_emitter(*values, **kwargs):
+    print(*values, file=sys.stderr, **kwargs)  # noqa: T201
 
 
 def _stub_analysis_fetches(monkeypatch, *, historical_metrics, placement_scores=None):
@@ -746,6 +763,136 @@ class TestMainWithMocks:
         captured = capsys.readouterr()
         assert "Stopping monitoring after 1 consecutive unexpected errors" in captured.out
 
+    def test_persist_analysis_outputs_keeps_stdout_machine_readable_for_json(self, capsys):
+        candidate = SimpleNamespace(
+            recommendation_rank=1,
+            region="centralus",
+            availability_zone=None,
+            vm_size="Standard_D4s_v5",
+            cpu_arch="x64",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.01,
+            price_last_updated=None,
+            eviction_rate=1.0,
+            performance_relative=100.0,
+            price_per_performance=0.0001,
+            performance_basis="coremark",
+            performance_note=None,
+            coremark_score=67114,
+            coremark_per_vcpu=16778.5,
+            notes=None,
+        )
+        handled = _persist_analysis_outputs(
+            [candidate],
+            request=_analysis_args(),
+            config=ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], emit_json=True),
+            logger=MagicMock(),
+            emit=_stdout_emitter,
+            emit_error=_stderr_emitter,
+        )
+
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert handled is True
+        assert payload["candidates"][0]["vmSize"] == "Standard_D4s_v5"
+        assert payload["candidates"][0]["performanceBasis"] == "coremark"
+        assert captured.err == ""
+
+    @patch("spotvm.cli.export_to_csv", side_effect=PermissionError("disk full"))
+    def test_persist_analysis_outputs_reports_csv_failure_without_raising(self, mock_export_csv, capsys):
+        handled = _persist_analysis_outputs(
+            [object()],
+            request=_analysis_args(csv=Path("results.csv")),
+            config=ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"]),
+            logger=MagicMock(),
+            emit=_stdout_emitter,
+            emit_error=_stderr_emitter,
+        )
+
+        captured = capsys.readouterr()
+        assert handled is False
+        assert "Failed to export CSV" in captured.err
+        mock_export_csv.assert_called_once()
+
+    def test_persist_analysis_outputs_emits_empty_json_payload_only(self, capsys):
+        handled = _persist_analysis_outputs(
+            [],
+            request=_analysis_args(),
+            config=ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], emit_json=True),
+            logger=MagicMock(),
+            emit=_stdout_emitter,
+            emit_error=_stderr_emitter,
+        )
+
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert handled is True
+        assert payload["candidates"] == []
+        assert captured.err == ""
+
+    @patch("spotvm.cli.render_table")
+    def test_render_analysis_results_prints_empty_message_without_rendering(self, mock_render_table, capsys):
+        _render_analysis_results(
+            [],
+            request=_analysis_args(),
+            config=ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"]),
+            render_options=RenderOptions(colors_enabled=False),
+            emit=_stdout_emitter,
+        )
+
+        captured = capsys.readouterr()
+        assert "No candidates match the specified filters" in captured.out
+        mock_render_table.assert_not_called()
+
+    @patch("spotvm.cli.summarize_top_candidates", return_value=[])
+    @patch("spotvm.cli.render_table")
+    def test_render_analysis_results_explains_heuristic_marker_once(
+        self,
+        mock_render_table,
+        mock_summarize,
+        capsys,
+    ):
+        candidate = SimpleNamespace(
+            recommendation_rank=1,
+            region="centralus",
+            availability_zone=None,
+            vm_size="Standard_D4s_v4",
+            cpu_arch="x64",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.01,
+            price_last_updated=None,
+            eviction_rate=1.0,
+            performance_relative=100.0,
+            price_per_performance=0.0001,
+            performance_basis="heuristic",
+            performance_note="Perf % and Price/Perf use the vCPU/RAM heuristic because CoreMark data is unavailable for this comparison.",
+            coremark_score=None,
+            coremark_per_vcpu=None,
+            notes="Heuristic perf*",
+        )
+        mock_render_table.return_value = "RANKED TABLE\nHeuristic perf*"
+
+        _render_analysis_results(
+            [candidate],
+            request=_analysis_args(),
+            config=ToolConfig(
+                regions=["centralus"],
+                sizes=["Standard_D4s_v4"],
+                baseline_sku="Standard_D4s_v5",
+            ),
+            render_options=RenderOptions(colors_enabled=False),
+            emit=_stdout_emitter,
+        )
+
+        captured = capsys.readouterr()
+        assert "Heuristic perf*" in captured.out
+        assert "* Heuristic perf:" in captured.out
+        assert "comparable CoreMark data is unavailable" in captured.out
+        assert "Some Perf % / Price/Perf values use a vCPU/RAM heuristic" not in captured.out
+        mock_summarize.assert_called_once_with([candidate])
+
     @patch("spotvm.cli.AzureAuthenticator")
     @patch("spotvm.cli.AzureRestClient")
     @patch("spotvm.cli.fetch_historical_metrics")
@@ -1083,229 +1230,3 @@ class TestMainWithMocks:
         assert "Failed to save run results" in captured.err
         assert "RANKED TABLE" in captured.out
         logger.warning.assert_called()
-
-    @patch("spotvm.cli.AzureAuthenticator")
-    @patch("spotvm.cli.AzureRestClient")
-    @patch("spotvm.cli.fetch_historical_metrics")
-    @patch("spotvm.cli.filter_by_cost")
-    @patch("spotvm.cli.enrich_with_coremark")
-    @patch("spotvm.cli.enrich_with_performance")
-    @patch("spotvm.cli.rank_candidates")
-    @patch("spotvm.cli.filter_by_requirements")
-    @patch("spotvm.cli.merge_datasets")
-    @patch("spotvm.cli.summarize_top_candidates")
-    @patch("spotvm.cli.render_table")
-    def test_baseline_footer_explains_heuristic_marker_once(
-        self,
-        mock_render_table,
-        mock_summarize,
-        mock_merge,
-        mock_filter_requirements,
-        mock_rank,
-        mock_enrich_performance,
-        mock_enrich_coremark,
-        mock_filter_cost,
-        mock_fetch_hist,
-        mock_client_cls,
-        mock_auth_cls,
-        capsys,
-    ):
-        candidate = SimpleNamespace(
-            recommendation_rank=1,
-            region="centralus",
-            availability_zone=None,
-            vm_size="Standard_D4s_v4",
-            cpu_arch="x64",
-            placement_score=None,
-            quota_available=None,
-            price_usd=0.01,
-            price_last_updated=None,
-            eviction_rate=1.0,
-            performance_relative=100.0,
-            price_per_performance=0.0001,
-            performance_basis="heuristic",
-            performance_note="Perf % and Price/Perf use the vCPU/RAM heuristic because CoreMark data is unavailable for this comparison.",
-            coremark_score=None,
-            coremark_per_vcpu=None,
-            notes="Heuristic perf*",
-        )
-        mock_fetch_hist.return_value = []
-        mock_merge.return_value = [candidate]
-        mock_filter_requirements.return_value = [candidate]
-        mock_rank.return_value = [candidate]
-        mock_enrich_performance.return_value = [candidate]
-        mock_enrich_coremark.return_value = [candidate]
-        mock_filter_cost.return_value = [candidate]
-        mock_summarize.return_value = []
-        mock_render_table.return_value = "RANKED TABLE\nHeuristic perf*"
-
-        args = _analysis_args()
-        logger = MagicMock()
-        config = ToolConfig(
-            regions=["centralus"],
-            sizes=["Standard_D4s_v4"],
-            baseline_sku="Standard_D4s_v5",
-        )
-
-        _run_single_analysis(
-            request=args,
-            config=config,
-            logger=logger,
-        )
-
-        captured = capsys.readouterr()
-        assert "Heuristic perf*" in captured.out
-        assert "* Heuristic perf:" in captured.out
-        assert "comparable CoreMark data is unavailable" in captured.out
-        assert "Some Perf % / Price/Perf values use a vCPU/RAM heuristic" not in captured.out
-
-    @patch("spotvm.cli.AzureAuthenticator")
-    @patch("spotvm.cli.AzureRestClient")
-    @patch("spotvm.cli.fetch_historical_metrics")
-    @patch("spotvm.cli.filter_by_cost")
-    @patch("spotvm.cli.enrich_with_coremark")
-    @patch("spotvm.cli.enrich_with_performance")
-    @patch("spotvm.cli.rank_candidates")
-    @patch("spotvm.cli.filter_by_requirements")
-    @patch("spotvm.cli.merge_datasets")
-    @patch("spotvm.cli.summarize_top_candidates")
-    @patch("spotvm.cli.render_table")
-    def test_json_output_keeps_stdout_machine_readable(
-        self,
-        mock_render_table,
-        mock_summarize,
-        mock_merge,
-        mock_filter_requirements,
-        mock_rank,
-        mock_enrich_performance,
-        mock_enrich_coremark,
-        mock_filter_cost,
-        mock_fetch_hist,
-        mock_client_cls,
-        mock_auth_cls,
-        capsys,
-    ):
-        candidate = SimpleNamespace(
-            recommendation_rank=1,
-            region="centralus",
-            availability_zone=None,
-            vm_size="Standard_D4s_v5",
-            cpu_arch="x64",
-            placement_score=None,
-            quota_available=None,
-            price_usd=0.01,
-            price_last_updated=None,
-            eviction_rate=1.0,
-            performance_relative=100.0,
-            price_per_performance=0.0001,
-            performance_basis="coremark",
-            performance_note=None,
-            coremark_score=67114,
-            coremark_per_vcpu=16778.5,
-            notes=None,
-        )
-        mock_fetch_hist.return_value = []
-        mock_merge.return_value = [candidate]
-        mock_filter_requirements.return_value = [candidate]
-        mock_rank.return_value = [candidate]
-        mock_enrich_performance.return_value = [candidate]
-        mock_enrich_coremark.return_value = [candidate]
-        mock_filter_cost.return_value = [candidate]
-        mock_summarize.return_value = []
-        mock_render_table.return_value = "RANKED TABLE"
-
-        args = _analysis_args()
-        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], emit_json=True)
-
-        _run_single_analysis(
-            request=args,
-            config=config,
-            logger=MagicMock(),
-        )
-
-        captured = capsys.readouterr()
-        payload = json.loads(captured.out)
-        assert payload["candidates"][0]["vmSize"] == "Standard_D4s_v5"
-        assert payload["candidates"][0]["performanceBasis"] == "coremark"
-        assert "JSON Output:" not in captured.out
-        assert "RANKED TABLE" not in captured.out
-        assert captured.err == ""
-        mock_render_table.assert_not_called()
-
-    @patch("spotvm.cli.AzureAuthenticator")
-    @patch("spotvm.cli.AzureRestClient")
-    @patch("spotvm.cli.fetch_historical_metrics")
-    @patch("spotvm.cli.filter_by_cost", return_value=[])
-    @patch("spotvm.cli.enrich_with_coremark", return_value=[])
-    @patch("spotvm.cli.enrich_with_performance", return_value=[])
-    @patch("spotvm.cli.rank_candidates", return_value=[])
-    @patch("spotvm.cli.filter_by_requirements", return_value=[])
-    @patch("spotvm.cli.merge_datasets", return_value=[])
-    @patch("spotvm.cli.render_table")
-    def test_empty_ranked_results_emit_json_outputs_empty_payload_only(
-        self,
-        mock_render_table,
-        mock_merge,
-        mock_filter_requirements,
-        mock_rank,
-        mock_enrich_performance,
-        mock_enrich_coremark,
-        mock_filter_cost,
-        mock_fetch_hist,
-        mock_client_cls,
-        mock_auth_cls,
-        capsys,
-    ):
-        mock_fetch_hist.return_value = []
-
-        args = _analysis_args()
-
-        _run_single_analysis(
-            request=args,
-            config=ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], emit_json=True),
-            logger=MagicMock(),
-        )
-
-        captured = capsys.readouterr()
-        payload = json.loads(captured.out)
-        assert payload["candidates"] == []
-        assert captured.err == ""
-        mock_render_table.assert_not_called()
-
-    @patch("spotvm.cli.AzureAuthenticator")
-    @patch("spotvm.cli.AzureRestClient")
-    @patch("spotvm.cli.fetch_historical_metrics")
-    @patch("spotvm.cli.filter_by_cost", return_value=[])
-    @patch("spotvm.cli.enrich_with_coremark", return_value=[])
-    @patch("spotvm.cli.enrich_with_performance", return_value=[])
-    @patch("spotvm.cli.rank_candidates", return_value=[])
-    @patch("spotvm.cli.filter_by_requirements", return_value=[])
-    @patch("spotvm.cli.merge_datasets", return_value=[])
-    @patch("spotvm.cli.render_table")
-    def test_empty_ranked_results_print_message(
-        self,
-        mock_render_table,
-        mock_merge,
-        mock_filter_requirements,
-        mock_rank,
-        mock_enrich_performance,
-        mock_enrich_coremark,
-        mock_filter_cost,
-        mock_fetch_hist,
-        mock_client_cls,
-        mock_auth_cls,
-        capsys,
-    ):
-        mock_fetch_hist.return_value = []
-
-        args = _analysis_args()
-
-        _run_single_analysis(
-            request=args,
-            config=ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"]),
-            logger=MagicMock(),
-        )
-
-        captured = capsys.readouterr()
-        assert "No candidates match the specified filters" in captured.out
-        mock_render_table.assert_not_called()
