@@ -691,7 +691,7 @@ class TestMainWithMocks:
         assert "Data points: 9" in captured.out
         assert "Python: pd.read_csv('/tmp/history.csv')" in captured.out
 
-    @patch("spotvm.cli.DEFAULT_MAX_UNATTENDED_FAILURES", 1)
+    @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 1)
     @patch("spotvm.cli.time.sleep")
     @patch("spotvm.cli.signal.signal")
     def test_run_unattended_monitoring_stops_after_unexpected_failure_threshold(
@@ -725,7 +725,7 @@ class TestMainWithMocks:
         captured = capsys.readouterr()
         assert "Stopping monitoring after 1 consecutive unexpected errors" in captured.out
 
-    @patch("spotvm.cli.DEFAULT_MAX_UNATTENDED_FAILURES", 1)
+    @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 1)
     @patch("spotvm.cli.signal.signal")
     def test_run_unattended_monitoring_treats_azure_http_errors_as_non_fatal(
         self,

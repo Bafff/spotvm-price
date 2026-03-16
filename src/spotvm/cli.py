@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from . import config as config_defaults
 from .analysis import (
     enrich_with_coremark,
     enrich_with_performance,
@@ -23,7 +24,6 @@ from .analysis import (
 )
 from .auth import AzureAuthenticator
 from .config import (
-    DEFAULT_MAX_UNATTENDED_FAILURES,
     VALID_CPU_ARCHS,
     ToolConfig,
     load_config_file,
@@ -509,16 +509,16 @@ def _run_unattended_monitoring(
             logger.exception(
                 "Unexpected error in unattended run (%d/%d)",
                 unexpected_error_count,
-                DEFAULT_MAX_UNATTENDED_FAILURES,
+                config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES,
             )
-            if unexpected_error_count >= DEFAULT_MAX_UNATTENDED_FAILURES:
+            if unexpected_error_count >= config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES:
                 logger.error(  # noqa: TRY400 - traceback already emitted immediately above
                     "Stopping unattended mode after %d consecutive unexpected errors",
-                    DEFAULT_MAX_UNATTENDED_FAILURES,
+                    config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES,
                 )
                 emit(
                     f"\n{'[x]' if _nc else '❌'} Stopping monitoring after "
-                    f"{DEFAULT_MAX_UNATTENDED_FAILURES} consecutive unexpected errors."
+                    f"{config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES} consecutive unexpected errors."
                 )
                 return 1
             logger.info("Continuing despite error...")
