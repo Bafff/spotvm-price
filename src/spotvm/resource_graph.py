@@ -221,18 +221,24 @@ def _extract_eviction(entry: dict | None) -> tuple[float | None, datetime | None
     rate = None
 
     if eviction_str:
-        # Try to parse as direct number first
-        rate = _to_float(eviction_str)
+        cleaned_value = eviction_str.strip() if isinstance(eviction_str, str) else eviction_str
+
+        # Parse plain numeric strings directly. Range/plus forms need bespoke parsing
+        # to avoid warning before the fallback path succeeds.
+        if not isinstance(cleaned_value, str):
+            rate = _to_float(cleaned_value)
+        elif re.fullmatch(r"\d+(?:\.\d+)?", cleaned_value):
+            rate = _to_float(cleaned_value)
 
         # If that fails, try to extract from range (e.g., "5-10" -> 10, "0-5" -> 5)
-        if rate is None and isinstance(eviction_str, str):
+        if rate is None and isinstance(cleaned_value, str):
             # Extract upper bound from range like "5-10" -> 10
-            match = re.search(r"-(\d+(?:\.\d+)?)", eviction_str)
+            match = re.search(r"-(\d+(?:\.\d+)?)", cleaned_value)
             if match:
                 rate = _to_float(match.group(1))
             else:
                 # Try single number like "5" -> 5
-                match = re.search(r"^(\d+(?:\.\d+)?)", eviction_str)
+                match = re.search(r"^(\d+(?:\.\d+)?)", cleaned_value)
                 if match:
                     rate = _to_float(match.group(1))
         if rate is None:
