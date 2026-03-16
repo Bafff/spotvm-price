@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import spotvm.cli as cli
 from spotvm.cli import (
     AnalysisRunRequest,
     _add_filtering_arguments,
@@ -806,6 +807,85 @@ class TestMainWithMocks:
         captured = capsys.readouterr()
         assert "Monitoring mode started" in captured.out
         assert "Monitoring stopped after 1 run(s)" in captured.out
+
+    @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 2)
+    def test_run_unattended_iteration_stops_after_failure_threshold(self, capsys):
+        logger = MagicMock()
+        request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+        run_single_analysis = MagicMock(side_effect=RuntimeError("boom"))
+
+        unexpected_error_count, exit_code = cli._run_unattended_iteration(
+            request=request,
+            config=config,
+            logger=logger,
+            run_single_analysis=run_single_analysis,
+            unexpected_error_count=1,
+            emit=_stdout_emitter,
+        )
+
+        assert unexpected_error_count == 2
+        assert exit_code == 1
+        logger.exception.assert_called_once_with(
+            "Unexpected error in unattended run (%d/%d)",
+            2,
+            2,
+        )
+        logger.error.assert_called_once_with(
+            "Stopping unattended mode after %d consecutive unexpected errors",
+            2,
+        )
+        captured = capsys.readouterr()
+        assert "Stopping monitoring after 2 consecutive unexpected errors" in captured.out
+
+    @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 2)
+    def test_run_unattended_iteration_resets_error_count_after_azure_http_error(self):
+        logger = MagicMock()
+        request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+        run_single_analysis = MagicMock(
+            side_effect=AzureHttpError("https://example.test", 429, "busy")
+        )
+
+        unexpected_error_count, exit_code = cli._run_unattended_iteration(
+            request=request,
+            config=config,
+            logger=logger,
+            run_single_analysis=run_single_analysis,
+            unexpected_error_count=1,
+            emit=_stdout_emitter,
+        )
+
+        assert unexpected_error_count == 0
+        assert exit_code is None
+        logger.exception.assert_not_called()
+        logger.error.assert_called_once_with(
+            "Azure API request failed: Azure API request failed (429) for https://example.test: busy"
+        )
+        logger.info.assert_called_once_with("Continuing despite error...")
+
+    def test_sleep_until_next_run_emits_schedule_and_stops_early(self, capsys):
+        logger = MagicMock()
+        slept: list[int] = []
+        should_stop_calls = iter([False, False, True])
+
+        def should_stop() -> bool:
+            return next(should_stop_calls)
+
+        cli._sleep_until_next_run(
+            interval_minutes=1,
+            logger=logger,
+            emit=_stdout_emitter,
+            sleep=lambda seconds: slept.append(seconds),
+            should_stop=should_stop,
+            now=lambda: datetime(2025, 1, 1, 12, 0, 0),
+        )
+
+        assert slept == [1, 1]
+        logger.info.assert_called_once_with("Next run at 12:01:00")
+        captured = capsys.readouterr()
+        assert "Sleeping for 1 minutes..." in captured.out
+        assert "Next run at: 12:01:00" in captured.out
 
     @patch("spotvm.cache.clear")
     def test_run_analysis_mode_clears_cache_before_single_run(self, mock_clear):
