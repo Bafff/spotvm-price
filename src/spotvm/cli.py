@@ -22,14 +22,18 @@ from .analysis import (
     summarize_top_candidates,
 )
 from .auth import AzureAuthenticator
-from .config import VALID_CPU_ARCHS, ToolConfig, load_config_file, merge_cli_overrides
+from .config import (
+    DEFAULT_MAX_UNATTENDED_FAILURES,
+    VALID_CPU_ARCHS,
+    ToolConfig,
+    load_config_file,
+    merge_cli_overrides,
+)
 from .http_client import AzureHttpError, AzureRestClient
 from .placement_score import PlacementScoreRequest, fetch_placement_scores
 from .reporting import RenderOptions, export_to_csv, initialize_color_output, render_table
 from .resource_graph import ResourceGraphRequest, fetch_historical_metrics
 from .vm_specs import discover_skus
-
-MAX_UNATTENDED_FAILURES = 3
 
 
 @dataclass(frozen=True)
@@ -274,27 +278,68 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
     args = parser.parse_args(argv)
+    logger = _build_cli_logger(args)
+    history_rc = _run_history_mode_if_requested(
+        args=args,
+        logger=logger,
+        run_history_analysis=_run_history_analysis,
+    )
+    if history_rc is not None:
+        return history_rc
+    prepared = _prepare_analysis_execution(
+        parser=parser,
+        args=args,
+        logger=logger,
+    )
+    if isinstance(prepared, int):
+        return prepared
+    config, request = prepared
+    return _run_analysis_mode(
+        request=request,
+        config=config,
+        logger=logger,
+        clear_cache=args.clear_cache,
+        interval_minutes=args.run_unattended,
+        run_single_analysis=_run_single_analysis,
+        run_unattended_monitoring=_run_unattended_monitoring,
+    )
 
+
+def _build_cli_logger(args: argparse.Namespace) -> logging.Logger:
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.WARNING,
         format="%(asctime)s %(levelname)s %(message)s",
     )
     logger = logging.getLogger("spotvm")
-    # Keep our own logger at INFO so our messages still appear
     if not args.verbose:
         logger.setLevel(logging.INFO)
     if not args.no_color:
         initialize_color_output()
+    return logger
 
-    # Handle --analyze-history mode (separate from normal runs)
-    if args.analyze_history:
-        return _run_history_analysis(
-            results_dir=args.results_dir,
-            depth=args.history_depth,
-            history_output=args.history_output,
-            logger=logger,
-        )
 
+def _run_history_mode_if_requested(
+    *,
+    args: argparse.Namespace,
+    logger: logging.Logger,
+    run_history_analysis,
+) -> int | None:
+    if not args.analyze_history:
+        return None
+    return run_history_analysis(
+        results_dir=args.results_dir,
+        depth=args.history_depth,
+        history_output=args.history_output,
+        logger=logger,
+    )
+
+
+def _prepare_analysis_execution(
+    *,
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    logger: logging.Logger,
+) -> tuple[ToolConfig, AnalysisRunRequest] | int:
     base_config: dict[str, Any] = {}
     if args.config:
         base_config = load_config_file(args.config)
@@ -316,15 +361,7 @@ def main(argv: list[str] | None = None) -> int:
         sizes=sizes,
     )
     request = _build_analysis_run_request(args, save_results=args.save_results)
-    return _run_analysis_mode(
-        request=request,
-        config=config,
-        logger=logger,
-        clear_cache=args.clear_cache,
-        interval_minutes=args.run_unattended,
-        run_single_analysis=_run_single_analysis,
-        run_unattended_monitoring=_run_unattended_monitoring,
-    )
+    return config, request
 
 
 def _build_runtime_config(
@@ -472,16 +509,16 @@ def _run_unattended_monitoring(
             logger.exception(
                 "Unexpected error in unattended run (%d/%d)",
                 unexpected_error_count,
-                MAX_UNATTENDED_FAILURES,
+                DEFAULT_MAX_UNATTENDED_FAILURES,
             )
-            if unexpected_error_count >= MAX_UNATTENDED_FAILURES:
+            if unexpected_error_count >= DEFAULT_MAX_UNATTENDED_FAILURES:
                 logger.error(  # noqa: TRY400 - traceback already emitted immediately above
                     "Stopping unattended mode after %d consecutive unexpected errors",
-                    MAX_UNATTENDED_FAILURES,
+                    DEFAULT_MAX_UNATTENDED_FAILURES,
                 )
                 emit(
                     f"\n{'[x]' if _nc else '❌'} Stopping monitoring after "
-                    f"{MAX_UNATTENDED_FAILURES} consecutive unexpected errors."
+                    f"{DEFAULT_MAX_UNATTENDED_FAILURES} consecutive unexpected errors."
                 )
                 return 1
             logger.info("Continuing despite error...")

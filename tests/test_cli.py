@@ -17,17 +17,20 @@ from spotvm.cli import (
     AnalysisRunRequest,
     _add_filtering_arguments,
     _add_history_arguments,
+    _build_cli_logger,
     _build_ranked_candidates,
     _build_runtime_config,
     _discover_requested_sizes,
     _emit_report_if_requested,
     _fetch_analysis_inputs,
     _persist_analysis_outputs,
+    _prepare_analysis_execution,
     _render_analysis_results,
     _resolve_effective_cpu_arch,
     _resolve_requested_sizes,
     _run_analysis_mode,
     _run_history_analysis,
+    _run_history_mode_if_requested,
     _run_single_analysis,
     _run_unattended_monitoring,
     _save_run_results_if_requested,
@@ -600,18 +603,36 @@ class TestToolConfigValidation:
 class TestMainWithMocks:
     """Tests for main() with mocked Azure API calls."""
 
-    @patch("spotvm.cli._run_single_analysis")
-    @patch("spotvm.cli._run_history_analysis", return_value=0)
-    def test_main_analyze_history_delegates_and_skips_single_run(
+    @patch("spotvm.cli.initialize_color_output")
+    @patch("spotvm.cli.logging.getLogger")
+    @patch("spotvm.cli.logging.basicConfig")
+    def test_build_cli_logger_configures_logging_and_color_output(
         self,
-        mock_run_history_analysis,
-        mock_run_single_analysis,
-        tmp_path,
+        mock_basic_config,
+        mock_get_logger,
+        mock_initialize_color_output,
     ):
+        parser = build_parser()
+        args = parser.parse_args(["--regions", "centralus", "--sizes", "Standard_D4s_v5"])
+        logger = MagicMock()
+        mock_get_logger.return_value = logger
+
+        returned_logger = _build_cli_logger(args)
+
+        assert returned_logger is logger
+        mock_basic_config.assert_called_once_with(
+            level=logging.WARNING,
+            format="%(asctime)s %(levelname)s %(message)s",
+        )
+        mock_get_logger.assert_called_once_with("spotvm")
+        logger.setLevel.assert_called_once_with(logging.INFO)
+        mock_initialize_color_output.assert_called_once_with()
+
+    def test_run_history_mode_if_requested_delegates_to_history_helper(self, tmp_path):
         results_dir = tmp_path / "results"
         history_output = tmp_path / "custom-history.csv"
-
-        rc = main(
+        parser = build_parser()
+        args = parser.parse_args(
             [
                 "--analyze-history",
                 "--results-dir",
@@ -623,14 +644,21 @@ class TestMainWithMocks:
                 "--no-color",
             ]
         )
+        logger = MagicMock()
+        run_history_analysis = MagicMock(return_value=0)
+
+        rc = _run_history_mode_if_requested(
+            args=args,
+            logger=logger,
+            run_history_analysis=run_history_analysis,
+        )
 
         assert rc == 0
-        mock_run_history_analysis.assert_called_once()
-        kwargs = mock_run_history_analysis.call_args.kwargs
+        run_history_analysis.assert_called_once()
+        kwargs = run_history_analysis.call_args.kwargs
         assert kwargs["results_dir"] == results_dir
         assert kwargs["depth"] == 7
         assert kwargs["history_output"] == history_output
-        mock_run_single_analysis.assert_not_called()
 
     @patch("spotvm.history.analyze_history", return_value=(3, 9, Path("/tmp/history.csv")))
     def test_run_history_analysis_uses_default_output_path_and_prints_summary(
@@ -663,7 +691,7 @@ class TestMainWithMocks:
         assert "Data points: 9" in captured.out
         assert "Python: pd.read_csv('/tmp/history.csv')" in captured.out
 
-    @patch("spotvm.cli.MAX_UNATTENDED_FAILURES", 1)
+    @patch("spotvm.cli.DEFAULT_MAX_UNATTENDED_FAILURES", 1)
     @patch("spotvm.cli.time.sleep")
     @patch("spotvm.cli.signal.signal")
     def test_run_unattended_monitoring_stops_after_unexpected_failure_threshold(
@@ -697,7 +725,7 @@ class TestMainWithMocks:
         captured = capsys.readouterr()
         assert "Stopping monitoring after 1 consecutive unexpected errors" in captured.out
 
-    @patch("spotvm.cli.MAX_UNATTENDED_FAILURES", 1)
+    @patch("spotvm.cli.DEFAULT_MAX_UNATTENDED_FAILURES", 1)
     @patch("spotvm.cli.signal.signal")
     def test_run_unattended_monitoring_treats_azure_http_errors_as_non_fatal(
         self,
@@ -1036,39 +1064,9 @@ class TestMainWithMocks:
         explicit = capsys.readouterr()
         assert "Standard_D64s_v5" in explicit.out
 
-    @patch("spotvm.cli._run_single_analysis")
-    def test_cli_sizes_mark_run_as_explicit_for_hardware_window(
-        self,
-        mock_run_single_analysis,
-    ):
-        rc = main(
-            [
-                "--regions",
-                "centralus",
-                "--sizes",
-                "Standard_D64s_v5",
-                "--min-vcpu",
-                "4",
-                "--min-ram",
-                "16",
-                "--no-color",
-            ]
-        )
-
-        assert rc == 0
-        request = mock_run_single_analysis.call_args.kwargs["request"]
-        assert request.explicit_sizes is True
-
-    @patch("spotvm.cli._run_single_analysis")
-    def test_analysis_run_request_copies_cli_execution_fields(
-        self,
-        mock_run_single_analysis,
-        tmp_path,
-    ):
-        csv_path = tmp_path / "out.csv"
-        results_dir = tmp_path / "results"
-
-        rc = main(
+    def test_prepare_analysis_execution_builds_config_and_request(self, tmp_path):
+        parser = build_parser()
+        args = parser.parse_args(
             [
                 "--regions",
                 "centralus",
@@ -1089,15 +1087,22 @@ class TestMainWithMocks:
                 "--no-max-limit",
                 "--save-results",
                 "--csv",
-                str(csv_path),
+                str(tmp_path / "out.csv"),
                 "--results-dir",
-                str(results_dir),
+                str(tmp_path / "results"),
                 "--no-color",
             ]
         )
+        logger = MagicMock()
 
-        assert rc == 0
-        request = mock_run_single_analysis.call_args.kwargs["request"]
+        config, request = _prepare_analysis_execution(
+            parser=parser,
+            args=args,
+            logger=logger,
+        )
+
+        assert config.sizes == ["Standard_D64s_v5"]
+        assert config.baseline_sku == "Standard_D4as_v6"
         assert request.no_color is True
         assert request.min_vcpu == 4
         assert request.min_ram == 16
@@ -1106,9 +1111,39 @@ class TestMainWithMocks:
         assert request.max_price == 0.10
         assert request.max_eviction == 10.0
         assert request.min_performance == 80.0
-        assert request.csv == csv_path
-        assert request.results_dir == results_dir
+        assert request.csv == tmp_path / "out.csv"
+        assert request.results_dir == tmp_path / "results"
         assert request.save_results is True
+
+    @patch("spotvm.cli.discover_skus", return_value=[])
+    def test_prepare_analysis_execution_returns_one_when_auto_discovery_finds_no_sizes(
+        self,
+        mock_discover_skus,
+    ):
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "--regions",
+                "centralus",
+                "--min-vcpu",
+                "4",
+            ]
+        )
+        logger = MagicMock()
+
+        rc = _prepare_analysis_execution(
+            parser=parser,
+            args=args,
+            logger=logger,
+        )
+
+        assert rc == 1
+        mock_discover_skus.assert_called_once_with(
+            min_vcpu=4,
+            min_ram=None,
+            cpu_arch=None,
+        )
+        logger.error.assert_called_once_with("No SKUs found matching specified requirements")
 
     def test_run_single_analysis_uses_analysis_run_request(self, monkeypatch, capsys, tmp_path):
         seen = _stub_analysis_fetches(

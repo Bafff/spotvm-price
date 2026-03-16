@@ -15,6 +15,7 @@ except ImportError:  # pragma: no cover - optional dependency
 
 
 DEFAULT_CACHE_TTL_MINUTES = 15
+DEFAULT_MAX_UNATTENDED_FAILURES = 3
 DEFAULT_OS_TYPE = "linux"
 VALID_OS_TYPES = {"linux", "windows"}
 VALID_CPU_ARCHS = {"x64", "arm"}
