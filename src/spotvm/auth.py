@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
+from typing import cast
 
 from azure.identity import DefaultAzureCredential
 
@@ -33,9 +34,9 @@ class AzureAuthenticator:
             if credential is None:
                 raise RuntimeError("Azure credential initialization failed")  # noqa: TRY003
             access_token = credential.get_token(self.scope)
-            self._cached_token = access_token.token
+            self._cached_token = cast(str, access_token.token)
             self._cached_expiry = access_token.expires_on
-            return access_token.token
+            return cast(str, access_token.token)
 
 
 def _not_expired(expiry: int | None) -> bool:

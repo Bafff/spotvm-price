@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+
 from spotvm import reporting
 from spotvm.models import CandidateInsight
 from spotvm.reporting import (
@@ -14,8 +15,13 @@ from spotvm.reporting import (
     render_table,
 )
 
-COLOR = lambda: reporting.RenderOptions(colors_enabled=True)
-NO_COLOR = lambda: reporting.RenderOptions(colors_enabled=False)
+
+def COLOR():
+    return reporting.RenderOptions(colors_enabled=True)
+
+
+def NO_COLOR():
+    return reporting.RenderOptions(colors_enabled=False)
 
 
 def test_render_table_formats_columns():

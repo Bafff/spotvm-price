@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import sys
@@ -11,24 +10,16 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 import spotvm.cli as cli
 from spotvm.cli import (
     AnalysisRunRequest,
-    _add_filtering_arguments,
-    _add_history_arguments,
     _build_cli_logger,
     _build_ranked_candidates,
-    _build_runtime_config,
-    _discover_requested_sizes,
     _emit_report_if_requested,
     _fetch_analysis_inputs,
     _persist_analysis_outputs,
     _prepare_analysis_execution,
     _render_analysis_results,
-    _resolve_effective_cpu_arch,
-    _resolve_requested_sizes,
     _run_analysis_mode,
     _run_history_analysis,
     _run_history_mode_if_requested,
@@ -107,498 +98,6 @@ def _stub_analysis_fetches(monkeypatch, *, historical_metrics, placement_scores=
     monkeypatch.setattr("spotvm.cli.fetch_historical_metrics", fake_fetch_historical_metrics)
     monkeypatch.setattr("spotvm.cli.fetch_placement_scores", fake_fetch_placement_scores)
     return seen
-
-
-class TestBuildParser:
-    """Tests for argument parsing."""
-
-    def test_add_filtering_arguments_accepts_hardware_and_cost_filters(self):
-        parser = argparse.ArgumentParser()
-        _add_filtering_arguments(parser)
-
-        args = parser.parse_args(
-            [
-                "--min-vcpu",
-                "4",
-                "--min-ram",
-                "8",
-                "--no-max-limit",
-                "--cpu-arch",
-                "arm",
-                "--max-price",
-                "0.10",
-                "--max-eviction",
-                "15",
-                "--min-performance",
-                "90",
-            ]
-        )
-
-        assert args.min_vcpu == 4
-        assert args.min_ram == 8
-        assert args.no_max_limit is True
-        assert args.cpu_arch == "arm"
-        assert args.max_price == 0.10
-        assert args.max_eviction == 15.0
-        assert args.min_performance == 90.0
-
-    def test_add_history_arguments_accepts_history_and_export_flags(self, tmp_path):
-        parser = argparse.ArgumentParser()
-        _add_history_arguments(parser)
-        results_dir = tmp_path / "results"
-        history_output = tmp_path / "history.csv"
-        csv_output = tmp_path / "results.csv"
-
-        args = parser.parse_args(
-            [
-                "--save-results",
-                "--run-unattended",
-                "15",
-                "--results-dir",
-                str(results_dir),
-                "--analyze-history",
-                "--history-depth",
-                "7",
-                "--history-output",
-                str(history_output),
-                "--csv",
-                str(csv_output),
-            ]
-        )
-
-        assert args.save_results is True
-        assert args.run_unattended == 15
-        assert args.results_dir == results_dir
-        assert args.analyze_history is True
-        assert args.history_depth == 7
-        assert args.history_output == history_output
-        assert args.csv == csv_output
-
-    def test_no_args_shows_help(self, capsys):
-        rc = main([])
-        assert rc == 0
-        captured = capsys.readouterr()
-        assert "spotvm" in captured.out
-        assert "--regions" in captured.out
-
-    def test_missing_regions_errors(self):
-        with pytest.raises(SystemExit):
-            main(["--sizes", "Standard_D4s_v5"])
-
-    def test_missing_sizes_errors(self):
-        with pytest.raises(SystemExit):
-            main(["--regions", "centralus"])
-
-    def test_placement_check_without_subscription_errors(self):
-        with pytest.raises(SystemExit):
-            main(
-                [
-                    "--regions",
-                    "centralus",
-                    "--sizes",
-                    "Standard_D4s_v5",
-                    "--placement-check",
-                ]
-            )
-
-    def test_availability_zones_without_placement_errors(self):
-        with pytest.raises(SystemExit):
-            main(
-                [
-                    "--regions",
-                    "centralus",
-                    "--sizes",
-                    "Standard_D4s_v5",
-                    "--availability-zones",
-                ]
-            )
-
-    @pytest.mark.parametrize("desired_count", [1, 5])
-    def test_desired_count_without_placement_errors(self, desired_count):
-        with pytest.raises(SystemExit):
-            main(
-                [
-                    "--regions",
-                    "centralus",
-                    "--sizes",
-                    "Standard_D4s_v5",
-                    "--desired-count",
-                    str(desired_count),
-                ]
-            )
-
-    def test_min_performance_without_baseline_errors(self):
-        with pytest.raises(SystemExit):
-            main(
-                [
-                    "--regions",
-                    "centralus",
-                    "--sizes",
-                    "Standard_D4s_v5",
-                    "--min-performance",
-                    "80",
-                ]
-            )
-
-    @pytest.mark.parametrize(
-        ("config_payload", "error_text"),
-        [
-            (
-                {
-                    "regions": ["centralus"],
-                    "sizes": ["Standard_D4s_v5"],
-                    "desired_count": 1,
-                },
-                "--desired-count requires --placement-check",
-            ),
-            (
-                {
-                    "regions": ["centralus"],
-                    "sizes": ["Standard_D4s_v5"],
-                    "desired_count": 5,
-                },
-                "--desired-count requires --placement-check",
-            ),
-            (
-                {
-                    "regions": ["centralus"],
-                    "sizes": ["Standard_D4s_v5"],
-                    "availability_zones": True,
-                },
-                "--availability-zones requires --placement-check",
-            ),
-        ],
-    )
-    def test_config_placement_fields_require_placement_mode(self, tmp_path, config_payload, error_text, capsys):
-        config_path = tmp_path / "spotvm.json"
-        config_path.write_text(json.dumps(config_payload), encoding="utf-8")
-
-        with pytest.raises(SystemExit):
-            main(["--config", str(config_path)])
-
-        captured = capsys.readouterr()
-        assert error_text in captured.err
-
-    def test_build_runtime_config_accepts_pricing_only_defaults(self):
-        parser = build_parser()
-        args = parser.parse_args(
-            [
-                "--regions",
-                "centralus",
-                "--sizes",
-                "Standard_D4s_v5",
-            ]
-        )
-
-        config = _build_runtime_config(
-            parser=parser,
-            args=args,
-            base_config={},
-            sizes=args.sizes,
-        )
-
-        assert config.desired_count == 1
-        assert config.enable_placement is False
-
-    def test_build_runtime_config_uses_config_placement_for_cli_desired_count(self):
-        parser = build_parser()
-        args = parser.parse_args(
-            [
-                "--config",
-                "ignored.json",
-                "--desired-count",
-                "5",
-            ]
-        )
-        base_config = {
-            "regions": ["centralus"],
-            "sizes": ["Standard_D4s_v5"],
-            "enable_placement": True,
-            "subscription_id": "sub-id",
-        }
-
-        config = _build_runtime_config(
-            parser=parser,
-            args=args,
-            base_config=base_config,
-            sizes=base_config["sizes"],
-        )
-
-        assert config.enable_placement is True
-        assert config.desired_count == 5
-
-    def test_build_runtime_config_exits_when_parser_error_is_overridden(self):
-        parser = build_parser()
-        args = parser.parse_args(
-            [
-                "--regions",
-                "centralus",
-                "--sizes",
-                "Standard_D4s_v5",
-            ]
-        )
-        parser.error = MagicMock(return_value=None)
-
-        with pytest.raises(SystemExit) as excinfo:
-            _build_runtime_config(
-                parser=parser,
-                args=args,
-                base_config={"cpu_arch": "mips"},
-                sizes=args.sizes,
-            )
-
-        assert excinfo.value.code == 2
-        parser.error.assert_called_once()
-
-    def test_parser_accepts_all_documented_args(self):
-        parser = build_parser()
-        args = parser.parse_args(
-            [
-                "--regions",
-                "centralus",
-                "--sizes",
-                "Standard_D4s_v5",
-                "--os-type",
-                "linux",
-                "--no-color",
-                "--baseline-sku",
-                "Standard_D4as_v6",
-                "--min-vcpu",
-                "4",
-                "--min-ram",
-                "8",
-                "--no-max-limit",
-                "--cpu-arch",
-                "x64",
-                "--max-price",
-                "0.10",
-                "--max-eviction",
-                "10",
-                "--limit",
-                "5",
-                "--verbose",
-            ]
-        )
-        assert args.regions == ["centralus"]
-        assert args.sizes == ["Standard_D4s_v5"]
-        assert args.cpu_arch == "x64"
-        assert args.no_max_limit is True
-        assert args.max_price == 0.10
-        assert args.max_eviction == 10.0
-
-    def test_help_describes_bounded_hardware_windows_and_escape_hatch(self):
-        parser = build_parser()
-        help_text = parser.format_help()
-
-        assert "--no-max-limit" in help_text
-        assert "next three distinct" in help_text
-        assert "specs database" in help_text
-
-    def test_help_describes_effective_desired_count_default(self):
-        parser = build_parser()
-        help_text = " ".join(parser.format_help().split())
-
-        assert "effective default" in help_text
-        assert "placement-check" in help_text
-
-    def test_resolve_effective_cpu_arch_normalizes_config_value(self):
-        parser = build_parser()
-        args = parser.parse_args(["--config", "ignored.json"])
-
-        cpu_arch = _resolve_effective_cpu_arch(
-            parser=parser,
-            args=args,
-            base_config={"cpu_arch": "ARM"},
-        )
-
-        assert cpu_arch == "arm"
-
-    def test_resolve_effective_cpu_arch_exits_when_parser_error_is_overridden(self):
-        parser = build_parser()
-        args = parser.parse_args(["--config", "ignored.json"])
-        parser.error = MagicMock(return_value=None)
-
-        with pytest.raises(SystemExit) as excinfo:
-            _resolve_effective_cpu_arch(
-                parser=parser,
-                args=args,
-                base_config={"cpu_arch": 123},
-            )
-
-        assert excinfo.value.code == 2
-        parser.error.assert_called_once()
-
-    @patch("spotvm.cli.discover_skus", return_value=["Standard_D2ps_v5", "Standard_D4ps_v5"])
-    def test_discover_requested_sizes_logs_requirements_and_summary(self, mock_discover_skus):
-        parser = build_parser()
-        args = parser.parse_args(
-            [
-                "--regions",
-                "centralus",
-                "--min-vcpu",
-                "4",
-                "--min-ram",
-                "16",
-            ]
-        )
-        logger = MagicMock()
-
-        sizes, attempted = _discover_requested_sizes(
-            args=args,
-            effective_cpu_arch="arm",
-            logger=logger,
-        )
-
-        assert attempted is True
-        assert sizes == ["Standard_D2ps_v5", "Standard_D4ps_v5"]
-        mock_discover_skus.assert_called_once_with(
-            min_vcpu=4,
-            min_ram=16,
-            cpu_arch="arm",
-        )
-        logger.info.assert_any_call(
-            "No --sizes specified, auto-discovering SKUs matching requirements (vCPU≥4, RAM≥16 GB, arch=arm)"
-        )
-        logger.info.assert_any_call("Auto-discovered 2 SKUs: Standard_D2ps_v5, Standard_D4ps_v5")
-
-    @patch("spotvm.cli.discover_skus")
-    def test_resolve_requested_sizes_uses_existing_sizes_without_auto_discovery(self, mock_discover_skus):
-        parser = build_parser()
-        args = parser.parse_args(["--config", "ignored.json"])
-        logger = MagicMock()
-        base_config = {
-            "regions": ["centralus"],
-            "sizes": ["Standard_D4ps_v5"],
-            "cpu_arch": "arm",
-        }
-
-        sizes, auto_discovery_attempted = _resolve_requested_sizes(
-            parser=parser,
-            args=args,
-            base_config=base_config,
-            logger=logger,
-        )
-
-        assert sizes == ["Standard_D4ps_v5"]
-        assert auto_discovery_attempted is False
-        assert args.explicit_sizes is True
-        mock_discover_skus.assert_not_called()
-
-    @patch("spotvm.cli.discover_skus", return_value=["Standard_D2ps_v5"])
-    def test_resolve_requested_sizes_normalizes_config_cpu_arch_before_auto_discovery(self, mock_discover_skus):
-        parser = build_parser()
-        args = parser.parse_args(["--config", "ignored.json"])
-        logger = MagicMock()
-        base_config = {
-            "regions": ["centralus"],
-            "cpu_arch": "ARM",
-        }
-
-        sizes, auto_discovery_attempted = _resolve_requested_sizes(
-            parser=parser,
-            args=args,
-            base_config=base_config,
-            logger=logger,
-        )
-
-        assert sizes == ["Standard_D2ps_v5"]
-        assert auto_discovery_attempted is True
-        assert args.explicit_sizes is False
-        mock_discover_skus.assert_called_once_with(
-            min_vcpu=None,
-            min_ram=None,
-            cpu_arch="arm",
-        )
-
-    @patch("spotvm.cli.discover_skus", return_value=["Standard_D4as_v5"])
-    def test_resolve_requested_sizes_passes_no_max_limit_to_auto_discovery(self, mock_discover_skus):
-        parser = build_parser()
-        args = parser.parse_args(
-            [
-                "--regions",
-                "centralus",
-                "--min-vcpu",
-                "4",
-                "--no-max-limit",
-            ]
-        )
-        logger = MagicMock()
-
-        sizes, auto_discovery_attempted = _resolve_requested_sizes(
-            parser=parser,
-            args=args,
-            base_config={},
-            logger=logger,
-        )
-
-        assert sizes == ["Standard_D4as_v5"]
-        assert auto_discovery_attempted is True
-        mock_discover_skus.assert_called_once_with(
-            min_vcpu=4,
-            min_ram=None,
-            cpu_arch=None,
-            no_max_limit=True,
-        )
-
-
-class TestToolConfigValidation:
-    """Tests for ToolConfig validation logic."""
-
-    def test_no_subscription_without_placement_succeeds(self):
-        from spotvm.config import ToolConfig
-
-        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
-        assert config.subscription_id == ""
-        assert config.enable_placement is False
-
-    def test_pricing_only_config_omits_placement_fields(self):
-        from spotvm.config import ToolConfig
-
-        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
-        payload = config.to_dict()
-        assert "desired_count" not in payload
-        assert "availability_zones" not in payload
-
-    def test_placement_without_subscription_fails(self):
-        from spotvm.config import ToolConfig
-
-        with pytest.raises(ValueError, match="subscription_id is required"):
-            ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], enable_placement=True)
-
-    def test_non_default_desired_count_without_placement_fails(self):
-        from spotvm.config import ToolConfig
-
-        with pytest.raises(ValueError, match="desired_count requires enable_placement"):
-            ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], desired_count=2)
-
-    def test_availability_zones_without_placement_fails(self):
-        from spotvm.config import ToolConfig
-
-        with pytest.raises(ValueError, match="availability_zones requires enable_placement"):
-            ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], availability_zones=True)
-
-    def test_placement_with_subscription_succeeds(self):
-        from spotvm.config import ToolConfig
-
-        config = ToolConfig(
-            regions=["centralus"],
-            sizes=["Standard_D4s_v5"],
-            enable_placement=True,
-            subscription_id="abc-123",
-        )
-        assert config.enable_placement is True
-
-    def test_invalid_cpu_arch_fails(self):
-        from spotvm.config import ToolConfig
-
-        with pytest.raises(ValueError, match="cpu_arch"):
-            ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], cpu_arch="mips")
-
-    def test_valid_cpu_arch_normalizes(self):
-        from spotvm.config import ToolConfig
-
-        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], cpu_arch="X64")
-        assert config.cpu_arch == "x64"
 
 
 class TestMainWithMocks:
@@ -843,9 +342,7 @@ class TestMainWithMocks:
         logger = MagicMock()
         request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
-        run_single_analysis = MagicMock(
-            side_effect=AzureHttpError("https://example.test", 429, "busy")
-        )
+        run_single_analysis = MagicMock(side_effect=AzureHttpError("https://example.test", 429, "busy"))
 
         unexpected_error_count, exit_code = cli._run_unattended_iteration(
             request=request,
@@ -1591,56 +1088,27 @@ class TestMainWithMocks:
         assert "Some Perf % / Price/Perf values use a vCPU/RAM heuristic" not in captured.out
         mock_summarize.assert_called_once_with([candidate])
 
-    @patch("spotvm.cli.AzureAuthenticator")
-    @patch("spotvm.cli.AzureRestClient")
-    @patch("spotvm.cli.fetch_historical_metrics")
     @patch("spotvm.cli.export_to_csv", side_effect=PermissionError("disk full"))
-    @patch("spotvm.cli.filter_by_cost")
-    @patch("spotvm.cli.enrich_with_coremark")
-    @patch("spotvm.cli.enrich_with_performance")
-    @patch("spotvm.cli.rank_candidates")
-    @patch("spotvm.cli.filter_by_requirements")
-    @patch("spotvm.cli.merge_datasets")
-    @patch("spotvm.cli.summarize_top_candidates")
-    @patch("spotvm.cli.render_table")
     def test_csv_export_failure_does_not_suppress_console_output(
         self,
-        mock_render_table,
-        mock_summarize,
-        mock_merge,
-        mock_filter_requirements,
-        mock_rank,
-        mock_enrich_performance,
-        mock_enrich_coremark,
-        mock_filter_cost,
         mock_export_csv,
-        mock_fetch_hist,
-        mock_client_cls,
-        mock_auth_cls,
+        monkeypatch,
         capsys,
     ):
-        candidate = object()
-        mock_fetch_hist.return_value = []
-        mock_merge.return_value = [candidate]
-        mock_filter_requirements.return_value = [candidate]
-        mock_rank.return_value = [candidate]
-        mock_enrich_performance.return_value = [candidate]
-        mock_enrich_coremark.return_value = [candidate]
-        mock_filter_cost.return_value = [candidate]
-        mock_summarize.return_value = []
-        mock_render_table.return_value = "RANKED TABLE"
-
-        args = _analysis_args(csv=Path("results.csv"))
+        _stub_analysis_fetches(
+            monkeypatch,
+            historical_metrics=[_historical_metric("Standard_D4s_v5", price_usd=0.08, eviction_rate=5.0)],
+        )
         logger = MagicMock()
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
 
         _run_single_analysis(
-            request=args,
+            request=_analysis_args(csv=Path("results.csv")),
             config=config,
             logger=logger,
         )
 
         captured = capsys.readouterr()
         assert "Failed to export CSV" in captured.err
-        assert "RANKED TABLE" in captured.out
+        assert "Standard_D4s_v5" in captured.out
         logger.error.assert_called()

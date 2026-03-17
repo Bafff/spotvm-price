@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .config import ToolConfig
 from .models import CandidateInsight
+from .projection import project_for_history
 
 logger = logging.getLogger("spotvm")
 
@@ -57,22 +58,7 @@ def save_run_results(
             "baseline_sku": config.baseline_sku,
             "subscription_id": config.subscription_id[:8] + "..." if config.subscription_id else None,  # Privacy
         },
-        candidates=[
-            {
-                "vm_size": c.vm_size,
-                "region": c.region,
-                "availability_zone": c.availability_zone,
-                "price_usd": c.price_usd,
-                "eviction_rate": c.eviction_rate,
-                "placement_score": c.placement_score,
-                "quota_available": c.quota_available,
-                "performance_relative": c.performance_relative,
-                "price_per_performance": c.price_per_performance,
-                "recommendation_rank": c.recommendation_rank,
-                "notes": c.notes,
-            }
-            for c in candidates
-        ],
+        candidates=[project_for_history(candidate) for candidate in candidates],
     )
 
     # Save to file

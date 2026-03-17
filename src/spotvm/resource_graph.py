@@ -225,9 +225,7 @@ def _extract_eviction(entry: dict | None) -> tuple[float | None, datetime | None
 
         # Parse plain numeric strings directly. Range/plus forms need bespoke parsing
         # to avoid warning before the fallback path succeeds.
-        if not isinstance(cleaned_value, str):
-            rate = _to_float(cleaned_value)
-        elif re.fullmatch(r"\d+(?:\.\d+)?", cleaned_value):
+        if not isinstance(cleaned_value, str) or re.fullmatch(r"\d+(?:\.\d+)?", cleaned_value):
             rate = _to_float(cleaned_value)
 
         # If that fails, try to extract from range (e.g., "5-10" -> 10, "0-5" -> 5)

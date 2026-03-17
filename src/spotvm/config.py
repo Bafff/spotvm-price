@@ -9,9 +9,9 @@ from typing import Any, cast
 from .models import CPUArchitecture
 
 try:
-    import yaml
+    import yaml as yaml_module
 except ImportError:  # pragma: no cover - optional dependency
-    yaml = None
+    yaml_module = cast(Any, None)
 
 
 DEFAULT_CACHE_TTL_MINUTES = 15
@@ -144,9 +144,9 @@ def load_config_file(path: Path) -> dict[str, Any]:
             raise ValueError("Configuration file must contain a JSON object at the top level.")
         return cast(dict[str, Any], parsed)
     if suffix in {".yaml", ".yml"}:
-        if yaml is None:
+        if yaml_module is None:
             raise RuntimeError("PyYAML is required to parse YAML configuration files")
-        parsed = yaml.safe_load(raw) or {}
+        parsed = yaml_module.safe_load(raw) or {}
         if not isinstance(parsed, dict):
             raise ValueError("Configuration file must contain a YAML mapping at the top level.")
         return cast(dict[str, Any], parsed)

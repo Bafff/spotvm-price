@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 import wcwidth
 from colorama import Fore, Style, init
@@ -134,7 +135,7 @@ def _display_width(text: str) -> int:
     width = wcwidth.wcswidth(stripped)
     if width < 0:
         return len(stripped)
-    return width
+    return cast(int, width)
 
 
 TABLE_COLUMNS = [
@@ -337,6 +338,7 @@ def export_to_csv(
     show_baseline: bool = True,
 ) -> None:
     """Export candidate insights to CSV file for Excel/Google Sheets."""
+    from .projection import project_for_csv
     from .vm_specs import detect_cpu_vendor
 
     hidden = set()
@@ -346,28 +348,23 @@ def export_to_csv(
         hidden |= _CSV_BASELINE_COLS
     columns = [c for c in CSV_COLUMNS if c not in hidden]
 
+    formatters = {
+        "quota": _csv_format_quota,
+        "price": _csv_format_price,
+        "percentage": _csv_format_percentage,
+        "performance": _csv_format_performance,
+        "price_per_perf": _csv_format_price_per_perf,
+        "coremark": _csv_format_coremark,
+        "coremark_per_vcpu": _csv_format_coremark_per_vcpu,
+        "datetime": _csv_format_datetime,
+    }
+
     rows: list[list[str]] = []
     for item in candidates:
         vendor = detect_cpu_vendor(item.vm_size) if item.vm_size else ""
         vendor_text = vendor.upper() if vendor else ""
 
-        all_cells = {
-            "Rank": str(item.recommendation_rank) if item.recommendation_rank is not None else "",
-            "Region": item.region or "",
-            "Availability Zone": item.availability_zone or "",
-            "VM Size": item.vm_size or "",
-            "CPU Vendor": vendor_text,
-            "Placement Score": item.placement_score or (item.notes or "N/A"),
-            "Quota Available": _csv_format_quota(item.quota_available),
-            "Price (USD/hr)": _csv_format_price(item.price_usd),
-            "Eviction Rate (%)": _csv_format_percentage(item.eviction_rate),
-            "Performance (%)": _csv_format_performance(item.performance_relative),
-            "Price per Performance": _csv_format_price_per_perf(item.price_per_performance),
-            "CoreMark Score": _csv_format_coremark(item.coremark_score),
-            "CoreMark per vCPU": _csv_format_coremark_per_vcpu(item.coremark_per_vcpu),
-            "Price Last Updated": _csv_format_datetime(item.price_last_updated),
-            "Notes": _format_notes(item),
-        }
+        all_cells = project_for_csv(item, vendor_text, formatters, _format_notes)
         rows.append([all_cells[c] for c in columns])
 
     _write_csv_atomic(csv_path, columns, rows)

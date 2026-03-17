@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 
 from spotvm.vm_specs import (
-    VM_SPECIFICATIONS,
     _NORMALIZED_VM_SPECIFICATIONS,
+    VM_SPECIFICATIONS,
     calculate_relative_performance_details,
     detect_cpu_architecture,
     detect_cpu_vendor,
@@ -14,6 +14,14 @@ from spotvm.vm_specs import (
     known_hardware_tiers,
     matches_hardware_constraint,
 )
+
+
+def test_vm_catalog_exposes_same_lookup_surface():
+    from spotvm.vm_catalog import VM_SPECIFICATIONS as catalog_specs
+    from spotvm.vm_catalog import get_vm_spec as catalog_get_vm_spec
+
+    assert catalog_specs["Standard_D4as_v5"] == VM_SPECIFICATIONS["Standard_D4as_v5"]
+    assert catalog_get_vm_spec("standard_d4as_v5") == get_vm_spec("standard_d4as_v5")
 
 
 def test_get_vm_spec_normalizes_case_and_underscores():

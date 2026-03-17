@@ -7,6 +7,7 @@ import signal
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -30,7 +31,9 @@ from .config import (
     merge_cli_overrides,
 )
 from .http_client import AzureHttpError, AzureRestClient
+from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
 from .placement_score import PlacementScoreRequest, fetch_placement_scores
+from .projection import project_for_report
 from .reporting import RenderOptions, export_to_csv, initialize_color_output, render_table
 from .resource_graph import ResourceGraphRequest, fetch_historical_metrics
 from .vm_specs import discover_skus
@@ -322,7 +325,7 @@ def _run_history_mode_if_requested(
     *,
     args: argparse.Namespace,
     logger: logging.Logger,
-    run_history_analysis,
+    run_history_analysis: Callable[..., int],
 ) -> int | None:
     if not args.analyze_history:
         return None
@@ -416,8 +419,8 @@ def _run_analysis_mode(
     logger: logging.Logger,
     clear_cache: bool,
     interval_minutes: int | None,
-    run_single_analysis,
-    run_unattended_monitoring,
+    run_single_analysis: Callable[..., None],
+    run_unattended_monitoring: Callable[..., int],
 ) -> int:
     if clear_cache:
         from . import cache
@@ -459,9 +462,7 @@ def _run_unattended_monitoring(
     install_signal_handlers: bool = True,
     should_stop=None,
 ) -> int:
-    logger.info(
-        f"Starting unattended monitoring mode: running every {interval_minutes} minutes. Press Ctrl+C to stop."
-    )
+    logger.info(f"Starting unattended monitoring mode: running every {interval_minutes} minutes. Press Ctrl+C to stop.")
     _nc = request.no_color
     emit(f"{'[*]' if _nc else '🔄'} Monitoring mode started (interval: {interval_minutes} min)")
     emit(f"{'[>]' if _nc else '📊'} Results will be saved to: {request.results_dir}/runs/")
@@ -482,6 +483,7 @@ def _run_unattended_monitoring(
         sleep = time.sleep
 
     if should_stop is None:
+
         def should_stop() -> bool:
             return stop_requested
 
@@ -610,11 +612,7 @@ def _discover_requested_sizes(
     effective_cpu_arch: str | None,
     logger: logging.Logger,
 ) -> tuple[list[str] | None, bool]:
-    should_auto_discover = (
-        args.min_vcpu is not None
-        or args.min_ram is not None
-        or effective_cpu_arch is not None
-    )
+    should_auto_discover = args.min_vcpu is not None or args.min_ram is not None or effective_cpu_arch is not None
     if not should_auto_discover:
         return None, False
 
@@ -722,8 +720,8 @@ def _fetch_analysis_inputs(
     *,
     client: AzureRestClient,
     config: ToolConfig,
-) -> tuple[list[Any], list[Any]]:
-    placement_scores: list[Any] = []
+) -> tuple[list[PlacementScoreResult], list[HistoricalMetrics]]:
+    placement_scores: list[PlacementScoreResult] = []
     if config.enable_placement:
         placement_request = _build_placement_score_request(config)
         placement_scores = fetch_placement_scores(client, placement_request)
@@ -734,11 +732,11 @@ def _fetch_analysis_inputs(
 
 def _build_ranked_candidates(
     *,
-    placement_scores: list[Any],
-    historical_metrics: list[Any],
+    placement_scores: list[PlacementScoreResult],
+    historical_metrics: list[HistoricalMetrics],
     request: AnalysisRunRequest,
     config: ToolConfig,
-) -> list[Any]:
+) -> list[CandidateInsight]:
     candidates = merge_datasets(placement_scores, historical_metrics)
 
     effective_no_max_limit = request.no_max_limit or request.explicit_sizes
@@ -822,7 +820,7 @@ def _run_single_analysis(
 
 
 def _persist_analysis_outputs(
-    ranked: list[Any],
+    ranked: list[CandidateInsight],
     *,
     request: AnalysisRunRequest,
     config: ToolConfig,
@@ -871,7 +869,7 @@ def _persist_analysis_outputs(
 
 
 def _save_run_results_if_requested(
-    ranked: list[Any],
+    ranked: list[CandidateInsight],
     *,
     request: AnalysisRunRequest,
     config: ToolConfig,
@@ -902,7 +900,7 @@ def _save_run_results_if_requested(
 
 
 def _emit_report_if_requested(
-    ranked: list[Any],
+    ranked: list[CandidateInsight],
     *,
     request: AnalysisRunRequest,
     config: ToolConfig,
@@ -932,9 +930,8 @@ def _emit_report_if_requested(
     return config.emit_json
 
 
-
 def _render_analysis_results(
-    ranked: list[Any],
+    ranked: list[CandidateInsight],
     *,
     request: AnalysisRunRequest,
     config: ToolConfig,
@@ -1009,31 +1006,10 @@ def _render_analysis_results(
         )
 
 
-def _build_report(candidates: list[Any]) -> dict[str, Any]:
+def _build_report(candidates: list[CandidateInsight]) -> dict[str, Any]:
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
-        "candidates": [
-            {
-                "rank": item.recommendation_rank,
-                "region": item.region,
-                "availabilityZone": item.availability_zone,
-                "vmSize": item.vm_size,
-                "cpuArchitecture": item.cpu_arch,
-                "placementScore": item.placement_score,
-                "quotaAvailable": item.quota_available,
-                "priceUSDPerHour": item.price_usd,
-                "priceLastUpdated": _json_serializer(item.price_last_updated),
-                "evictionRatePercent": item.eviction_rate,
-                "performanceRelativePercent": item.performance_relative,
-                "pricePerPerformance": item.price_per_performance,
-                "performanceBasis": getattr(item, "performance_basis", None),
-                "performanceNote": getattr(item, "performance_note", None),
-                "coremarkScore": item.coremark_score,
-                "coremarkPerVCPU": item.coremark_per_vcpu,
-                "notes": _merge_notes(item.notes, getattr(item, "performance_note", None)),
-            }
-            for item in candidates
-        ],
+        "candidates": [project_for_report(item, _json_serializer, _merge_notes) for item in candidates],
     }
 
 

@@ -364,13 +364,11 @@ def _allows_unknown_spec(
         return True
     if no_max_limit:
         logger.warning(
-            f"VM size {candidate.vm_size} not in specifications database, "
-            f"cannot verify vCPU/RAM requirements"
+            f"VM size {candidate.vm_size} not in specifications database, cannot verify vCPU/RAM requirements"
         )
         return True
     logger.warning(
-        f"VM size {candidate.vm_size} not in specifications database, "
-        f"excluding from bounded hardware results"
+        f"VM size {candidate.vm_size} not in specifications database, excluding from bounded hardware results"
     )
     return False
 
@@ -398,8 +396,7 @@ def _cost_filter_message(
 ) -> str | None:
     if max_price is not None and candidate.price_usd is not None and candidate.price_usd > max_price:
         return (
-            f"Filtered {candidate.vm_size} in {candidate.region}: "
-            f"price ${candidate.price_usd:.4f} > ${max_price} max"
+            f"Filtered {candidate.vm_size} in {candidate.region}: price ${candidate.price_usd:.4f} > ${max_price} max"
         )
     if max_eviction is not None and candidate.eviction_rate is not None and candidate.eviction_rate > max_eviction:
         return (
