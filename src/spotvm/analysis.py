@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 
+from .databricks_catalog import DatabricksCatalogError, load_catalog, lookup_azure_node_type_pricing
 from .models import CandidateInsight, CPUArchitecture, HistoricalMetrics, PlacementScoreResult
 from .vm_specs import (
     VMSpec,
@@ -15,6 +16,7 @@ from .vm_specs import (
 logger = logging.getLogger("spotvm")
 
 PLACEMENT_ORDER = {"high": 3, "medium": 2, "low": 1}
+STANDARD_JOBS_PHOTON_MULTIPLIER = 2.5
 PlacementLookupKey = tuple[str, str, str | None]
 MetricsLookupKey = tuple[str, str]
 RankSortKey = tuple[int, float, float]
@@ -81,7 +83,7 @@ def enrich_with_performance(
             )
 
         # Calculate price per performance unit
-        if perf and perf > 0 and candidate.price_usd:
+        if perf and perf > 0 and candidate.price_usd is not None:
             # Price per 1% of baseline performance
             candidate.price_per_performance = candidate.price_usd / perf
         else:
@@ -108,6 +110,50 @@ def enrich_with_coremark(
         if spec:
             candidate.coremark_score = spec.coremark_score
             candidate.coremark_per_vcpu = spec.coremark_per_vcpu
+
+    return candidates
+
+
+def enrich_with_databricks_cost(
+    candidates: list[CandidateInsight],
+    *,
+    include_photon: bool = False,
+) -> list[CandidateInsight]:
+    """Overlay Databricks DBU pricing onto matching Azure VM candidates."""
+    if not candidates:
+        return candidates
+
+    try:
+        catalog = load_catalog()
+    except DatabricksCatalogError as exc:
+        logger.warning("Failed to load Databricks pricing catalog: %s", exc)
+        return candidates
+
+    dbu_unit_price = catalog.pricing_profile.dbu_unit_price_usd
+    catalog_updated = catalog.captured_at
+    photon_surcharge_multiplier = STANDARD_JOBS_PHOTON_MULTIPLIER - 1.0
+
+    for candidate in candidates:
+        compute_price = candidate.price_usd
+        candidate.compute_price_usd = compute_price
+
+        row = lookup_azure_node_type_pricing(candidate.vm_size)
+        if row is None or row.dbu_per_hour is None:
+            continue
+
+        candidate.databricks_dbu_per_hour = row.dbu_per_hour
+        candidate.databricks_dbu_cost_usd = row.dbu_per_hour * dbu_unit_price
+        candidate.databricks_catalog_updated = catalog_updated
+
+        photon_cost_usd: float | None = None
+        if include_photon and row.photon_capable:
+            candidate.databricks_photon_dbu_per_hour = row.dbu_per_hour * photon_surcharge_multiplier
+            photon_cost_usd = candidate.databricks_photon_dbu_per_hour * dbu_unit_price
+            candidate.databricks_photon_cost_usd = photon_cost_usd
+
+        if compute_price is not None and candidate.databricks_dbu_cost_usd is not None:
+            candidate.total_price_usd = compute_price + candidate.databricks_dbu_cost_usd + (photon_cost_usd or 0.0)
+            candidate.price_usd = candidate.total_price_usd
 
     return candidates
 

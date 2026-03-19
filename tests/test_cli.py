@@ -616,6 +616,43 @@ class TestMainWithMocks:
         assert [candidate.vm_size for candidate in ranked] == ["Standard_D4s_v5"]
         assert ranked[0].performance_relative == 100.0
 
+    def test_build_ranked_candidates_uses_total_databricks_cost_for_price_filtering(self, monkeypatch):
+        monkeypatch.setattr(
+            "spotvm.analysis.load_catalog",
+            lambda: SimpleNamespace(
+                captured_at="2026-03-19T00:00:00Z",
+                pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15),
+            ),
+        )
+
+        pricing_rows = {
+            "Standard_D4s_v4": SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),
+            "Standard_E4s_v4": SimpleNamespace(dbu_per_hour=2.0, photon_capable=True),
+        }
+        monkeypatch.setattr(
+            "spotvm.analysis.lookup_azure_node_type_pricing",
+            lambda sku: pricing_rows.get(sku),
+        )
+
+        ranked = _build_ranked_candidates(
+            placement_scores=[],
+            historical_metrics=[
+                _historical_metric("Standard_D4s_v4", price_usd=0.05, eviction_rate=5.0),
+                _historical_metric("Standard_E4s_v4", price_usd=0.05, eviction_rate=5.0),
+            ],
+            request=_analysis_args(max_price=0.30),
+            config=ToolConfig(
+                regions=["centralus"],
+                sizes=["Standard_D4s_v4", "Standard_E4s_v4"],
+                include_databricks_cost=True,
+            ),
+        )
+
+        assert [candidate.vm_size for candidate in ranked] == ["Standard_D4s_v4"]
+        assert ranked[0].compute_price_usd == 0.05
+        assert ranked[0].databricks_dbu_cost_usd == 0.15
+        assert ranked[0].total_price_usd == 0.20
+
     def test_explicit_sizes_bypass_bounded_hardware_window(self, monkeypatch, capsys):
         _stub_analysis_fetches(
             monkeypatch,

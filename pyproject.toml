@@ -73,6 +73,7 @@ ignore = ["E501"]  # handled by Ruff formatter
 [tool.ruff.lint.per-file-ignores]
 "src/spotvm/cli.py" = ["T201"]
 "src/spotvm/config.py" = ["TRY003"]
+"src/spotvm/databricks_catalog.py" = ["TRY003"]
 "tests/*" = ["TRY003"]
 
 [tool.ruff.format]

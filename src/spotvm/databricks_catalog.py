@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from dataclasses import asdict, dataclass
+from functools import cache
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -85,6 +86,11 @@ def lookup_sku(catalog: DatabricksCatalog, sku: str) -> DatabricksCatalogEntry |
 
 
 def load_azure_dbu_pricing_rows() -> list[AzureNodeTypePricingRow]:
+    return list(_load_azure_dbu_pricing_rows())
+
+
+@cache
+def _load_azure_dbu_pricing_rows() -> tuple[AzureNodeTypePricingRow, ...]:
     path = resources.files("spotvm").joinpath("data", "databricks_azure_dbu_pricing.csv")
     try:
         raw_text = path.read_text(encoding="utf-8")
@@ -110,14 +116,16 @@ def load_azure_dbu_pricing_rows() -> list[AzureNodeTypePricingRow]:
                 deprecated=_optional_bool(item.get("deprecated")),
             )
         )
-    return rows
+    return tuple(rows)
 
 
 def lookup_azure_node_type_pricing(node_type_id: str) -> AzureNodeTypePricingRow | None:
-    for row in load_azure_dbu_pricing_rows():
-        if row.node_type_id == node_type_id:
-            return row
-    return None
+    return _azure_dbu_pricing_index().get(node_type_id)
+
+
+@cache
+def _azure_dbu_pricing_index() -> dict[str, AzureNodeTypePricingRow]:
+    return {row.node_type_id: row for row in _load_azure_dbu_pricing_rows()}
 
 
 def refresh_catalog_instructions() -> str:

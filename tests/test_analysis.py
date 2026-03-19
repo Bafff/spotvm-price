@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 
-from spotvm.analysis import merge_datasets, rank_candidates, summarize_top_candidates
+import pytest
+
+from spotvm.analysis import enrich_with_databricks_cost, merge_datasets, rank_candidates, summarize_top_candidates
 from spotvm.models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
 
 
@@ -135,3 +138,67 @@ def test_summarize_top_candidates_includes_zone_score_perf_and_price():
     assert summary == [
         "#1 Standard_D4as_v5 in eastus; zone 1; placement score High; eviction 2.5%; perf 115%; $0.1234/hr"
     ]
+
+
+def test_enrich_with_databricks_cost_populates_cost_fields(monkeypatch):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4ds_v5",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at="2026-03-19T00:00:00Z",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15),
+        ),
+    )
+    monkeypatch.setattr(
+        "spotvm.analysis.lookup_azure_node_type_pricing",
+        lambda _sku: SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),
+    )
+
+    [enriched] = enrich_with_databricks_cost([candidate], include_photon=False)
+
+    assert enriched.compute_price_usd == 0.0471
+    assert enriched.databricks_dbu_per_hour == 1.0
+    assert enriched.databricks_dbu_cost_usd == 0.15
+    assert enriched.total_price_usd == 0.1971
+    assert enriched.databricks_catalog_updated == "2026-03-19T00:00:00Z"
+
+
+def test_enrich_with_databricks_cost_adds_jobs_photon_surcharge(monkeypatch):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4ds_v5",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at="2026-03-19T00:00:00Z",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15),
+        ),
+    )
+    monkeypatch.setattr(
+        "spotvm.analysis.lookup_azure_node_type_pricing",
+        lambda _sku: SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),
+    )
+
+    [enriched] = enrich_with_databricks_cost([candidate], include_photon=True)
+
+    assert enriched.databricks_photon_dbu_per_hour == 1.5
+    assert enriched.databricks_photon_cost_usd == pytest.approx(0.225)
+    assert enriched.total_price_usd == 0.4221

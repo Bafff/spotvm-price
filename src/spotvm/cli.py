@@ -16,6 +16,7 @@ from typing import Any
 from . import config as config_defaults
 from .analysis import (
     enrich_with_coremark,
+    enrich_with_databricks_cost,
     enrich_with_performance,
     filter_by_cost,
     filter_by_requirements,
@@ -775,6 +776,11 @@ def _build_ranked_candidates(
         cpu_arch=config.cpu_arch,
         no_max_limit=effective_no_max_limit,
     )
+    if config.include_databricks_cost:
+        candidates = enrich_with_databricks_cost(
+            candidates,
+            include_photon=config.include_photon_cost,
+        )
 
     ranked = rank_candidates(candidates)
     ranked = enrich_with_performance(ranked, config.baseline_sku)
