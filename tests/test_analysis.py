@@ -206,6 +206,39 @@ def test_enrich_with_databricks_cost_adds_jobs_photon_surcharge(monkeypatch):
     assert enriched.total_price_usd == pytest.approx(0.4221)
 
 
+def test_enrich_with_databricks_cost_keeps_photon_fields_empty_for_non_photon_vm(monkeypatch):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_F4",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at="2026-03-19T00:00:00Z",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+        ),
+    )
+    monkeypatch.setattr(
+        "spotvm.analysis.lookup_azure_node_type_pricing",
+        lambda _sku: SimpleNamespace(dbu_per_hour=0.5, photon_capable=False),
+    )
+
+    [enriched] = enrich_with_databricks_cost([candidate], include_photon=True)
+
+    assert enriched.databricks_dbu_per_hour == 0.5
+    assert enriched.databricks_dbu_cost_usd == 0.075
+    assert enriched.databricks_photon_dbu_per_hour is None
+    assert enriched.databricks_photon_cost_usd is None
+    assert enriched.total_price_usd == pytest.approx(0.1221)
+
+
 def test_enrich_with_databricks_cost_keeps_unmatched_sku_without_overlay(monkeypatch):
     candidate = CandidateInsight(
         region="centralus",

@@ -156,7 +156,10 @@ def enrich_with_databricks_cost(
 
         # Photon cost replaces the base DBU component in the user-facing total
         # because databricks_photon_dbu_per_hour stores the full Photon rate.
-        effective_databricks_cost = photon_cost_usd or candidate.databricks_dbu_cost_usd
+        if photon_cost_usd is not None:
+            effective_databricks_cost = photon_cost_usd
+        else:
+            effective_databricks_cost = candidate.databricks_dbu_cost_usd
         if compute_price is not None and effective_databricks_cost is not None:
             candidate.total_price_usd = compute_price + effective_databricks_cost
 
