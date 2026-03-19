@@ -107,6 +107,16 @@ def test_save_run_results_creates_json(temp_results_dir, sample_candidates, samp
     assert data["candidates"][0]["eviction_rate"] == 2.5
 
 
+def test_save_run_results_wraps_json_serialization_type_error(temp_results_dir, sample_candidates, sample_config, monkeypatch):
+    def raising_dump(*_args, **_kwargs):
+        raise TypeError("not serializable")
+
+    monkeypatch.setattr("spotvm.history.json.dump", raising_dump)
+
+    with pytest.raises(ValueError, match="Failed to serialize historical run snapshot"):
+        save_run_results(sample_candidates, sample_config, temp_results_dir)
+
+
 def test_load_historical_runs_empty_dir(temp_results_dir):
     """Test loading from empty directory returns empty list."""
     snapshots = load_historical_runs(temp_results_dir)

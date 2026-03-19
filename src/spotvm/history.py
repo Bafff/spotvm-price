@@ -71,7 +71,10 @@ def save_run_results(
     filepath = runs_dir / filename
 
     with filepath.open("w") as f:
-        json.dump(asdict(snapshot), f, indent=2)
+        try:
+            json.dump(asdict(snapshot), f, indent=2)
+        except TypeError as exc:
+            raise ValueError(f"Failed to serialize historical run snapshot: {filepath}") from exc
 
     return filepath
 
