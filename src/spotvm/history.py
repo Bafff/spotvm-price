@@ -145,7 +145,9 @@ def generate_history_csv(
         return 0
 
     include_databricks = any(
-        any(field in candidate for field in _DATABRICKS_HISTORY_FIELDS) for snapshot in snapshots for candidate in snapshot.candidates
+        any(field in candidate for field in _DATABRICKS_HISTORY_FIELDS)
+        for snapshot in snapshots
+        for candidate in snapshot.candidates
     )
 
     # Prepare rows for CSV
@@ -160,7 +162,9 @@ def generate_history_csv(
                 "price_usd": candidate.get("price_usd") if candidate.get("price_usd") is not None else "",
                 "eviction_rate": candidate.get("eviction_rate") if candidate.get("eviction_rate") is not None else "",
                 "placement_score": candidate.get("placement_score") or "",
-                "quota_available": candidate.get("quota_available") if candidate.get("quota_available") is not None else "",
+                "quota_available": candidate.get("quota_available")
+                if candidate.get("quota_available") is not None
+                else "",
                 "performance_relative": candidate.get("performance_relative")
                 if candidate.get("performance_relative") is not None
                 else "",

@@ -207,7 +207,8 @@ def test_export_to_csv_writes_databricks_headers_when_enabled(tmp_path):
     with csv_path.open(newline="", encoding="utf-8") as handle:
         headers = next(csv_module.reader(handle))
 
-    assert headers == _EXPECTED_CSV_COLUMNS_FULL + [
+    assert headers == [
+        *_EXPECTED_CSV_COLUMNS_FULL,
         "VM Price (USD/hr)",
         "DBU per Hour",
         "Databricks Cost (USD/hr)",
@@ -339,7 +340,8 @@ def test_generate_history_csv_appends_databricks_fieldnames_when_present(tmp_pat
         reader = csv_module.DictReader(handle)
         fieldnames = list(reader.fieldnames or [])
 
-    assert fieldnames == _EXPECTED_HISTORY_FIELDNAMES + [
+    assert fieldnames == [
+        *_EXPECTED_HISTORY_FIELDNAMES,
         "compute_price_usd",
         "databricks_dbu_per_hour",
         "databricks_dbu_cost_usd",

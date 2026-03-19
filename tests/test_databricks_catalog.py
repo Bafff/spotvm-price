@@ -9,8 +9,8 @@ from spotvm.databricks_catalog import (
     load_azure_dbu_pricing_rows,
     load_catalog,
     load_catalog_from_path,
-    lookup_sku,
     lookup_azure_node_type_pricing,
+    lookup_sku,
 )
 
 

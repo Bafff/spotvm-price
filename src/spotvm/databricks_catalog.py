@@ -62,7 +62,7 @@ class DatabricksCatalog:
 
 
 def load_catalog() -> DatabricksCatalog:
-    path = resources.files("spotvm").joinpath("data", "databricks_pricing.json")
+    path = resources.files("spotvm").joinpath("data/databricks_pricing.json")
     try:
         raw_text = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -91,7 +91,7 @@ def load_azure_dbu_pricing_rows() -> list[AzureNodeTypePricingRow]:
 
 @cache
 def _load_azure_dbu_pricing_rows() -> tuple[AzureNodeTypePricingRow, ...]:
-    path = resources.files("spotvm").joinpath("data", "databricks_azure_dbu_pricing.csv")
+    path = resources.files("spotvm").joinpath("data/databricks_azure_dbu_pricing.csv")
     try:
         raw_text = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -205,7 +205,6 @@ def _catalog_from_payload(payload: dict[str, Any]) -> DatabricksCatalog:
         source={str(key): str(value) for key, value in source.items()},
         entries=tuple(entries),
     )
-
 
 
 def _optional_str(value: str | None) -> str | None:

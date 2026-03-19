@@ -341,7 +341,6 @@ def test_generate_history_csv_appends_databricks_columns_when_present(temp_resul
     assert row["total_price_usd"] == "0.381"
 
 
-
 def test_csv_handles_none_values(temp_results_dir, sample_config):
     """Test CSV generation handles None values correctly."""
     candidates_with_none = [
