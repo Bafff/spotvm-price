@@ -542,6 +542,36 @@ class TestFilterByCost:
         filtered = filter_by_cost(sample_candidates, min_performance=0.0)
         assert len(filtered) == len(sample_candidates)
 
+    def test_filter_by_max_price_uses_total_price_when_present(self):
+        candidates = [
+            CandidateInsight(
+                vm_size="Standard_D4ds_v5",
+                region="eastus",
+                placement_score="High",
+                quota_available=True,
+                price_usd=0.05,
+                total_price_usd=0.30,
+                price_last_updated=datetime(2025, 1, 25, 14, 0),
+                eviction_rate=5.0,
+                eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+            ),
+            CandidateInsight(
+                vm_size="Standard_D8ds_v5",
+                region="eastus",
+                placement_score="High",
+                quota_available=True,
+                price_usd=0.10,
+                total_price_usd=0.15,
+                price_last_updated=datetime(2025, 1, 25, 14, 0),
+                eviction_rate=5.0,
+                eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+            ),
+        ]
+
+        filtered = filter_by_cost(candidates, max_price=0.20)
+
+        assert [candidate.vm_size for candidate in filtered] == ["Standard_D8ds_v5"]
+
     def test_filter_by_cost_logs_only_active_constraints(self, sample_candidates, caplog):
         with caplog.at_level(logging.INFO):
             filter_by_cost(sample_candidates, max_price=0.05)

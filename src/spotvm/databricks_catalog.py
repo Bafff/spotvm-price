@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import csv
 import json
-from collections.abc import Mapping
+import logging
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from functools import cache
 from importlib import resources
@@ -13,6 +14,9 @@ from typing import Any
 
 class DatabricksCatalogError(RuntimeError):
     pass
+
+
+logger = logging.getLogger("spotvm")
 
 
 @dataclass(frozen=True)
@@ -30,12 +34,21 @@ class DatabricksPricingProfile:
 
 @dataclass(frozen=True)
 class DatabricksCatalogEntry:
+    """Manual JSON snapshot entry used for validation and catalog metadata.
+
+    Runtime VM enrichment uses the vendored Azure CSV because it has the broadest
+    Azure SKU coverage. The JSON entry list remains a validated reference
+    snapshot rather than the authoritative lookup table for all VM sizes.
+    """
+
     sku: str
     dbu_per_hour: float
     photon_dbu_per_hour: float | None = None
     notes: str | None = None
 
     def __post_init__(self) -> None:
+        if not self.sku:
+            raise ValueError("sku must be non-empty")
         if self.dbu_per_hour <= 0.0:
             raise ValueError("dbu_per_hour must be positive")
         if self.photon_dbu_per_hour is not None and self.photon_dbu_per_hour <= 0.0:
@@ -53,6 +66,14 @@ class AzureNodeTypePricingRow:
     num_gpus: int | None
     photon_capable: bool | None
     deprecated: bool | None
+
+    def __post_init__(self) -> None:
+        if not self.node_type_id:
+            raise ValueError("node_type_id must be non-empty")
+        if self.num_cores is not None and self.num_cores <= 0:
+            raise ValueError("num_cores must be positive")
+        if self.dbu_per_hour is not None and self.dbu_per_hour <= 0.0:
+            raise ValueError("dbu_per_hour must be positive")
 
 
 @dataclass(frozen=True)
@@ -105,6 +126,7 @@ def _load_azure_dbu_pricing_rows() -> tuple[AzureNodeTypePricingRow, ...]:
         raise DatabricksCatalogError("Failed to load vendored Azure DBU pricing CSV") from exc
 
     reader = csv.DictReader(raw_text.splitlines())
+    _validate_azure_dbu_csv_headers(reader.fieldnames)
     rows: list[AzureNodeTypePricingRow] = []
     for row_number, item in enumerate(reader, start=2):
         node_type_id = (item.get("node_type_id") or "").strip()
@@ -133,6 +155,8 @@ def _load_azure_dbu_pricing_rows() -> tuple[AzureNodeTypePricingRow, ...]:
                 deprecated=_optional_bool(item.get("deprecated"), row_number=row_number, column_name="deprecated"),
             )
         )
+    if not rows:
+        logger.warning("Loaded 0 usable Azure Databricks DBU pricing rows from %s", path)
     return tuple(rows)
 
 
@@ -306,3 +330,10 @@ def _required_mapping_value(mapping: dict[str, Any], key: str, *, context: str) 
         return mapping[key]
     except KeyError as exc:
         raise DatabricksCatalogError(f"{context} is missing required field: {key}") from exc
+
+
+def _validate_azure_dbu_csv_headers(fieldnames: Sequence[str] | None) -> None:
+    if fieldnames is None:
+        raise DatabricksCatalogError("Azure DBU pricing CSV is empty")
+    if "node_type_id" not in fieldnames:
+        raise DatabricksCatalogError("Azure DBU pricing CSV is missing required header: node_type_id")

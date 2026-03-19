@@ -362,6 +362,33 @@ class TestMainWithMocks:
         )
         logger.info.assert_called_once_with("Continuing despite error...")
 
+    def test_run_unattended_iteration_resets_error_count_after_databricks_catalog_error(self):
+        logger = MagicMock()
+        request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
+        config = ToolConfig(
+            regions=["centralus"],
+            sizes=["Standard_D4s_v5"],
+            include_databricks_cost=True,
+        )
+        run_single_analysis = MagicMock(side_effect=DatabricksCatalogError("broken catalog"))
+
+        unexpected_error_count, exit_code = cli._run_unattended_iteration(
+            request=request,
+            config=config,
+            logger=logger,
+            run_single_analysis=run_single_analysis,
+            unexpected_error_count=1,
+            emit=_stdout_emitter,
+        )
+
+        assert unexpected_error_count == 0
+        assert exit_code is None
+        logger.exception.assert_not_called()
+        logger.error.assert_called_once()
+        assert logger.error.call_args.args[0] == "Databricks pricing catalog failed: %s"
+        assert str(logger.error.call_args.args[1]) == "broken catalog"
+        logger.info.assert_called_once_with("Continuing despite error...")
+
     def test_sleep_until_next_run_emits_schedule_and_stops_early(self, capsys):
         logger = MagicMock()
         slept: list[int] = []
@@ -901,6 +928,26 @@ class TestMainWithMocks:
 
     @patch("spotvm.history.save_run_results", side_effect=PermissionError("disk full"))
     def test_save_run_results_if_requested_reports_failure_without_raising(self, mock_save_results, capsys):
+        logger = MagicMock()
+
+        _save_run_results_if_requested(
+            [object()],
+            request=_analysis_args(results_dir=Path("results"), save_results=True),
+            config=ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"]),
+            logger=logger,
+            emit=_stdout_emitter,
+            emit_error=_stderr_emitter,
+        )
+
+        captured = capsys.readouterr()
+        assert "Failed to save run results" in captured.err
+        logger.warning.assert_called_once()
+        mock_save_results.assert_called_once()
+
+    @patch("spotvm.history.save_run_results", side_effect=ValueError("not serializable"))
+    def test_save_run_results_if_requested_reports_serialization_failure_without_raising(
+        self, mock_save_results, capsys
+    ):
         logger = MagicMock()
 
         _save_run_results_if_requested(

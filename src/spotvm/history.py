@@ -111,7 +111,7 @@ def load_historical_runs(
             with filepath.open("r") as f:
                 data = json.load(f)
                 snapshots.append(_run_snapshot_from_payload(data))
-        except (OSError, json.JSONDecodeError, KeyError, HistoricalSnapshotError) as exc:
+        except (OSError, json.JSONDecodeError, HistoricalSnapshotError) as exc:
             logger.warning("Failed to load historical run %s: %s", filepath, exc)
             continue
 
@@ -121,9 +121,9 @@ def load_historical_runs(
 def _run_snapshot_from_payload(data: object) -> RunSnapshot:
     if not isinstance(data, dict):
         raise _invalid_snapshot_payload()
-    timestamp = data["timestamp"]
-    config = data["config"]
-    candidates = data["candidates"]
+    timestamp = _required_snapshot_field(data, "timestamp")
+    config = _required_snapshot_field(data, "config")
+    candidates = _required_snapshot_field(data, "candidates")
     if not isinstance(timestamp, str):
         raise _invalid_snapshot_type("timestamp", "a string")
     if not isinstance(config, dict):
@@ -145,8 +145,18 @@ def _invalid_snapshot_payload() -> HistoricalSnapshotError:
     return HistoricalSnapshotError("snapshot payload must be an object")
 
 
+def _required_snapshot_field(data: dict[str, Any], key: str) -> Any:
+    if key not in data:
+        raise _missing_snapshot_field(key)
+    return data.get(key)
+
+
 def _serialization_error(filepath: Path) -> ValueError:
     return ValueError(f"Failed to serialize historical run snapshot: {filepath}")
+
+
+def _missing_snapshot_field(key: str) -> HistoricalSnapshotError:
+    return HistoricalSnapshotError(f"{key} is missing")
 
 
 def _csv_value(candidate: dict[str, Any], key: str) -> Any:

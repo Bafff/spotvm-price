@@ -117,3 +117,21 @@ def test_project_for_report_uses_total_price_when_databricks_fields_present():
     assert projected["priceUSDPerHour"] == 0.2055
     assert projected["computePriceUSDPerHour"] == 0.03
     assert projected["totalPriceUSDPerHour"] == 0.2055
+
+
+def test_project_for_history_serializes_databricks_catalog_updated_datetime():
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4s_v5",
+        placement_score="High",
+        quota_available=True,
+        price_usd=0.03,
+        price_last_updated=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        eviction_rate=5.0,
+        eviction_last_updated=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        databricks_catalog_updated=datetime(2026, 3, 19, tzinfo=timezone.utc),
+    )
+
+    projected = project_for_history(candidate)
+
+    assert projected["databricks_catalog_updated"] == "2026-03-19T00:00:00+00:00"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -375,3 +376,30 @@ def test_enrich_with_databricks_cost_raises_when_catalog_timestamp_is_invalid(mo
 
     with pytest.raises(DatabricksCatalogError, match="Invalid Databricks catalog captured_at timestamp"):
         enrich_with_databricks_cost([candidate], include_photon=False)
+
+
+def test_enrich_with_databricks_cost_warns_about_unmatched_skus(monkeypatch, caplog):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_Unknown",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at="2026-03-19T00:00:00Z",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+        ),
+    )
+    monkeypatch.setattr("spotvm.analysis.lookup_azure_node_type_pricing", lambda _sku: None)
+
+    with caplog.at_level(logging.WARNING, logger="spotvm"):
+        enrich_with_databricks_cost([candidate], include_photon=False)
+
+    assert "Databricks DBU pricing data unavailable for 1 candidate(s)" in caplog.text

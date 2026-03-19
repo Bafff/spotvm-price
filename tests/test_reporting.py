@@ -10,6 +10,7 @@ from spotvm.models import CandidateInsight
 from spotvm.reporting import (
     _colorize_eviction,
     _colorize_placement,
+    _format_catalog_updated,
     _strip_ansi,
     export_to_csv,
     render_table,
@@ -83,6 +84,12 @@ def test_render_table_shortens_heuristic_performance_note():
 
     assert "Heuristic perf*" in table
     assert "vCPU/RAM heuristic because" not in table
+
+
+def test_format_catalog_updated_formats_datetime():
+    value = _format_catalog_updated(datetime(2026, 3, 19, 13, 45))
+
+    assert value == "2026-03-19"
 
 
 def test_export_to_csv(tmp_path):

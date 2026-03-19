@@ -571,6 +571,10 @@ def _run_unattended_iteration(
         logger.error(f"Azure API request failed: {exc}")  # noqa: TRY400 - traceback is noise for API failures
         logger.info("Continuing despite error...")
         return 0, None
+    except DatabricksCatalogError as exc:
+        logger.error("Databricks pricing catalog failed: %s", exc)  # noqa: TRY400 - traceback is noise for catalog failures
+        logger.info("Continuing despite error...")
+        return 0, None
     except Exception:
         unexpected_error_count += 1
         logger.exception(
@@ -929,7 +933,7 @@ def _save_run_results_if_requested(
             config=config,
             results_dir=request.results_dir,
         )
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         logger.warning("Failed to save run results: %s", exc)
         emit_error(f"Failed to save run results: {exc}")
     else:

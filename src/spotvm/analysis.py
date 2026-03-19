@@ -135,6 +135,7 @@ def enrich_with_databricks_cost(
     dbu_unit_price = catalog.pricing_profile.dbu_unit_price_usd
     photon_dbu_unit_price = catalog.pricing_profile.photon_dbu_unit_price_usd
     catalog_updated = _parse_catalog_timestamp(catalog.captured_at)
+    unmatched_count = 0
 
     for candidate in candidates:
         compute_price = candidate.price_usd
@@ -142,6 +143,7 @@ def enrich_with_databricks_cost(
 
         row = lookup_azure_node_type_pricing(candidate.vm_size)
         if row is None or row.dbu_per_hour is None:
+            unmatched_count += 1
             continue
 
         candidate.databricks_dbu_per_hour = row.dbu_per_hour
@@ -158,6 +160,12 @@ def enrich_with_databricks_cost(
 
         if compute_price is not None and databricks_cost is not None:
             candidate.total_price_usd = compute_price + databricks_cost
+
+    if unmatched_count > 0:
+        logger.warning(
+            "Databricks DBU pricing data unavailable for %d candidate(s); leaving Databricks fields empty for unmatched SKUs",
+            unmatched_count,
+        )
 
     return candidates
 
