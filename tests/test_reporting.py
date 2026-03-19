@@ -401,6 +401,71 @@ def test_export_to_csv_hides_baseline_columns(tmp_path):
     assert "Price per Performance" not in headers
 
 
+def test_render_table_shows_databricks_columns_when_enabled():
+    candidates = [
+        _candidate(
+            price_usd=0.381,
+            compute_price_usd=0.03,
+            databricks_dbu_per_hour=1.17,
+            databricks_dbu_cost_usd=0.1755,
+            databricks_photon_dbu_per_hour=1.17,
+            databricks_photon_cost_usd=0.1755,
+            total_price_usd=0.381,
+            databricks_catalog_updated="2026-03-19T00:00:00Z",
+            eviction_rate=3.0,
+            recommendation_rank=1,
+        ),
+    ]
+
+    table = render_table(
+        candidates,
+        show_placement=False,
+        show_baseline=False,
+        show_databricks=True,
+        show_photon=True,
+        render_options=NO_COLOR(),
+    )
+
+    assert "VM (USD/hr)" in table
+    assert "DBU/h" in table
+    assert "DB Cost" in table
+    assert "Photon DBU/h" in table
+    assert "Photon Cost" in table
+    assert "Catalog Updated" in table
+
+
+def test_export_to_csv_writes_databricks_columns_when_enabled(tmp_path):
+    candidates = [
+        _candidate(
+            price_usd=0.381,
+            compute_price_usd=0.03,
+            databricks_dbu_per_hour=1.17,
+            databricks_dbu_cost_usd=0.1755,
+            total_price_usd=0.381,
+            databricks_catalog_updated="2026-03-19T00:00:00Z",
+            eviction_rate=3.0,
+            recommendation_rank=1,
+        ),
+    ]
+    csv_path = tmp_path / "databricks.csv"
+    export_to_csv(
+        candidates,
+        csv_path,
+        show_placement=False,
+        show_baseline=False,
+        show_databricks=True,
+    )
+
+    with csv_path.open("r", encoding="utf-8") as f:
+        row = next(csv.DictReader(f))
+
+    assert row["VM Price (USD/hr)"] == "0.03"
+    assert row["DBU per Hour"] == "1.17"
+    assert row["Databricks Cost (USD/hr)"] == "0.1755"
+    assert row["Total Cost (USD/hr)"] == "0.381"
+    assert row["Databricks Catalog Updated"] == "2026-03-19T00:00:00Z"
+
+
 def test_render_table_auto_hides_empty_columns():
     """Columns where every data row is empty or '-' are auto-hidden."""
     candidates = [

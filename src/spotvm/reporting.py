@@ -156,11 +156,23 @@ TABLE_COLUMNS = [
     "Notes",
 ]
 
+_DATABRICKS_TABLE_COLUMNS = [
+    "VM (USD/hr)",
+    "DBU/h",
+    "DB Cost",
+    "Photon DBU/h",
+    "Photon Cost",
+    "Total Cost",
+    "Catalog Updated",
+]
+
 
 def render_table(
     candidates: Iterable[CandidateInsight],
     show_placement: bool = True,
     show_baseline: bool = True,
+    show_databricks: bool = False,
+    show_photon: bool = False,
     render_options: RenderOptions | None = None,
 ) -> str:
     options = _resolve_render_options(render_options)
@@ -170,7 +182,11 @@ def render_table(
         hidden |= {"Placement", "Quota"}
     if not show_baseline:
         hidden |= {"Perf %", "Price/Perf"}
+    if not show_photon:
+        hidden |= {"Photon DBU/h", "Photon Cost"}
     columns = [c for c in TABLE_COLUMNS if c not in hidden]
+    if show_databricks:
+        columns += [c for c in _DATABRICKS_TABLE_COLUMNS if c not in hidden]
 
     rows: list[list[str]] = [columns]
     for item in candidates:
@@ -194,6 +210,13 @@ def render_table(
             "CM/vCPU": _format_coremark_per_vcpu(item.coremark_per_vcpu),
             "Price Updated": _format_dt(item.price_last_updated),
             "Notes": _format_table_notes(item),
+            "VM (USD/hr)": _format_price(item.compute_price_usd),
+            "DBU/h": _format_number(item.databricks_dbu_per_hour),
+            "DB Cost": _format_price(item.databricks_dbu_cost_usd),
+            "Photon DBU/h": _format_number(item.databricks_photon_dbu_per_hour),
+            "Photon Cost": _format_price(item.databricks_photon_cost_usd),
+            "Total Cost": _format_price(item.total_price_usd),
+            "Catalog Updated": _format_catalog_updated(item.databricks_catalog_updated),
         }
         rows.append([all_cells[c] for c in columns])
 
@@ -248,6 +271,12 @@ def _format_price(value: float | None) -> str:
     return f"${value:0.4f}"
 
 
+def _format_number(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:g}"
+
+
 def _format_percentage(value: float | None) -> str:
     if value is None:
         return "-"
@@ -259,6 +288,12 @@ def _format_dt(value: datetime | None) -> str:
     if value is None:
         return "-"
     return value.strftime("%Y-%m-%d")
+
+
+def _format_catalog_updated(value: str | None) -> str:
+    if not value:
+        return "-"
+    return value[:10] if len(value) >= 10 else value
 
 
 def _format_performance(value: float | None) -> str:
@@ -326,9 +361,20 @@ CSV_COLUMNS = [
     "Notes",
 ]
 
+_DATABRICKS_CSV_COLUMNS = [
+    "VM Price (USD/hr)",
+    "DBU per Hour",
+    "Databricks Cost (USD/hr)",
+    "Photon DBU per Hour",
+    "Photon Cost (USD/hr)",
+    "Total Cost (USD/hr)",
+    "Databricks Catalog Updated",
+]
+
 # Columns tied to specific modes
 _CSV_PLACEMENT_COLS = {"Placement Score", "Quota Available"}
 _CSV_BASELINE_COLS = {"Performance (%)", "Price per Performance"}
+_CSV_PHOTON_COLS = {"Photon DBU per Hour", "Photon Cost (USD/hr)"}
 
 
 def export_to_csv(
@@ -336,6 +382,8 @@ def export_to_csv(
     csv_path: Path,
     show_placement: bool = True,
     show_baseline: bool = True,
+    show_databricks: bool = False,
+    show_photon: bool = False,
 ) -> None:
     """Export candidate insights to CSV file for Excel/Google Sheets."""
     from .projection import project_for_csv
@@ -346,17 +394,23 @@ def export_to_csv(
         hidden |= _CSV_PLACEMENT_COLS
     if not show_baseline:
         hidden |= _CSV_BASELINE_COLS
+    if not show_photon:
+        hidden |= _CSV_PHOTON_COLS
     columns = [c for c in CSV_COLUMNS if c not in hidden]
+    if show_databricks:
+        columns += [c for c in _DATABRICKS_CSV_COLUMNS if c not in hidden]
 
     formatters = {
         "quota": _csv_format_quota,
         "price": _csv_format_price,
+        "numeric": _csv_format_number,
         "percentage": _csv_format_percentage,
         "performance": _csv_format_performance,
         "price_per_perf": _csv_format_price_per_perf,
         "coremark": _csv_format_coremark,
         "coremark_per_vcpu": _csv_format_coremark_per_vcpu,
         "datetime": _csv_format_datetime,
+        "text": _csv_format_text,
     }
 
     rows: list[list[str]] = []
@@ -364,7 +418,14 @@ def export_to_csv(
         vendor = detect_cpu_vendor(item.vm_size) if item.vm_size else ""
         vendor_text = vendor.upper() if vendor else ""
 
-        all_cells = project_for_csv(item, vendor_text, formatters, _format_notes)
+        all_cells = project_for_csv(
+            item,
+            vendor_text,
+            formatters,
+            _format_notes,
+            show_databricks=show_databricks,
+            show_photon=show_photon,
+        )
         rows.append([all_cells[c] for c in columns])
 
     _write_csv_atomic(csv_path, columns, rows)
@@ -410,6 +471,12 @@ def _csv_format_price(value: float | None) -> str:
     return f"{value:.4f}"
 
 
+def _csv_format_number(value: float | None) -> str:
+    if value is None:
+        return ""
+    return f"{value:g}"
+
+
 def _csv_format_percentage(value: float | None) -> str:
     """Format percentage for CSV (numeric value without % symbol for Excel sorting)."""
     if value is None:
@@ -436,6 +503,10 @@ def _csv_format_datetime(value: datetime | None) -> str:
     if value is None:
         return ""
     return value.isoformat()
+
+
+def _csv_format_text(value: str | None) -> str:
+    return value or ""
 
 
 def _csv_format_coremark(value: int | None) -> str:

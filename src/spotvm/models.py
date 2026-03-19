@@ -48,3 +48,10 @@ class CandidateInsight:
     cpu_arch: CPUArchitecture | None = None
     coremark_score: int | None = None  # CoreMark benchmark score
     coremark_per_vcpu: float | None = None  # CoreMark per vCPU (efficiency metric)
+    compute_price_usd: float | None = None
+    databricks_dbu_per_hour: float | None = None
+    databricks_dbu_cost_usd: float | None = None
+    databricks_photon_dbu_per_hour: float | None = None
+    databricks_photon_cost_usd: float | None = None
+    total_price_usd: float | None = None
+    databricks_catalog_updated: str | None = None

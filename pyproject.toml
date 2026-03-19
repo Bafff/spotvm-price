@@ -38,6 +38,9 @@ package-dir = {"" = "src"}
 where = ["src"]
 include = ["spotvm*"]
 
+[tool.setuptools.package-data]
+spotvm = ["data/*.json"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 

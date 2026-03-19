@@ -258,6 +258,90 @@ def test_csv_output_format(temp_results_dir, sample_candidates, sample_config):
     assert headers == expected_headers
 
 
+def test_save_run_results_persists_databricks_fields_when_present(temp_results_dir, sample_config):
+    candidates = [
+        CandidateInsight(
+            vm_size="Standard_D4ps_v6",
+            region="centralus",
+            availability_zone=None,
+            price_usd=0.381,
+            price_last_updated=datetime(2025, 1, 25, 14, 30),
+            eviction_rate=2.5,
+            eviction_last_updated=datetime(2025, 1, 25, 14, 30),
+            placement_score="High",
+            quota_available=True,
+            recommendation_rank=1,
+            compute_price_usd=0.03,
+            databricks_dbu_per_hour=1.17,
+            databricks_dbu_cost_usd=0.1755,
+            databricks_photon_dbu_per_hour=1.17,
+            databricks_photon_cost_usd=0.1755,
+            total_price_usd=0.381,
+            databricks_catalog_updated="2026-03-19T00:00:00Z",
+        ),
+    ]
+
+    saved_path = save_run_results(
+        candidates=candidates,
+        config=sample_config,
+        results_dir=temp_results_dir,
+    )
+
+    with saved_path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    candidate = data["candidates"][0]
+    assert candidate["compute_price_usd"] == 0.03
+    assert candidate["databricks_dbu_per_hour"] == 1.17
+    assert candidate["databricks_dbu_cost_usd"] == 0.1755
+    assert candidate["databricks_photon_dbu_per_hour"] == 1.17
+    assert candidate["databricks_photon_cost_usd"] == 0.1755
+    assert candidate["total_price_usd"] == 0.381
+    assert candidate["databricks_catalog_updated"] == "2026-03-19T00:00:00Z"
+
+
+def test_generate_history_csv_appends_databricks_columns_when_present(temp_results_dir, sample_config):
+    candidates = [
+        CandidateInsight(
+            vm_size="Standard_D4ps_v6",
+            region="centralus",
+            availability_zone=None,
+            price_usd=0.381,
+            price_last_updated=datetime(2025, 1, 25, 14, 30),
+            eviction_rate=2.5,
+            eviction_last_updated=datetime(2025, 1, 25, 14, 30),
+            placement_score="High",
+            quota_available=True,
+            recommendation_rank=1,
+            compute_price_usd=0.03,
+            databricks_dbu_per_hour=1.17,
+            databricks_dbu_cost_usd=0.1755,
+            total_price_usd=0.381,
+            databricks_catalog_updated="2026-03-19T00:00:00Z",
+        ),
+    ]
+
+    save_run_results(candidates, sample_config, temp_results_dir)
+
+    snapshots = load_historical_runs(temp_results_dir)
+    csv_path = temp_results_dir / "databricks_history.csv"
+    generate_history_csv(snapshots, csv_path)
+
+    with csv_path.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        headers = reader.fieldnames or []
+        row = next(reader)
+
+    assert "compute_price_usd" in headers
+    assert "databricks_dbu_per_hour" in headers
+    assert "databricks_dbu_cost_usd" in headers
+    assert "total_price_usd" in headers
+    assert "databricks_catalog_updated" in headers
+    assert row["compute_price_usd"] == "0.03"
+    assert row["total_price_usd"] == "0.381"
+
+
+
 def test_csv_handles_none_values(temp_results_dir, sample_config):
     """Test CSV generation handles None values correctly."""
     candidates_with_none = [

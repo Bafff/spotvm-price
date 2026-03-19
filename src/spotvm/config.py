@@ -42,6 +42,8 @@ class ToolConfig:
     enable_placement: bool = False
     baseline_sku: str | None = None
     cpu_arch: CPUArchitecture | None = None
+    include_databricks_cost: bool = False
+    include_photon_cost: bool = False
 
     def __post_init__(self) -> None:
         self.regions = _clean_list(self.regions)
@@ -77,6 +79,8 @@ class ToolConfig:
             "enable_placement": self.enable_placement,
             "baseline_sku": self.baseline_sku,
             "cpu_arch": self.cpu_arch,
+            "include_databricks_cost": self.include_databricks_cost,
+            "include_photon_cost": self.include_photon_cost,
         }
         if self.enable_placement:
             payload["desired_count"] = self.desired_count

@@ -210,6 +210,60 @@ class TestBuildParser:
 
         assert config.desired_count == 1
         assert config.enable_placement is False
+        assert config.include_databricks_cost is False
+        assert config.include_photon_cost is False
+
+    def test_parser_accepts_databricks_pricing_flags(self):
+        args = build_parser().parse_args(
+            [
+                "--regions",
+                "centralus",
+                "--sizes",
+                "Standard_D4ps_v6",
+                "--include-databricks-cost",
+                "--include-photon-cost",
+                "--refresh-databricks-catalog",
+            ]
+        )
+
+        assert args.include_databricks_cost is True
+        assert args.include_photon_cost is True
+        assert args.refresh_databricks_catalog is True
+
+    def test_include_photon_cost_without_databricks_errors(self):
+        with pytest.raises(SystemExit):
+            main(
+                [
+                    "--regions",
+                    "centralus",
+                    "--sizes",
+                    "Standard_D4ps_v6",
+                    "--include-photon-cost",
+                ]
+            )
+
+    def test_build_runtime_config_accepts_databricks_pricing_flags(self):
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "--regions",
+                "centralus",
+                "--sizes",
+                "Standard_D4ps_v6",
+                "--include-databricks-cost",
+                "--include-photon-cost",
+            ]
+        )
+
+        config = _build_runtime_config(
+            parser=parser,
+            args=args,
+            base_config={},
+            sizes=args.sizes,
+        )
+
+        assert config.include_databricks_cost is True
+        assert config.include_photon_cost is True
 
     def test_build_runtime_config_uses_config_placement_for_cli_desired_count(self):
         parser = build_parser()

@@ -194,6 +194,20 @@ uv run spotvm \
   --json | jq .
 ```
 
+### Databricks pricing catalog
+The CLI now reserves three Databricks-related flags:
+
+```bash
+uv run spotvm \
+  --regions centralus \
+  --sizes Standard_D4ps_v6 \
+  --include-databricks-cost
+```
+
+- `--include-databricks-cost` enables optional Databricks cost fields in JSON/CSV/table output when candidate rows carry catalog metadata.
+- `--include-photon-cost` requires `--include-databricks-cost`.
+- `--refresh-databricks-catalog` refreshes the vendored catalog snapshot and exits without running VM analysis.
+
 ### Export to CSV for Excel/Google Sheets
 ```bash
 uv run spotvm \

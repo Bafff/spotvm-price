@@ -30,6 +30,7 @@ from .config import (
     load_config_file,
     merge_cli_overrides,
 )
+from .databricks_catalog import DatabricksCatalogError, refresh_catalog
 from .http_client import AzureHttpError, AzureRestClient
 from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
 from .placement_score import PlacementScoreRequest, fetch_placement_scores
@@ -186,6 +187,21 @@ def _add_base_arguments(parser: argparse.ArgumentParser) -> None:
         type=str,
         help="Baseline VM size for relative performance comparison (e.g., Standard_D4as_v6 = 100%%)",
     )
+    parser.add_argument(
+        "--include-databricks-cost",
+        action="store_true",
+        help="Overlay vendored Databricks DBU cost metadata onto matching VM SKUs",
+    )
+    parser.add_argument(
+        "--include-photon-cost",
+        action="store_true",
+        help="Add Photon surcharge when Databricks cost mode is enabled",
+    )
+    parser.add_argument(
+        "--refresh-databricks-catalog",
+        action="store_true",
+        help="Refresh the vendored Databricks pricing catalog and exit",
+    )
 
 
 def _add_filtering_arguments(parser: argparse.ArgumentParser) -> None:
@@ -282,6 +298,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     args = parser.parse_args(argv)
     logger = _build_cli_logger(args)
+    if args.refresh_databricks_catalog:
+        return _run_refresh_mode(logger=logger)
     history_rc = _run_history_mode_if_requested(
         args=args,
         logger=logger,
@@ -387,6 +405,8 @@ def _build_runtime_config(
         "result_limit": args.limit,
         "baseline_sku": args.baseline_sku,
         "cpu_arch": args.cpu_arch,
+        "include_databricks_cost": args.include_databricks_cost or None,
+        "include_photon_cost": args.include_photon_cost or None,
     }
     if args.placement_check:
         overrides["enable_placement"] = True
@@ -404,6 +424,8 @@ def _build_runtime_config(
             parser.error("--desired-count requires --placement-check (or enable_placement in config)")
     if args.min_performance is not None and not merged_baseline:
         parser.error("--min-performance requires --baseline-sku (on CLI or in config)")
+    if config_data.get("include_photon_cost") and not config_data.get("include_databricks_cost"):
+        parser.error("--include-photon-cost requires --include-databricks-cost")
 
     try:
         return ToolConfig.from_dict(config_data)
@@ -447,6 +469,22 @@ def _run_analysis_mode(
         logger.error("Azure API request failed: %s", exc)  # noqa: TRY400 - user-facing API failure should stay concise
         return 2
 
+    return 0
+
+
+def _run_refresh_mode(*, logger: logging.Logger) -> int:
+    try:
+        summary = refresh_catalog()
+    except DatabricksCatalogError as exc:
+        logger.error("Databricks catalog refresh failed: %s", exc)
+        return 1
+
+    print(
+        "Databricks catalog refreshed: "
+        f"{summary['sku_count']} SKUs "
+        f"(new {summary['new_count']}, changed {summary['changed_count']}, removed {summary['removed_count']})"
+    )
+    print(f"Catalog path: {summary['catalog_path']}")
     return 0
 
 
@@ -847,6 +885,8 @@ def _persist_analysis_outputs(
                 request.csv,
                 show_placement=config.enable_placement,
                 show_baseline=config.baseline_sku is not None,
+                show_databricks=config.include_databricks_cost,
+                show_photon=config.include_photon_cost,
             )
         except OSError as exc:
             logger.error(  # noqa: TRY400 - expected filesystem failure path
@@ -910,7 +950,11 @@ def _emit_report_if_requested(
     if not (config.emit_json or config.save_report):
         return False
 
-    report_payload = _build_report(ranked)
+    report_payload = _build_report(
+        ranked,
+        show_databricks=config.include_databricks_cost,
+        show_photon=config.include_photon_cost,
+    )
     if config.emit_json:
         print(json.dumps(report_payload, indent=2, default=_json_serializer), file=sys.stdout)
     if config.save_report:
@@ -947,6 +991,8 @@ def _render_analysis_results(
             ranked,
             show_placement=config.enable_placement,
             show_baseline=config.baseline_sku is not None,
+            show_databricks=config.include_databricks_cost,
+            show_photon=config.include_photon_cost,
             render_options=render_options,
         )
     )
@@ -1006,10 +1052,24 @@ def _render_analysis_results(
         )
 
 
-def _build_report(candidates: list[CandidateInsight]) -> dict[str, Any]:
+def _build_report(
+    candidates: list[CandidateInsight],
+    *,
+    show_databricks: bool = False,
+    show_photon: bool = False,
+) -> dict[str, Any]:
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
-        "candidates": [project_for_report(item, _json_serializer, _merge_notes) for item in candidates],
+        "candidates": [
+            project_for_report(
+                item,
+                _json_serializer,
+                _merge_notes,
+                show_databricks=show_databricks,
+                show_photon=show_photon,
+            )
+            for item in candidates
+        ],
     }
 
 

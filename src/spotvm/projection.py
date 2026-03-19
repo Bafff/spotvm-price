@@ -7,7 +7,7 @@ from .models import CandidateInsight
 
 def project_for_history(candidate: CandidateInsight) -> dict[str, Any]:
     """Project a candidate to a dictionary for historical JSON storage."""
-    return {
+    payload = {
         "vm_size": candidate.vm_size,
         "region": candidate.region,
         "availability_zone": candidate.availability_zone,
@@ -20,11 +20,31 @@ def project_for_history(candidate: CandidateInsight) -> dict[str, Any]:
         "recommendation_rank": candidate.recommendation_rank,
         "notes": candidate.notes,
     }
+    for field in (
+        "compute_price_usd",
+        "databricks_dbu_per_hour",
+        "databricks_dbu_cost_usd",
+        "databricks_photon_dbu_per_hour",
+        "databricks_photon_cost_usd",
+        "total_price_usd",
+        "databricks_catalog_updated",
+    ):
+        value = getattr(candidate, field)
+        if value is not None:
+            payload[field] = value
+    return payload
 
 
-def project_for_report(candidate: CandidateInsight, json_serializer: Any, merge_notes: Any) -> dict[str, Any]:
+def project_for_report(
+    candidate: CandidateInsight,
+    json_serializer: Any,
+    merge_notes: Any,
+    *,
+    show_databricks: bool = False,
+    show_photon: bool = False,
+) -> dict[str, Any]:
     """Project a candidate to a dictionary for JSON reporting output."""
-    return {
+    payload = {
         "rank": candidate.recommendation_rank,
         "region": candidate.region,
         "availabilityZone": candidate.availability_zone,
@@ -43,6 +63,16 @@ def project_for_report(candidate: CandidateInsight, json_serializer: Any, merge_
         "coremarkPerVCPU": candidate.coremark_per_vcpu,
         "notes": merge_notes(candidate.notes, getattr(candidate, "performance_note", None)),
     }
+    if show_databricks:
+        payload["computePriceUSDPerHour"] = candidate.compute_price_usd
+        payload["databricksDBUPerHour"] = candidate.databricks_dbu_per_hour
+        payload["databricksCostUSDPerHour"] = candidate.databricks_dbu_cost_usd
+        payload["totalPriceUSDPerHour"] = candidate.total_price_usd
+        payload["databricksCatalogUpdated"] = candidate.databricks_catalog_updated
+    if show_databricks and show_photon:
+        payload["photonDBUPerHour"] = candidate.databricks_photon_dbu_per_hour
+        payload["photonCostUSDPerHour"] = candidate.databricks_photon_cost_usd
+    return payload
 
 
 def project_for_csv(
@@ -50,9 +80,12 @@ def project_for_csv(
     vendor_text: str,
     formatters: dict[str, Any],
     format_notes: Any,
+    *,
+    show_databricks: bool = False,
+    show_photon: bool = False,
 ) -> dict[str, str]:
     """Project a candidate to a dictionary for CSV output."""
-    return {
+    payload = {
         "Rank": str(candidate.recommendation_rank) if candidate.recommendation_rank is not None else "",
         "Region": candidate.region or "",
         "Availability Zone": candidate.availability_zone or "",
@@ -69,3 +102,32 @@ def project_for_csv(
         "Price Last Updated": formatters["datetime"](candidate.price_last_updated),
         "Notes": format_notes(candidate),
     }
+    if show_databricks:
+        payload["VM Price (USD/hr)"] = formatters["numeric"](candidate.compute_price_usd)
+        payload["DBU per Hour"] = formatters["numeric"](candidate.databricks_dbu_per_hour)
+        payload["Databricks Cost (USD/hr)"] = formatters["numeric"](candidate.databricks_dbu_cost_usd)
+        payload["Total Cost (USD/hr)"] = formatters["numeric"](candidate.total_price_usd)
+        payload["Databricks Catalog Updated"] = formatters["text"](candidate.databricks_catalog_updated)
+    if show_databricks and show_photon:
+        payload["Photon DBU per Hour"] = formatters["numeric"](candidate.databricks_photon_dbu_per_hour)
+        payload["Photon Cost (USD/hr)"] = formatters["numeric"](candidate.databricks_photon_cost_usd)
+    return payload
+
+
+def _set_optional_databricks_fields(
+    payload: dict[str, Any],
+    candidate: CandidateInsight,
+    *,
+    show_databricks: bool,
+    show_photon: bool,
+) -> None:
+    if not show_databricks:
+        return
+    payload["compute_price_usd"] = candidate.compute_price_usd
+    payload["databricks_dbu_per_hour"] = candidate.databricks_dbu_per_hour
+    payload["databricks_dbu_cost_usd"] = candidate.databricks_dbu_cost_usd
+    payload["total_price_usd"] = candidate.total_price_usd
+    payload["databricks_catalog_updated"] = candidate.databricks_catalog_updated
+    if show_photon:
+        payload["databricks_photon_dbu_per_hour"] = candidate.databricks_photon_dbu_per_hour
+        payload["databricks_photon_cost_usd"] = candidate.databricks_photon_cost_usd

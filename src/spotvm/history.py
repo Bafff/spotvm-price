@@ -19,6 +19,16 @@ from .projection import project_for_history
 
 logger = logging.getLogger("spotvm")
 
+_DATABRICKS_HISTORY_FIELDS = [
+    "compute_price_usd",
+    "databricks_dbu_per_hour",
+    "databricks_dbu_cost_usd",
+    "databricks_photon_dbu_per_hour",
+    "databricks_photon_cost_usd",
+    "total_price_usd",
+    "databricks_catalog_updated",
+]
+
 
 @dataclass
 class RunSnapshot:
@@ -134,35 +144,37 @@ def generate_history_csv(
     if not snapshots:
         return 0
 
+    include_databricks = any(
+        any(field in candidate for field in _DATABRICKS_HISTORY_FIELDS) for snapshot in snapshots for candidate in snapshot.candidates
+    )
+
     # Prepare rows for CSV
     rows = []
     for snapshot in snapshots:
         for candidate in snapshot.candidates:
-            rows.append(
-                {
-                    "timestamp": snapshot.timestamp,
-                    "vm_size": candidate.get("vm_size"),
-                    "region": candidate.get("region"),
-                    "zone": candidate.get("availability_zone") or "",
-                    "price_usd": candidate.get("price_usd") if candidate.get("price_usd") is not None else "",
-                    "eviction_rate": candidate.get("eviction_rate")
-                    if candidate.get("eviction_rate") is not None
-                    else "",
-                    "placement_score": candidate.get("placement_score") or "",
-                    "quota_available": candidate.get("quota_available")
-                    if candidate.get("quota_available") is not None
-                    else "",
-                    "performance_relative": candidate.get("performance_relative")
-                    if candidate.get("performance_relative") is not None
-                    else "",
-                    "price_per_performance": candidate.get("price_per_performance")
-                    if candidate.get("price_per_performance") is not None
-                    else "",
-                    "recommendation_rank": candidate.get("recommendation_rank")
-                    if candidate.get("recommendation_rank") is not None
-                    else "",
-                }
-            )
+            row = {
+                "timestamp": snapshot.timestamp,
+                "vm_size": candidate.get("vm_size"),
+                "region": candidate.get("region"),
+                "zone": candidate.get("availability_zone") or "",
+                "price_usd": candidate.get("price_usd") if candidate.get("price_usd") is not None else "",
+                "eviction_rate": candidate.get("eviction_rate") if candidate.get("eviction_rate") is not None else "",
+                "placement_score": candidate.get("placement_score") or "",
+                "quota_available": candidate.get("quota_available") if candidate.get("quota_available") is not None else "",
+                "performance_relative": candidate.get("performance_relative")
+                if candidate.get("performance_relative") is not None
+                else "",
+                "price_per_performance": candidate.get("price_per_performance")
+                if candidate.get("price_per_performance") is not None
+                else "",
+                "recommendation_rank": candidate.get("recommendation_rank")
+                if candidate.get("recommendation_rank") is not None
+                else "",
+            }
+            if include_databricks:
+                for field in _DATABRICKS_HISTORY_FIELDS:
+                    row[field] = candidate.get(field) if candidate.get(field) is not None else ""
+            rows.append(row)
 
     # Write CSV
     if rows:
@@ -180,6 +192,8 @@ def generate_history_csv(
             "price_per_performance",
             "recommendation_rank",
         ]
+        if include_databricks:
+            fieldnames.extend(_DATABRICKS_HISTORY_FIELDS)
 
         with output_path.open("w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)

@@ -62,6 +62,19 @@ _EXPECTED_CANDIDATE_KEYS = {
     "notes",
 }
 
+_EXPECTED_DATABRICKS_CANDIDATE_KEYS = _EXPECTED_CANDIDATE_KEYS | {
+    "computePriceUSDPerHour",
+    "databricksDBUPerHour",
+    "databricksCostUSDPerHour",
+    "totalPriceUSDPerHour",
+    "databricksCatalogUpdated",
+}
+
+_EXPECTED_DATABRICKS_CANDIDATE_KEYS_WITH_PHOTON = _EXPECTED_DATABRICKS_CANDIDATE_KEYS | {
+    "photonDBUPerHour",
+    "photonCostUSDPerHour",
+}
+
 
 def test_build_report_top_level_keys():
     report = _build_report([_make_candidate()])
@@ -72,6 +85,43 @@ def test_build_report_candidate_keys():
     report = _build_report([_make_candidate()])
     assert len(report["candidates"]) == 1
     assert set(report["candidates"][0].keys()) == _EXPECTED_CANDIDATE_KEYS
+
+
+def test_build_report_candidate_keys_include_databricks_fields_when_enabled():
+    report = _build_report(
+        [
+            _make_candidate(
+                compute_price_usd=0.03,
+                databricks_dbu_per_hour=1.17,
+                databricks_dbu_cost_usd=0.1755,
+                total_price_usd=0.2055,
+                databricks_catalog_updated="2026-03-19T00:00:00Z",
+            )
+        ],
+        show_databricks=True,
+    )
+
+    assert set(report["candidates"][0].keys()) == _EXPECTED_DATABRICKS_CANDIDATE_KEYS
+
+
+def test_build_report_candidate_keys_include_photon_fields_when_enabled():
+    report = _build_report(
+        [
+            _make_candidate(
+                compute_price_usd=0.03,
+                databricks_dbu_per_hour=1.17,
+                databricks_dbu_cost_usd=0.1755,
+                databricks_photon_dbu_per_hour=1.17,
+                databricks_photon_cost_usd=0.1755,
+                total_price_usd=0.381,
+                databricks_catalog_updated="2026-03-19T00:00:00Z",
+            )
+        ],
+        show_databricks=True,
+        show_photon=True,
+    )
+
+    assert set(report["candidates"][0].keys()) == _EXPECTED_DATABRICKS_CANDIDATE_KEYS_WITH_PHOTON
 
 
 def test_build_report_is_json_serializable():
@@ -129,6 +179,43 @@ _EXPECTED_CSV_COLUMNS_FULL = [
 
 def test_csv_columns_are_stable():
     assert CSV_COLUMNS == _EXPECTED_CSV_COLUMNS_FULL
+
+
+def test_export_to_csv_writes_databricks_headers_when_enabled(tmp_path):
+    csv_path = tmp_path / "out.csv"
+    export_to_csv(
+        [
+            _make_candidate(
+                compute_price_usd=0.03,
+                databricks_dbu_per_hour=1.17,
+                databricks_dbu_cost_usd=0.1755,
+                databricks_photon_dbu_per_hour=1.17,
+                databricks_photon_cost_usd=0.1755,
+                total_price_usd=0.381,
+                databricks_catalog_updated="2026-03-19T00:00:00Z",
+            )
+        ],
+        csv_path,
+        show_placement=True,
+        show_baseline=True,
+        show_databricks=True,
+        show_photon=True,
+    )
+
+    import csv as csv_module
+
+    with csv_path.open(newline="", encoding="utf-8") as handle:
+        headers = next(csv_module.reader(handle))
+
+    assert headers == _EXPECTED_CSV_COLUMNS_FULL + [
+        "VM Price (USD/hr)",
+        "DBU per Hour",
+        "Databricks Cost (USD/hr)",
+        "Photon DBU per Hour",
+        "Photon Cost (USD/hr)",
+        "Total Cost (USD/hr)",
+        "Databricks Catalog Updated",
+    ]
 
 
 def test_export_to_csv_writes_expected_headers(tmp_path):
@@ -215,3 +302,49 @@ def test_generate_history_csv_writes_expected_fieldnames(tmp_path):
         fieldnames = list(reader.fieldnames or [])
 
     assert fieldnames == _EXPECTED_HISTORY_FIELDNAMES
+
+
+def test_generate_history_csv_appends_databricks_fieldnames_when_present(tmp_path):
+    snapshot = RunSnapshot(
+        timestamp="2025-01-01T00:00:00Z",
+        config={"regions": ["centralus"], "sizes": ["Standard_D4ps_v6"]},
+        candidates=[
+            {
+                "vm_size": "Standard_D4ps_v6",
+                "region": "centralus",
+                "availability_zone": None,
+                "price_usd": 0.381,
+                "eviction_rate": 5.0,
+                "placement_score": None,
+                "quota_available": None,
+                "performance_relative": 100.0,
+                "price_per_performance": 0.0008,
+                "recommendation_rank": 1,
+                "compute_price_usd": 0.03,
+                "databricks_dbu_per_hour": 1.17,
+                "databricks_dbu_cost_usd": 0.1755,
+                "databricks_photon_dbu_per_hour": 1.17,
+                "databricks_photon_cost_usd": 0.1755,
+                "total_price_usd": 0.381,
+                "databricks_catalog_updated": "2026-03-19T00:00:00Z",
+            }
+        ],
+    )
+    output_path = tmp_path / "history.csv"
+    generate_history_csv([snapshot], output_path)
+
+    import csv as csv_module
+
+    with output_path.open(newline="", encoding="utf-8") as handle:
+        reader = csv_module.DictReader(handle)
+        fieldnames = list(reader.fieldnames or [])
+
+    assert fieldnames == _EXPECTED_HISTORY_FIELDNAMES + [
+        "compute_price_usd",
+        "databricks_dbu_per_hour",
+        "databricks_dbu_cost_usd",
+        "databricks_photon_dbu_per_hour",
+        "databricks_photon_cost_usd",
+        "total_price_usd",
+        "databricks_catalog_updated",
+    ]
