@@ -176,6 +176,11 @@ def _azure_dbu_pricing_index() -> dict[str, AzureNodeTypePricingRow]:
     return {row.node_type_id: row for row in _load_azure_dbu_pricing_rows()}
 
 
+def refresh_databricks_catalog_cache() -> None:
+    _load_azure_dbu_pricing_rows.cache_clear()
+    _azure_dbu_pricing_index.cache_clear()
+
+
 def refresh_catalog_instructions() -> str:
     return (
         "Manual refresh only.\n"

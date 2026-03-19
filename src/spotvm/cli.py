@@ -31,7 +31,7 @@ from .config import (
     load_config_file,
     merge_cli_overrides,
 )
-from .databricks_catalog import DatabricksCatalogError, refresh_catalog_instructions
+from .databricks_catalog import DatabricksCatalogError, refresh_catalog_instructions, refresh_databricks_catalog_cache
 from .http_client import AzureHttpError, AzureRestClient
 from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
 from .placement_score import PlacementScoreRequest, fetch_placement_scores
@@ -712,7 +712,7 @@ def _run_history_analysis(
     output_path = history_output or (results_dir / "history.csv")
 
     logger.info("Analyzing historical data from %s", results_dir)
-    num_runs, num_datapoints, csv_path = analyze_history(
+    num_runs, num_datapoints, csv_path, skipped_files = analyze_history(
         results_dir=results_dir,
         depth=depth,
         output_path=output_path,
@@ -721,6 +721,7 @@ def _run_history_analysis(
     emit("Historical Analysis Complete:")
     emit(f"  Runs analyzed: {num_runs}")
     emit(f"  Data points: {num_datapoints}")
+    emit(f"  Skipped invalid files: {skipped_files}")
     emit(f"  CSV output: {csv_path}")
     emit("\nUse this CSV for visualization with tools like:")
     emit(f"  - Excel/Google Sheets: Import {csv_path}")
@@ -784,6 +785,7 @@ def _build_ranked_candidates(
         no_max_limit=effective_no_max_limit,
     )
     if config.include_databricks_cost:
+        refresh_databricks_catalog_cache()
         candidates = enrich_with_databricks_cost(
             candidates,
             include_photon=config.include_photon_cost,

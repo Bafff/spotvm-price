@@ -267,15 +267,32 @@ def test_analyze_history_complete_workflow(temp_results_dir, sample_candidates, 
         save_run_results(sample_candidates, sample_config, temp_results_dir)
 
     # Analyze
-    num_runs, num_datapoints, csv_path = analyze_history(
+    num_runs, num_datapoints, csv_path, skipped_files = analyze_history(
         results_dir=temp_results_dir,
         depth=2,  # Only last 2 runs
     )
 
     assert num_runs == 2
     assert num_datapoints == 4  # 2 candidates x 2 runs
+    assert skipped_files == 0
     assert csv_path.exists()
     assert csv_path.name == "history.csv"
+
+
+def test_analyze_history_reports_skipped_invalid_files(temp_results_dir, sample_candidates, sample_config):
+    save_run_results(sample_candidates, sample_config, temp_results_dir)
+    bad_path = temp_results_dir / "runs" / "broken.json"
+    bad_path.write_text("{bad-json", encoding="utf-8")
+
+    num_runs, num_datapoints, csv_path, skipped_files = analyze_history(
+        results_dir=temp_results_dir,
+        depth=None,
+    )
+
+    assert num_runs == 1
+    assert num_datapoints == 2
+    assert skipped_files == 1
+    assert csv_path.exists()
 
 
 def test_csv_output_format(temp_results_dir, sample_candidates, sample_config):

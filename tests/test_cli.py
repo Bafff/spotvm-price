@@ -32,7 +32,7 @@ from spotvm.cli import (
 from spotvm.config import ToolConfig
 from spotvm.databricks_catalog import DatabricksCatalogError
 from spotvm.http_client import AzureHttpError
-from spotvm.models import HistoricalMetrics
+from spotvm.models import CandidateInsight, HistoricalMetrics
 from spotvm.placement_score import PlacementScoreRequest
 from spotvm.reporting import RenderOptions
 from spotvm.resource_graph import ResourceGraphRequest
@@ -161,7 +161,7 @@ class TestMainWithMocks:
         assert kwargs["depth"] == 7
         assert kwargs["history_output"] == history_output
 
-    @patch("spotvm.history.analyze_history", return_value=(3, 9, Path("/tmp/history.csv")))
+    @patch("spotvm.history.analyze_history", return_value=(3, 9, Path("/tmp/history.csv"), 1))
     def test_run_history_analysis_uses_default_output_path_and_prints_summary(
         self,
         mock_analyze_history,
@@ -190,6 +190,7 @@ class TestMainWithMocks:
         assert "Historical Analysis Complete:" in captured.out
         assert "Runs analyzed: 3" in captured.out
         assert "Data points: 9" in captured.out
+        assert "Skipped invalid files: 1" in captured.out
         assert "Python: pd.read_csv('/tmp/history.csv')" in captured.out
 
     @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 1)
@@ -704,6 +705,30 @@ class TestMainWithMocks:
         assert ranked[0].databricks_dbu_cost_usd == 0.15
         assert ranked[0].total_price_usd == 0.20
 
+    def test_build_ranked_candidates_refreshes_databricks_catalog_caches(self, monkeypatch):
+        monkeypatch.setattr("spotvm.cli.refresh_databricks_catalog_cache", MagicMock())
+        monkeypatch.setattr("spotvm.analysis.load_catalog", lambda: SimpleNamespace(
+            captured_at="2026-03-19T00:00:00Z",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+        ))
+        monkeypatch.setattr(
+            "spotvm.analysis.lookup_azure_node_type_pricing",
+            lambda _sku: SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),
+        )
+
+        _build_ranked_candidates(
+            placement_scores=[],
+            historical_metrics=[_historical_metric("Standard_D4s_v4", price_usd=0.05, eviction_rate=5.0)],
+            request=_analysis_args(),
+            config=ToolConfig(
+                regions=["centralus"],
+                sizes=["Standard_D4s_v4"],
+                include_databricks_cost=True,
+            ),
+        )
+
+        cli.refresh_databricks_catalog_cache.assert_called_once_with()
+
     def test_explicit_sizes_bypass_bounded_hardware_window(self, monkeypatch, capsys):
         _stub_analysis_fetches(
             monkeypatch,
@@ -859,7 +884,7 @@ class TestMainWithMocks:
         assert "placement_request" not in seen
 
     def test_persist_analysis_outputs_keeps_stdout_machine_readable_for_json(self, capsys):
-        candidate = SimpleNamespace(
+        candidate = CandidateInsight(
             recommendation_rank=1,
             region="centralus",
             availability_zone=None,
@@ -870,6 +895,7 @@ class TestMainWithMocks:
             price_usd=0.01,
             price_last_updated=None,
             eviction_rate=1.0,
+            eviction_last_updated=None,
             performance_relative=100.0,
             price_per_performance=0.0001,
             performance_basis="coremark",
@@ -965,7 +991,7 @@ class TestMainWithMocks:
         mock_save_results.assert_called_once()
 
     def test_emit_report_if_requested_reports_save_failure_without_raising(self, tmp_path, monkeypatch, capsys):
-        candidate = SimpleNamespace(
+        candidate = CandidateInsight(
             recommendation_rank=1,
             region="centralus",
             availability_zone=None,
@@ -976,6 +1002,7 @@ class TestMainWithMocks:
             price_usd=0.01,
             price_last_updated=None,
             eviction_rate=1.0,
+            eviction_last_updated=None,
             performance_relative=None,
             price_per_performance=None,
             coremark_score=None,
@@ -1008,7 +1035,7 @@ class TestMainWithMocks:
         logger.error.assert_called_once()
 
     def test_emit_report_if_requested_creates_parent_directories(self, tmp_path, capsys):
-        candidate = SimpleNamespace(
+        candidate = CandidateInsight(
             recommendation_rank=1,
             region="centralus",
             availability_zone=None,
@@ -1019,6 +1046,7 @@ class TestMainWithMocks:
             price_usd=0.01,
             price_last_updated=None,
             eviction_rate=1.0,
+            eviction_last_updated=None,
             performance_relative=None,
             price_per_performance=None,
             coremark_score=None,
@@ -1046,7 +1074,7 @@ class TestMainWithMocks:
         logger.error.assert_not_called()
 
     def test_emit_report_if_requested_does_not_depend_on_path_write_text(self, tmp_path, monkeypatch, capsys):
-        candidate = SimpleNamespace(
+        candidate = CandidateInsight(
             recommendation_rank=1,
             region="centralus",
             availability_zone=None,
@@ -1057,6 +1085,7 @@ class TestMainWithMocks:
             price_usd=0.01,
             price_last_updated=None,
             eviction_rate=1.0,
+            eviction_last_updated=None,
             performance_relative=None,
             price_per_performance=None,
             coremark_score=None,

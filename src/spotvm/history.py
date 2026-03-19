@@ -93,28 +93,7 @@ def load_historical_runs(
     Returns:
         List of RunSnapshot objects, sorted by timestamp (oldest first)
     """
-    runs_dir = results_dir / "runs"
-    if not runs_dir.exists():
-        return []
-
-    # Find all JSON files
-    json_files = sorted(runs_dir.glob("*.json"))
-
-    # Apply depth limit (take N most recent)
-    if depth is not None and depth > 0:
-        json_files = json_files[-depth:]
-
-    # Load snapshots
-    snapshots = []
-    for filepath in json_files:
-        try:
-            with filepath.open("r") as f:
-                data = json.load(f)
-                snapshots.append(_run_snapshot_from_payload(data))
-        except (OSError, json.JSONDecodeError, HistoricalSnapshotError) as exc:
-            logger.warning("Failed to load historical run %s: %s", filepath, exc)
-            continue
-
+    snapshots, _skipped_files = _load_historical_runs_with_skipped_count(results_dir, depth)
     return snapshots
 
 
@@ -245,7 +224,7 @@ def analyze_history(
     results_dir: Path,
     depth: int | None = None,
     output_path: Path | None = None,
-) -> tuple[int, int, Path]:
+) -> tuple[int, int, Path, int]:
     """Analyze historical runs and generate unified CSV.
 
     Convenience function that combines load + generate steps.
@@ -256,9 +235,9 @@ def analyze_history(
         output_path: Where to write CSV (default: results_dir/history.csv)
 
     Returns:
-        Tuple of (num_runs, num_datapoints, csv_path)
+        Tuple of (num_runs, num_datapoints, csv_path, skipped_files)
     """
-    snapshots = load_historical_runs(results_dir, depth)
+    snapshots, skipped_files = _load_historical_runs_with_skipped_count(results_dir, depth)
     num_runs = len(snapshots)
 
     if output_path is None:
@@ -266,4 +245,31 @@ def analyze_history(
 
     num_datapoints = generate_history_csv(snapshots, output_path)
 
-    return (num_runs, num_datapoints, output_path)
+    return (num_runs, num_datapoints, output_path, skipped_files)
+
+
+def _load_historical_runs_with_skipped_count(
+    results_dir: Path,
+    depth: int | None = None,
+) -> tuple[list[RunSnapshot], int]:
+    runs_dir = results_dir / "runs"
+    if not runs_dir.exists():
+        return [], 0
+
+    json_files = sorted(runs_dir.glob("*.json"))
+    if depth is not None and depth > 0:
+        json_files = json_files[-depth:]
+
+    snapshots = []
+    skipped_files = 0
+    for filepath in json_files:
+        try:
+            with filepath.open("r") as f:
+                data = json.load(f)
+                snapshots.append(_run_snapshot_from_payload(data))
+        except (OSError, json.JSONDecodeError, HistoricalSnapshotError) as exc:
+            skipped_files += 1
+            logger.warning("Failed to load historical run %s: %s", filepath, exc)
+            continue
+
+    return snapshots, skipped_files

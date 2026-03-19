@@ -6,7 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from spotvm.analysis import enrich_with_databricks_cost, merge_datasets, rank_candidates, summarize_top_candidates
+from spotvm.analysis import (
+    _parse_catalog_timestamp,
+    enrich_with_databricks_cost,
+    merge_datasets,
+    rank_candidates,
+    summarize_top_candidates,
+)
 from spotvm.databricks_catalog import DatabricksCatalogError
 from spotvm.models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
 
@@ -402,4 +408,42 @@ def test_enrich_with_databricks_cost_warns_about_unmatched_skus(monkeypatch, cap
     with caplog.at_level(logging.WARNING, logger="spotvm"):
         enrich_with_databricks_cost([candidate], include_photon=False)
 
-    assert "Databricks DBU pricing data unavailable for 1 candidate(s)" in caplog.text
+    assert "Databricks DBU catalog match not found for 1 candidate(s)" in caplog.text
+
+
+def test_enrich_with_databricks_cost_warns_when_catalog_entry_lacks_dbu_rate(monkeypatch, caplog):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4ds_v5",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at="2026-03-19T00:00:00Z",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+        ),
+    )
+    monkeypatch.setattr(
+        "spotvm.analysis.lookup_azure_node_type_pricing",
+        lambda _sku: SimpleNamespace(dbu_per_hour=None, photon_capable=True),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="spotvm"):
+        [enriched] = enrich_with_databricks_cost([candidate], include_photon=False)
+
+    assert enriched.databricks_dbu_per_hour is None
+    assert enriched.total_price_usd is None
+    assert "Databricks DBU rate missing for 1 candidate(s)" in caplog.text
+
+
+def test_parse_catalog_timestamp_assumes_utc_for_naive_input():
+    parsed = _parse_catalog_timestamp("2026-03-19T00:00:00")
+
+    assert parsed == datetime(2026, 3, 19, 0, 0, tzinfo=timezone.utc)

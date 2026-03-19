@@ -17,6 +17,7 @@ from .vm_specs import (
 logger = logging.getLogger("spotvm")
 
 PLACEMENT_ORDER = {"high": 3, "medium": 2, "low": 1}
+# Extracted from Databricks UI performance multipliers for Standard Jobs Photon.
 STANDARD_JOBS_PHOTON_MULTIPLIER = 2.5
 PlacementLookupKey = tuple[str, str, str | None]
 MetricsLookupKey = tuple[str, str]
@@ -124,9 +125,10 @@ def enrich_with_databricks_cost(
     """Overlay Databricks DBU pricing onto matching Azure VM candidates.
 
     Keeps ``price_usd`` as the raw Azure VM price and stores the Databricks-aware
-    result separately in ``total_price_usd``. When Photon mode is enabled, the
-    Photon value is treated as the full Photon DBU rate for the candidate rather
-    than as an additive surcharge delta.
+    result separately in ``total_price_usd``.  When Photon mode is enabled, the
+    Photon DBU rate is derived by multiplying the base ``dbu_per_hour`` by the
+    standard-jobs Photon multiplier (2.5x).  The resulting Photon cost replaces
+    (not supplements) the base DBU cost when computing ``total_price_usd``.
     """
     if not candidates:
         return candidates
@@ -135,23 +137,29 @@ def enrich_with_databricks_cost(
     dbu_unit_price = catalog.pricing_profile.dbu_unit_price_usd
     photon_dbu_unit_price = catalog.pricing_profile.photon_dbu_unit_price_usd
     catalog_updated = _parse_catalog_timestamp(catalog.captured_at)
-    unmatched_count = 0
+    missing_catalog_match_count = 0
+    missing_dbu_rate_count = 0
 
     for candidate in candidates:
         compute_price = candidate.price_usd
         candidate.compute_price_usd = compute_price
 
         row = lookup_azure_node_type_pricing(candidate.vm_size)
-        if row is None or row.dbu_per_hour is None:
-            unmatched_count += 1
+        if row is None:
+            missing_catalog_match_count += 1
+            continue
+        if row.dbu_per_hour is None:
+            missing_dbu_rate_count += 1
             continue
 
         candidate.databricks_dbu_per_hour = row.dbu_per_hour
         candidate.databricks_dbu_cost_usd = row.dbu_per_hour * dbu_unit_price
         candidate.databricks_catalog_updated = catalog_updated
 
-        # Photon cost replaces the base DBU component in the user-facing total
-        # because databricks_photon_dbu_per_hour stores the full Photon rate.
+        # When Photon is enabled for a capable node, the Photon DBU cost
+        # (base * 2.5x multiplier) replaces the standard DBU cost in
+        # total_price_usd — Photon is an alternative compute tier, not an
+        # additive surcharge.
         databricks_cost = candidate.databricks_dbu_cost_usd
         if include_photon and row.photon_capable:
             candidate.databricks_photon_dbu_per_hour = row.dbu_per_hour * STANDARD_JOBS_PHOTON_MULTIPLIER
@@ -161,10 +169,15 @@ def enrich_with_databricks_cost(
         if compute_price is not None and databricks_cost is not None:
             candidate.total_price_usd = compute_price + databricks_cost
 
-    if unmatched_count > 0:
+    if missing_catalog_match_count > 0:
         logger.warning(
-            "Databricks DBU pricing data unavailable for %d candidate(s); leaving Databricks fields empty for unmatched SKUs",
-            unmatched_count,
+            "Databricks DBU catalog match not found for %d candidate(s); leaving Databricks fields empty for unmatched SKUs",
+            missing_catalog_match_count,
+        )
+    if missing_dbu_rate_count > 0:
+        logger.warning(
+            "Databricks DBU rate missing for %d candidate(s); leaving Databricks fields empty for catalog rows without DBU data",
+            missing_dbu_rate_count,
         )
 
     return candidates
@@ -173,15 +186,13 @@ def enrich_with_databricks_cost(
 def _parse_catalog_timestamp(value: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (AttributeError, TypeError, ValueError) as exc:
-        raise _invalid_catalog_timestamp(value) from exc
+    except ValueError as exc:
+        raise DatabricksCatalogError(
+            f"Invalid Databricks catalog captured_at timestamp: {value!r}"
+        ) from exc
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed
-
-
-def _invalid_catalog_timestamp(value: object) -> DatabricksCatalogError:
-    return DatabricksCatalogError(f"Invalid Databricks catalog captured_at timestamp: {value!r}")
 
 
 def summarize_top_candidates(
