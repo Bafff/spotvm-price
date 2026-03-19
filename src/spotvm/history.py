@@ -74,7 +74,7 @@ def save_run_results(
         try:
             json.dump(asdict(snapshot), f, indent=2)
         except TypeError as exc:
-            raise ValueError(f"Failed to serialize historical run snapshot: {filepath}") from exc
+            raise _serialization_error(filepath) from exc
 
     return filepath
 
@@ -136,6 +136,10 @@ def _run_snapshot_from_payload(data: dict[str, Any]) -> RunSnapshot:
 
 def _invalid_snapshot_type(field_name: str, expected: str) -> HistoricalSnapshotError:
     return HistoricalSnapshotError(f"{field_name} must be {expected}")
+
+
+def _serialization_error(filepath: Path) -> ValueError:
+    return ValueError(f"Failed to serialize historical run snapshot: {filepath}")
 
 
 def generate_history_csv(

@@ -107,7 +107,9 @@ def test_save_run_results_creates_json(temp_results_dir, sample_candidates, samp
     assert data["candidates"][0]["eviction_rate"] == 2.5
 
 
-def test_save_run_results_wraps_json_serialization_type_error(temp_results_dir, sample_candidates, sample_config, monkeypatch):
+def test_save_run_results_wraps_json_serialization_type_error(
+    temp_results_dir, sample_candidates, sample_config, monkeypatch
+):
     def raising_dump(*_args, **_kwargs):
         raise TypeError("not serializable")
 
