@@ -139,10 +139,6 @@ def refresh_catalog_instructions() -> str:
     )
 
 
-def _catalog_snapshot_path() -> Path:
-    return Path(__file__).with_name("data") / "databricks_pricing.json"
-
-
 def _catalog_from_text(raw_text: str, *, source_label: str) -> DatabricksCatalog:
     try:
         payload = json.loads(raw_text)

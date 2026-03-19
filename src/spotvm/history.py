@@ -14,20 +14,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import ToolConfig
-from .models import CandidateInsight
+from .models import DATABRICKS_OPTIONAL_FIELDS, CandidateInsight
 from .projection import project_for_history
 
 logger = logging.getLogger("spotvm")
-
-_DATABRICKS_HISTORY_FIELDS = [
-    "compute_price_usd",
-    "databricks_dbu_per_hour",
-    "databricks_dbu_cost_usd",
-    "databricks_photon_dbu_per_hour",
-    "databricks_photon_cost_usd",
-    "total_price_usd",
-    "databricks_catalog_updated",
-]
 
 
 @dataclass
@@ -145,7 +135,7 @@ def generate_history_csv(
         return 0
 
     include_databricks = any(
-        any(field in candidate for field in _DATABRICKS_HISTORY_FIELDS)
+        any(field in candidate for field in DATABRICKS_OPTIONAL_FIELDS)
         for snapshot in snapshots
         for candidate in snapshot.candidates
     )
@@ -176,7 +166,7 @@ def generate_history_csv(
                 else "",
             }
             if include_databricks:
-                for field in _DATABRICKS_HISTORY_FIELDS:
+                for field in DATABRICKS_OPTIONAL_FIELDS:
                     row[field] = candidate.get(field) if candidate.get(field) is not None else ""
             rows.append(row)
 
@@ -197,7 +187,7 @@ def generate_history_csv(
             "recommendation_rank",
         ]
         if include_databricks:
-            fieldnames.extend(_DATABRICKS_HISTORY_FIELDS)
+            fieldnames.extend(DATABRICKS_OPTIONAL_FIELDS)
 
         with output_path.open("w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)

@@ -85,3 +85,35 @@ def test_project_for_report_returns_expected_keys():
         "coremarkPerVCPU",
         "notes",
     }
+
+
+def test_project_for_report_uses_total_price_when_databricks_fields_present():
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4s_v5",
+        placement_score="High",
+        quota_available=True,
+        price_usd=0.03,
+        price_last_updated=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        eviction_rate=5.0,
+        eviction_last_updated=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        availability_zone="1",
+        recommendation_rank=1,
+        cpu_arch="x64",
+        compute_price_usd=0.03,
+        databricks_dbu_per_hour=1.17,
+        databricks_dbu_cost_usd=0.1755,
+        total_price_usd=0.2055,
+        databricks_catalog_updated="2026-03-19T00:00:00Z",
+    )
+
+    projected = project_for_report(
+        candidate,
+        lambda value: value.isoformat() if value else None,
+        lambda *parts: "; ".join(p for p in parts if p),
+        show_databricks=True,
+    )
+
+    assert projected["priceUSDPerHour"] == 0.2055
+    assert projected["computePriceUSDPerHour"] == 0.03
+    assert projected["totalPriceUSDPerHour"] == 0.2055

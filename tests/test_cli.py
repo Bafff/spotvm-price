@@ -30,6 +30,7 @@ from spotvm.cli import (
     main,
 )
 from spotvm.config import ToolConfig
+from spotvm.databricks_catalog import DatabricksCatalogError
 from spotvm.http_client import AzureHttpError
 from spotvm.models import HistoricalMetrics
 from spotvm.placement_score import PlacementScoreRequest
@@ -455,6 +456,29 @@ class TestMainWithMocks:
 
         assert rc == 2
         logger.error.assert_called_once_with("Azure API request failed: %s", error)
+
+    def test_run_analysis_mode_returns_two_for_databricks_catalog_error(self):
+        logger = MagicMock()
+        request = _analysis_args()
+        config = ToolConfig(
+            regions=["centralus"],
+            sizes=["Standard_D4s_v5"],
+            include_databricks_cost=True,
+        )
+        error = DatabricksCatalogError("broken catalog")
+
+        rc = _run_analysis_mode(
+            request=request,
+            config=config,
+            logger=logger,
+            clear_cache=False,
+            interval_minutes=None,
+            run_single_analysis=MagicMock(side_effect=error),
+            run_unattended_monitoring=MagicMock(),
+        )
+
+        assert rc == 2
+        logger.error.assert_called_once_with("Databricks pricing catalog failed: %s", error)
 
     @patch("spotvm.cli.AzureAuthenticator")
     @patch("spotvm.cli.AzureRestClient")

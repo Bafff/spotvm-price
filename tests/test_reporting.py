@@ -466,6 +466,32 @@ def test_export_to_csv_writes_databricks_columns_when_enabled(tmp_path):
     assert row["Databricks Catalog Updated"] == "2026-03-19T00:00:00Z"
 
 
+def test_render_table_uses_total_price_column_value_when_databricks_is_enabled():
+    candidates = [
+        _candidate(
+            price_usd=0.03,
+            compute_price_usd=0.03,
+            databricks_dbu_per_hour=1.17,
+            databricks_dbu_cost_usd=0.1755,
+            total_price_usd=0.2055,
+            databricks_catalog_updated="2026-03-19T00:00:00Z",
+            eviction_rate=3.0,
+            recommendation_rank=1,
+        ),
+    ]
+
+    table = render_table(
+        candidates,
+        show_placement=False,
+        show_baseline=False,
+        show_databricks=True,
+        render_options=NO_COLOR(),
+    )
+
+    assert "0.2055" in table
+    assert "0.03" in table
+
+
 def test_render_table_auto_hides_empty_columns():
     """Columns where every data row is empty or '-' are auto-hidden."""
     candidates = [

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .models import CandidateInsight
+from .models import DATABRICKS_OPTIONAL_FIELDS, CandidateInsight, effective_price_usd
 
 
 def project_for_history(candidate: CandidateInsight) -> dict[str, Any]:
@@ -11,7 +11,7 @@ def project_for_history(candidate: CandidateInsight) -> dict[str, Any]:
         "vm_size": candidate.vm_size,
         "region": candidate.region,
         "availability_zone": candidate.availability_zone,
-        "price_usd": candidate.price_usd,
+        "price_usd": effective_price_usd(candidate),
         "eviction_rate": candidate.eviction_rate,
         "placement_score": candidate.placement_score,
         "quota_available": candidate.quota_available,
@@ -20,16 +20,8 @@ def project_for_history(candidate: CandidateInsight) -> dict[str, Any]:
         "recommendation_rank": candidate.recommendation_rank,
         "notes": candidate.notes,
     }
-    for field in (
-        "compute_price_usd",
-        "databricks_dbu_per_hour",
-        "databricks_dbu_cost_usd",
-        "databricks_photon_dbu_per_hour",
-        "databricks_photon_cost_usd",
-        "total_price_usd",
-        "databricks_catalog_updated",
-    ):
-        value = getattr(candidate, field)
+    for field in DATABRICKS_OPTIONAL_FIELDS:
+        value = getattr(candidate, field, None)
         if value is not None:
             payload[field] = value
     return payload
@@ -52,7 +44,7 @@ def project_for_report(
         "cpuArchitecture": candidate.cpu_arch,
         "placementScore": candidate.placement_score,
         "quotaAvailable": candidate.quota_available,
-        "priceUSDPerHour": candidate.price_usd,
+        "priceUSDPerHour": effective_price_usd(candidate),
         "priceLastUpdated": json_serializer(candidate.price_last_updated),
         "evictionRatePercent": candidate.eviction_rate,
         "performanceRelativePercent": candidate.performance_relative,
@@ -93,7 +85,7 @@ def project_for_csv(
         "CPU Vendor": vendor_text,
         "Placement Score": candidate.placement_score or (candidate.notes or "N/A"),
         "Quota Available": formatters["quota"](candidate.quota_available),
-        "Price (USD/hr)": formatters["price"](candidate.price_usd),
+        "Price (USD/hr)": formatters["price"](effective_price_usd(candidate)),
         "Eviction Rate (%)": formatters["percentage"](candidate.eviction_rate),
         "Performance (%)": formatters["performance"](candidate.performance_relative),
         "Price per Performance": formatters["price_per_perf"](candidate.price_per_performance),
@@ -112,22 +104,3 @@ def project_for_csv(
         payload["Photon DBU per Hour"] = formatters["numeric"](candidate.databricks_photon_dbu_per_hour)
         payload["Photon Cost (USD/hr)"] = formatters["numeric"](candidate.databricks_photon_cost_usd)
     return payload
-
-
-def _set_optional_databricks_fields(
-    payload: dict[str, Any],
-    candidate: CandidateInsight,
-    *,
-    show_databricks: bool,
-    show_photon: bool,
-) -> None:
-    if not show_databricks:
-        return
-    payload["compute_price_usd"] = candidate.compute_price_usd
-    payload["databricks_dbu_per_hour"] = candidate.databricks_dbu_per_hour
-    payload["databricks_dbu_cost_usd"] = candidate.databricks_dbu_cost_usd
-    payload["total_price_usd"] = candidate.total_price_usd
-    payload["databricks_catalog_updated"] = candidate.databricks_catalog_updated
-    if show_photon:
-        payload["databricks_photon_dbu_per_hour"] = candidate.databricks_photon_dbu_per_hour
-        payload["databricks_photon_cost_usd"] = candidate.databricks_photon_cost_usd

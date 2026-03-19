@@ -31,7 +31,7 @@ from .config import (
     load_config_file,
     merge_cli_overrides,
 )
-from .databricks_catalog import refresh_catalog_instructions
+from .databricks_catalog import DatabricksCatalogError, refresh_catalog_instructions
 from .http_client import AzureHttpError, AzureRestClient
 from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
 from .placement_score import PlacementScoreRequest, fetch_placement_scores
@@ -201,7 +201,7 @@ def _add_base_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--refresh-databricks-catalog",
         action="store_true",
-        help="Refresh the vendored Databricks pricing catalog and exit",
+        help="Print the manual Databricks pricing refresh procedure and exit",
     )
 
 
@@ -469,12 +469,15 @@ def _run_analysis_mode(
     except AzureHttpError as exc:
         logger.error("Azure API request failed: %s", exc)  # noqa: TRY400 - user-facing API failure should stay concise
         return 2
+    except DatabricksCatalogError as exc:
+        logger.error("Databricks pricing catalog failed: %s", exc)  # noqa: TRY400 - user-facing catalog failure should stay concise
+        return 2
 
     return 0
 
 
 def _run_refresh_mode(*, logger: logging.Logger) -> int:
-    logger.info("Databricks catalog refresh is manual-only in this branch")
+    logger.info("Databricks catalog refresh is manual-only")
     print(refresh_catalog_instructions())
     return 0
 

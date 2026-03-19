@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 
-from .databricks_catalog import DatabricksCatalogError, load_catalog, lookup_azure_node_type_pricing
-from .models import CandidateInsight, CPUArchitecture, HistoricalMetrics, PlacementScoreResult
+from .databricks_catalog import load_catalog, lookup_azure_node_type_pricing
+from .models import CandidateInsight, CPUArchitecture, HistoricalMetrics, PlacementScoreResult, effective_price_usd
 from .vm_specs import (
     VMSpec,
     calculate_relative_performance_details,
@@ -83,9 +83,10 @@ def enrich_with_performance(
             )
 
         # Calculate price per performance unit
-        if perf and perf > 0 and candidate.price_usd is not None:
+        display_price = effective_price_usd(candidate)
+        if perf and perf > 0 and display_price is not None:
             # Price per 1% of baseline performance
-            candidate.price_per_performance = candidate.price_usd / perf
+            candidate.price_per_performance = display_price / perf
         else:
             candidate.price_per_performance = None
 
@@ -123,15 +124,10 @@ def enrich_with_databricks_cost(
     if not candidates:
         return candidates
 
-    try:
-        catalog = load_catalog()
-    except DatabricksCatalogError as exc:
-        logger.warning("Failed to load Databricks pricing catalog: %s", exc)
-        return candidates
-
+    catalog = load_catalog()
     dbu_unit_price = catalog.pricing_profile.dbu_unit_price_usd
+    photon_dbu_unit_price = getattr(catalog.pricing_profile, "photon_dbu_unit_price_usd", 0.0) or dbu_unit_price
     catalog_updated = catalog.captured_at
-    photon_surcharge_multiplier = STANDARD_JOBS_PHOTON_MULTIPLIER - 1.0
 
     for candidate in candidates:
         compute_price = candidate.price_usd
@@ -147,13 +143,13 @@ def enrich_with_databricks_cost(
 
         photon_cost_usd: float | None = None
         if include_photon and row.photon_capable:
-            candidate.databricks_photon_dbu_per_hour = row.dbu_per_hour * photon_surcharge_multiplier
-            photon_cost_usd = candidate.databricks_photon_dbu_per_hour * dbu_unit_price
+            candidate.databricks_photon_dbu_per_hour = row.dbu_per_hour * STANDARD_JOBS_PHOTON_MULTIPLIER
+            photon_cost_usd = candidate.databricks_photon_dbu_per_hour * photon_dbu_unit_price
             candidate.databricks_photon_cost_usd = photon_cost_usd
 
-        if compute_price is not None and candidate.databricks_dbu_cost_usd is not None:
-            candidate.total_price_usd = compute_price + candidate.databricks_dbu_cost_usd + (photon_cost_usd or 0.0)
-            candidate.price_usd = candidate.total_price_usd
+        effective_databricks_cost = photon_cost_usd or candidate.databricks_dbu_cost_usd
+        if compute_price is not None and effective_databricks_cost is not None:
+            candidate.total_price_usd = compute_price + effective_databricks_cost
 
     return candidates
 
@@ -175,8 +171,9 @@ def summarize_top_candidates(
             parts.append(f"eviction {item.eviction_rate:.1f}%")
         if item.performance_relative is not None:
             parts.append(f"perf {item.performance_relative:.0f}%")
-        if item.price_usd is not None:
-            parts.append(f"${item.price_usd:.4f}/hr")
+        display_price = effective_price_usd(item)
+        if display_price is not None:
+            parts.append(f"${display_price:.4f}/hr")
         summary.append("; ".join(parts))
     return summary
 
@@ -342,7 +339,8 @@ def _rank_sort_key(item: CandidateInsight) -> RankSortKey:
     if item.price_per_performance is not None:
         price_metric = item.price_per_performance
     else:
-        price_metric = item.price_usd if item.price_usd is not None else float("inf")
+        display_price = effective_price_usd(item)
+        price_metric = display_price if display_price is not None else float("inf")
     return (-score_rank, eviction, price_metric)
 
 
@@ -440,10 +438,9 @@ def _cost_filter_message(
     max_eviction: float | None,
     min_performance: float | None,
 ) -> str | None:
-    if max_price is not None and candidate.price_usd is not None and candidate.price_usd > max_price:
-        return (
-            f"Filtered {candidate.vm_size} in {candidate.region}: price ${candidate.price_usd:.4f} > ${max_price} max"
-        )
+    display_price = effective_price_usd(candidate)
+    if max_price is not None and display_price is not None and display_price > max_price:
+        return f"Filtered {candidate.vm_size} in {candidate.region}: price ${display_price:.4f} > ${max_price} max"
     if max_eviction is not None and candidate.eviction_rate is not None and candidate.eviction_rate > max_eviction:
         return (
             f"Filtered {candidate.vm_size} in {candidate.region}: "

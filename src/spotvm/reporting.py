@@ -13,7 +13,7 @@ from typing import cast
 import wcwidth
 from colorama import Fore, Style, init
 
-from .models import CandidateInsight
+from .models import CandidateInsight, effective_price_usd
 
 
 @dataclass(frozen=True)
@@ -202,7 +202,7 @@ def render_table(
                 else (item.notes or "N/A")
             ),
             "Quota": _format_quota(item.quota_available, render_options=options),
-            "Price (USD/hr)": _format_price(item.price_usd),
+            "Price (USD/hr)": _format_price(effective_price_usd(item)),
             "Eviction %": _colorize_eviction(item.eviction_rate, render_options=options),
             "Perf %": _format_performance(item.performance_relative),
             "Price/Perf": _format_price_per_perf(item.price_per_performance),

@@ -86,3 +86,11 @@ class TestToolConfigValidation:
     def test_valid_cpu_arch_normalizes(self):
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"], cpu_arch="X64")
         assert config.cpu_arch == "x64"
+
+    def test_include_photon_cost_requires_databricks_cost(self):
+        with pytest.raises(ValueError, match="include_photon_cost requires include_databricks_cost"):
+            ToolConfig(
+                regions=["centralus"],
+                sizes=["Standard_D4s_v5"],
+                include_photon_cost=True,
+            )

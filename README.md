@@ -206,7 +206,7 @@ uv run spotvm \
 
 - `--include-databricks-cost` enables optional Databricks cost fields in JSON/CSV/table output when candidate rows carry catalog metadata.
 - `--include-photon-cost` requires `--include-databricks-cost`.
-- `--refresh-databricks-catalog` prints the manual refresh procedure and exits. It does not fetch or rewrite pricing data automatically in this branch.
+- `--refresh-databricks-catalog` prints the manual refresh procedure and exits. It does not fetch or rewrite pricing data automatically.
 
 ### Vendored Azure DBU pricing data
 

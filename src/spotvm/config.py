@@ -49,6 +49,7 @@ class ToolConfig:
         self.regions = _clean_list(self.regions)
         self.sizes = _clean_list(self.sizes)
         _validate_placement_mode(self)
+        _validate_databricks_mode(self)
         _validate_required_lists(self.regions, self.sizes)
         _validate_desired_count(self.desired_count, self.enable_placement)
         self.os_type = _normalize_os_type(self.os_type)
@@ -100,6 +101,11 @@ def _validate_placement_mode(config: ToolConfig) -> None:
         )
     if config.availability_zones and not config.enable_placement:
         raise ValueError("availability_zones requires enable_placement")
+
+
+def _validate_databricks_mode(config: ToolConfig) -> None:
+    if config.include_photon_cost and not config.include_databricks_cost:
+        raise ValueError("include_photon_cost requires include_databricks_cost")
 
 
 def _validate_required_lists(regions: list[str], sizes: list[str]) -> None:

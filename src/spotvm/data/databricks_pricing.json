@@ -4,12 +4,13 @@
   "pricing_profile": {
     "name": "standard_jobs",
     "dbu_unit_price_usd": 0.15,
-    "photon_dbu_unit_price_usd": 0.0
+    "photon_dbu_unit_price_usd": 0.15
   },
   "captured_at": "2026-03-19T00:00:00Z",
   "source": {
-    "type": "official_pricing_snapshot",
-    "url": "https://azure.microsoft.com/en-us/pricing/details/databricks/"
+    "type": "hybrid_manual_snapshot",
+    "url": "https://azure.microsoft.com/en-us/pricing/details/databricks/",
+    "notes": "DBU unit prices were captured from the Azure Databricks pricing page; node-level DBU values are refreshed manually from Databricks UI config."
   },
   "entries": [
     {

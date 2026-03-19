@@ -6,6 +6,15 @@ from typing import Literal
 
 PerformanceBasis = Literal["coremark", "heuristic"]
 CPUArchitecture = Literal["x64", "arm"]
+DATABRICKS_OPTIONAL_FIELDS = (
+    "compute_price_usd",
+    "databricks_dbu_per_hour",
+    "databricks_dbu_cost_usd",
+    "databricks_photon_dbu_per_hour",
+    "databricks_photon_cost_usd",
+    "total_price_usd",
+    "databricks_catalog_updated",
+)
 
 
 @dataclass
@@ -55,3 +64,14 @@ class CandidateInsight:
     databricks_photon_cost_usd: float | None = None
     total_price_usd: float | None = None
     databricks_catalog_updated: str | None = None
+
+
+def effective_price_usd(candidate: object) -> float | None:
+    """Return the user-facing hourly price for a candidate."""
+    total_price = getattr(candidate, "total_price_usd", None)
+    if isinstance(total_price, (int, float)):
+        return float(total_price)
+    price = getattr(candidate, "price_usd", None)
+    if isinstance(price, (int, float)):
+        return float(price)
+    return None
