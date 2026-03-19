@@ -104,7 +104,7 @@ def test_project_for_report_uses_total_price_when_databricks_fields_present():
         databricks_dbu_per_hour=1.17,
         databricks_dbu_cost_usd=0.1755,
         total_price_usd=0.2055,
-        databricks_catalog_updated="2026-03-19T00:00:00Z",
+        databricks_catalog_updated=datetime(2026, 3, 19, tzinfo=timezone.utc),
     )
 
     projected = project_for_report(

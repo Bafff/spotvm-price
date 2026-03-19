@@ -63,7 +63,7 @@ class CandidateInsight:
     databricks_photon_dbu_per_hour: float | None = None
     databricks_photon_cost_usd: float | None = None
     total_price_usd: float | None = None
-    databricks_catalog_updated: str | None = None
+    databricks_catalog_updated: datetime | None = None
 
 
 def effective_price_usd(candidate: object) -> float | None:

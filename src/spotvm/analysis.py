@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from datetime import datetime, timezone
 
 from .databricks_catalog import load_catalog, lookup_azure_node_type_pricing
 from .models import CandidateInsight, CPUArchitecture, HistoricalMetrics, PlacementScoreResult, effective_price_usd
@@ -133,7 +134,7 @@ def enrich_with_databricks_cost(
     catalog = load_catalog()
     dbu_unit_price = catalog.pricing_profile.dbu_unit_price_usd
     photon_dbu_unit_price = catalog.pricing_profile.photon_dbu_unit_price_usd
-    catalog_updated = catalog.captured_at
+    catalog_updated = _parse_catalog_timestamp(catalog.captured_at)
 
     for candidate in candidates:
         compute_price = candidate.price_usd
@@ -160,6 +161,13 @@ def enrich_with_databricks_cost(
             candidate.total_price_usd = compute_price + effective_databricks_cost
 
     return candidates
+
+
+def _parse_catalog_timestamp(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def summarize_top_candidates(

@@ -6,7 +6,9 @@ from dataclasses import asdict, dataclass
 from functools import cache
 from importlib import resources
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
+from typing import Mapping
 
 
 class DatabricksCatalogError(RuntimeError):
@@ -47,7 +49,7 @@ class DatabricksCatalog:
     cloud: str
     pricing_profile: DatabricksPricingProfile
     captured_at: str
-    source: dict[str, str]
+    source: Mapping[str, str]
     entries: tuple[DatabricksCatalogEntry, ...]
 
     def to_dict(self) -> dict[str, Any]:
@@ -56,7 +58,7 @@ class DatabricksCatalog:
             "cloud": self.cloud,
             "pricing_profile": asdict(self.pricing_profile),
             "captured_at": self.captured_at,
-            "source": self.source,
+            "source": dict(self.source),
             "entries": [asdict(entry) for entry in self.entries],
         }
 
@@ -226,7 +228,7 @@ def _catalog_from_payload(payload: dict[str, Any]) -> DatabricksCatalog:
             photon_dbu_unit_price_usd=photon_dbu_unit_price_usd,
         ),
         captured_at=str(payload["captured_at"]),
-        source={str(key): str(value) for key, value in source.items()},
+        source=MappingProxyType({str(key): str(value) for key, value in source.items()}),
         entries=tuple(entries),
     )
 

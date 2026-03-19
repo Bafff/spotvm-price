@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from .models import DATABRICKS_OPTIONAL_FIELDS, CandidateInsight, effective_price_usd
@@ -23,6 +24,9 @@ def project_for_history(candidate: CandidateInsight) -> dict[str, Any]:
     for field in DATABRICKS_OPTIONAL_FIELDS:
         value = getattr(candidate, field, None)
         if value is not None:
+            if isinstance(value, datetime):
+                payload[field] = value.isoformat()
+                continue
             payload[field] = value
     return payload
 
@@ -60,7 +64,7 @@ def project_for_report(
         payload["databricksDBUPerHour"] = candidate.databricks_dbu_per_hour
         payload["databricksCostUSDPerHour"] = candidate.databricks_dbu_cost_usd
         payload["totalPriceUSDPerHour"] = candidate.total_price_usd
-        payload["databricksCatalogUpdated"] = candidate.databricks_catalog_updated
+        payload["databricksCatalogUpdated"] = json_serializer(candidate.databricks_catalog_updated)
     if show_databricks and show_photon:
         payload["photonDBUPerHour"] = candidate.databricks_photon_dbu_per_hour
         payload["photonCostUSDPerHour"] = candidate.databricks_photon_cost_usd
@@ -99,7 +103,7 @@ def project_for_csv(
         payload["DBU per Hour"] = formatters["numeric"](candidate.databricks_dbu_per_hour)
         payload["Databricks Cost (USD/hr)"] = formatters["numeric"](candidate.databricks_dbu_cost_usd)
         payload["Total Cost (USD/hr)"] = formatters["numeric"](candidate.total_price_usd)
-        payload["Databricks Catalog Updated"] = formatters["text"](candidate.databricks_catalog_updated)
+        payload["Databricks Catalog Updated"] = formatters["datetime"](candidate.databricks_catalog_updated)
     if show_databricks and show_photon:
         payload["Photon DBU per Hour"] = formatters["numeric"](candidate.databricks_photon_dbu_per_hour)
         payload["Photon Cost (USD/hr)"] = formatters["numeric"](candidate.databricks_photon_cost_usd)

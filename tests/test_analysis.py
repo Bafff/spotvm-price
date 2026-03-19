@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -172,7 +172,7 @@ def test_enrich_with_databricks_cost_populates_cost_fields(monkeypatch):
     assert enriched.databricks_dbu_per_hour == 1.0
     assert enriched.databricks_dbu_cost_usd == 0.15
     assert enriched.total_price_usd == 0.1971
-    assert enriched.databricks_catalog_updated == "2026-03-19T00:00:00Z"
+    assert enriched.databricks_catalog_updated == datetime(2026, 3, 19, 0, 0, tzinfo=timezone.utc)
 
 
 def test_enrich_with_databricks_cost_adds_jobs_photon_surcharge(monkeypatch):

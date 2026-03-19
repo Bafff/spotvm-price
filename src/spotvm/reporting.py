@@ -290,9 +290,11 @@ def _format_dt(value: datetime | None) -> str:
     return value.strftime("%Y-%m-%d")
 
 
-def _format_catalog_updated(value: str | None) -> str:
+def _format_catalog_updated(value: datetime | str | None) -> str:
     if not value:
         return "-"
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d")
     return value[:10] if len(value) >= 10 else value
 
 
@@ -498,10 +500,12 @@ def _csv_format_price_per_perf(value: float | None) -> str:
     return f"{value:.6f}"
 
 
-def _csv_format_datetime(value: datetime | None) -> str:
+def _csv_format_datetime(value: datetime | str | None) -> str:
     """Format datetime for CSV (ISO format for Excel compatibility)."""
     if value is None:
         return ""
+    if isinstance(value, str):
+        return value
     return value.isoformat()
 
 

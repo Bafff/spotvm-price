@@ -34,6 +34,13 @@ def test_load_catalog_exposes_stable_metadata_shape():
     json.dumps(payload)
 
 
+def test_load_catalog_source_is_immutable_mapping():
+    catalog = load_catalog()
+
+    with pytest.raises(TypeError):
+        catalog.source["extra"] = "value"
+
+
 def test_load_catalog_from_path_reports_malformed_json(tmp_path):
     path = tmp_path / "broken.json"
     path.write_text("{not-valid-json", encoding="utf-8")

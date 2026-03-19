@@ -12,6 +12,7 @@ import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from .config import ToolConfig
 from .models import DATABRICKS_OPTIONAL_FIELDS, CandidateInsight
@@ -101,18 +102,29 @@ def load_historical_runs(
         try:
             with filepath.open("r") as f:
                 data = json.load(f)
-                snapshots.append(
-                    RunSnapshot(
-                        timestamp=data["timestamp"],
-                        config=data["config"],
-                        candidates=data["candidates"],
-                    )
-                )
-        except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+                snapshots.append(_run_snapshot_from_payload(data))
+        except (OSError, json.JSONDecodeError, KeyError, ValueError) as exc:
             logger.warning("Failed to load historical run %s: %s", filepath, exc)
             continue
 
     return snapshots
+
+
+def _run_snapshot_from_payload(data: dict[str, Any]) -> RunSnapshot:
+    timestamp = data["timestamp"]
+    config = data["config"]
+    candidates = data["candidates"]
+    if not isinstance(timestamp, str):
+        raise ValueError("timestamp must be a string")
+    if not isinstance(config, dict):
+        raise ValueError("config must be a mapping")
+    if not isinstance(candidates, list):
+        raise ValueError("candidates must be a list")
+    return RunSnapshot(
+        timestamp=timestamp,
+        config=config,
+        candidates=candidates,
+    )
 
 
 def generate_history_csv(
