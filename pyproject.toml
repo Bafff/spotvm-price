@@ -39,7 +39,7 @@ where = ["src"]
 include = ["spotvm*"]
 
 [tool.setuptools.package-data]
-spotvm = ["data/*.json"]
+spotvm = ["data/*.json", "data/*.csv"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

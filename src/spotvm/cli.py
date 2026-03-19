@@ -30,7 +30,7 @@ from .config import (
     load_config_file,
     merge_cli_overrides,
 )
-from .databricks_catalog import DatabricksCatalogError, refresh_catalog
+from .databricks_catalog import refresh_catalog_instructions
 from .http_client import AzureHttpError, AzureRestClient
 from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
 from .placement_score import PlacementScoreRequest, fetch_placement_scores
@@ -473,18 +473,8 @@ def _run_analysis_mode(
 
 
 def _run_refresh_mode(*, logger: logging.Logger) -> int:
-    try:
-        summary = refresh_catalog()
-    except DatabricksCatalogError as exc:
-        logger.error("Databricks catalog refresh failed: %s", exc)
-        return 1
-
-    print(
-        "Databricks catalog refreshed: "
-        f"{summary['sku_count']} SKUs "
-        f"(new {summary['new_count']}, changed {summary['changed_count']}, removed {summary['removed_count']})"
-    )
-    print(f"Catalog path: {summary['catalog_path']}")
+    logger.info("Databricks catalog refresh is manual-only in this branch")
+    print(refresh_catalog_instructions())
     return 0
 
 

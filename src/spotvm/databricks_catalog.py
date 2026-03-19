@@ -1,15 +1,11 @@
 from __future__ import annotations
 
+import csv
 import json
-import tempfile
 from dataclasses import asdict, dataclass
 from importlib import resources
 from pathlib import Path
-from typing import Any, Callable
-
-import requests
-
-DEFAULT_DATABRICKS_PRICING_URL = "https://azure.microsoft.com/en-us/pricing/details/databricks/"
+from typing import Any
 
 
 class DatabricksCatalogError(RuntimeError):
@@ -29,6 +25,19 @@ class DatabricksCatalogEntry:
     dbu_per_hour: float
     photon_dbu_per_hour: float | None = None
     notes: str | None = None
+
+
+@dataclass(frozen=True)
+class AzureNodeTypePricingRow:
+    node_type_id: str
+    category: str | None
+    num_cores: int | None
+    memory_gb: float | None
+    dbu_per_hour: float | None
+    local_disk_gb: int | None
+    num_gpus: int | None
+    photon_capable: bool | None
+    deprecated: bool | None
 
 
 @dataclass(frozen=True)
@@ -75,63 +84,55 @@ def lookup_sku(catalog: DatabricksCatalog, sku: str) -> DatabricksCatalogEntry |
     return None
 
 
-def refresh_catalog(
-    *,
-    catalog_path: Path | None = None,
-    source_url: str = DEFAULT_DATABRICKS_PRICING_URL,
-    fetch_source: Callable[[str], str] | None = None,
-    parse_source: Callable[[str], dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    target_path = catalog_path or _catalog_snapshot_path()
-    fetcher = fetch_source or _fetch_source
-    parser = parse_source or _parse_source
+def load_azure_dbu_pricing_rows() -> list[AzureNodeTypePricingRow]:
+    path = resources.files("spotvm").joinpath("data", "databricks_azure_dbu_pricing.csv")
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise DatabricksCatalogError("Failed to load vendored Azure DBU pricing CSV") from exc
 
-    existing = load_catalog_from_path(target_path) if target_path.exists() else None
-    source_text = fetcher(source_url)
-    catalog = _catalog_from_payload(parser(source_text))
-    _write_catalog_atomic(target_path, catalog.to_dict())
+    reader = csv.DictReader(raw_text.splitlines())
+    rows: list[AzureNodeTypePricingRow] = []
+    for item in reader:
+        node_type_id = (item.get("node_type_id") or "").strip()
+        if not node_type_id:
+            continue
+        rows.append(
+            AzureNodeTypePricingRow(
+                node_type_id=node_type_id,
+                category=_optional_str(item.get("category")),
+                num_cores=_optional_int(item.get("num_cores")),
+                memory_gb=_optional_float(item.get("memory_gb")),
+                dbu_per_hour=_optional_float(item.get("dbu_per_hour")),
+                local_disk_gb=_optional_int(item.get("local_disk_gb")),
+                num_gpus=_optional_int(item.get("num_gpus")),
+                photon_capable=_optional_bool(item.get("photon_capable")),
+                deprecated=_optional_bool(item.get("deprecated")),
+            )
+        )
+    return rows
 
-    previous_entries = {entry.sku: entry for entry in existing.entries} if existing is not None else {}
-    next_entries = {entry.sku: entry for entry in catalog.entries}
 
-    new_count = sum(1 for sku in next_entries if sku not in previous_entries)
-    removed_count = sum(1 for sku in previous_entries if sku not in next_entries)
-    changed_count = sum(
-        1 for sku, entry in next_entries.items() if sku in previous_entries and entry != previous_entries[sku]
+def lookup_azure_node_type_pricing(node_type_id: str) -> AzureNodeTypePricingRow | None:
+    for row in load_azure_dbu_pricing_rows():
+        if row.node_type_id == node_type_id:
+            return row
+    return None
+
+
+def refresh_catalog_instructions() -> str:
+    return (
+        "Manual refresh only.\n"
+        "1. Open any Databricks workspace in Chrome DevTools.\n"
+        "2. Open the Console tab.\n"
+        "3. Run JSON.stringify(window.settings['defaultNodeTypeToPricingUnitsMap']).\n"
+        "4. Save the extracted Azure node-type DBU data as src/spotvm/data/databricks_azure_dbu_pricing.csv.\n"
+        "5. See docs/databricks-dbu-pricing-refresh.md for the full procedure and multiplier notes."
     )
-
-    return {
-        "catalog_path": target_path,
-        "sku_count": len(catalog.entries),
-        "new_count": new_count,
-        "changed_count": changed_count,
-        "removed_count": removed_count,
-    }
 
 
 def _catalog_snapshot_path() -> Path:
     return Path(__file__).with_name("data") / "databricks_pricing.json"
-
-
-def _fetch_source(source_url: str) -> str:
-    response = requests.get(source_url, timeout=60)
-    if not response.ok:
-        raise DatabricksCatalogError(
-            f"Failed to fetch Databricks pricing source ({response.status_code}) from {source_url}"
-        )
-    return response.text
-
-
-def _parse_source(source_text: str) -> dict[str, Any]:
-    try:
-        payload = json.loads(source_text)
-    except json.JSONDecodeError as exc:
-        raise DatabricksCatalogError(
-            "Failed to parse Databricks pricing source. Expected normalized JSON input."
-        ) from exc
-    if not isinstance(payload, dict):
-        raise DatabricksCatalogError("Databricks pricing source must be a JSON object")
-    return payload
 
 
 def _catalog_from_text(raw_text: str, *, source_label: str) -> DatabricksCatalog:
@@ -198,23 +199,34 @@ def _catalog_from_payload(payload: dict[str, Any]) -> DatabricksCatalog:
     )
 
 
-def _write_catalog_atomic(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            temp_path = Path(handle.name)
-            json.dump(payload, handle, indent=2)
-            handle.write("\n")
-        temp_path.replace(path)
-    except Exception:
-        if temp_path is not None:
-            temp_path.unlink(missing_ok=True)
-        raise
+
+def _optional_str(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _optional_float(value: str | None) -> float | None:
+    parsed = _optional_str(value)
+    if parsed is None:
+        return None
+    return float(parsed)
+
+
+def _optional_int(value: str | None) -> int | None:
+    parsed = _optional_str(value)
+    if parsed is None:
+        return None
+    return int(float(parsed))
+
+
+def _optional_bool(value: str | None) -> bool | None:
+    parsed = _optional_str(value)
+    if parsed is None:
+        return None
+    if parsed == "True":
+        return True
+    if parsed == "False":
+        return False
+    raise DatabricksCatalogError(f"Unexpected boolean value in Azure DBU pricing CSV: {parsed}")
