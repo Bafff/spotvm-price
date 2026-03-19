@@ -157,7 +157,7 @@ def test_enrich_with_databricks_cost_populates_cost_fields(monkeypatch):
         "spotvm.analysis.load_catalog",
         lambda: SimpleNamespace(
             captured_at="2026-03-19T00:00:00Z",
-            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15),
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
         ),
     )
     monkeypatch.setattr(
@@ -191,7 +191,7 @@ def test_enrich_with_databricks_cost_adds_jobs_photon_surcharge(monkeypatch):
         "spotvm.analysis.load_catalog",
         lambda: SimpleNamespace(
             captured_at="2026-03-19T00:00:00Z",
-            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15),
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
         ),
     )
     monkeypatch.setattr(
@@ -222,7 +222,7 @@ def test_enrich_with_databricks_cost_keeps_unmatched_sku_without_overlay(monkeyp
         "spotvm.analysis.load_catalog",
         lambda: SimpleNamespace(
             captured_at="2026-03-19T00:00:00Z",
-            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15),
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
         ),
     )
     monkeypatch.setattr("spotvm.analysis.lookup_azure_node_type_pricing", lambda _sku: None)
@@ -251,7 +251,7 @@ def test_enrich_with_databricks_cost_preserves_none_compute_price(monkeypatch):
         "spotvm.analysis.load_catalog",
         lambda: SimpleNamespace(
             captured_at="2026-03-19T00:00:00Z",
-            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15),
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
         ),
     )
     monkeypatch.setattr(

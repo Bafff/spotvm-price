@@ -60,6 +60,30 @@ def test_load_catalog_from_path_reports_malformed_json(tmp_path):
         load_catalog_from_path(path)
 
 
+def test_load_catalog_from_path_rejects_zero_photon_unit_price(tmp_path):
+    path = tmp_path / "broken-photon-price.json"
+    path.write_text(
+        json.dumps(
+            {
+                "catalog_version": 1,
+                "cloud": "azure",
+                "pricing_profile": {
+                    "name": "standard_jobs",
+                    "dbu_unit_price_usd": 0.15,
+                    "photon_dbu_unit_price_usd": 0.0,
+                },
+                "captured_at": "2026-03-19T00:00:00Z",
+                "source": {"type": "test", "url": "https://example.test"},
+                "entries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DatabricksCatalogError, match="photon_dbu_unit_price_usd must be positive"):
+        load_catalog_from_path(path)
+
+
 def test_load_azure_dbu_pricing_rows_contains_known_saved_entries():
     rows = load_azure_dbu_pricing_rows()
 

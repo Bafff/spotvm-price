@@ -132,7 +132,7 @@ def enrich_with_databricks_cost(
 
     catalog = load_catalog()
     dbu_unit_price = catalog.pricing_profile.dbu_unit_price_usd
-    photon_dbu_unit_price = getattr(catalog.pricing_profile, "photon_dbu_unit_price_usd", 0.0) or dbu_unit_price
+    photon_dbu_unit_price = catalog.pricing_profile.photon_dbu_unit_price_usd
     catalog_updated = catalog.captured_at
 
     for candidate in candidates:

@@ -164,6 +164,13 @@ def _catalog_from_payload(payload: dict[str, Any]) -> DatabricksCatalog:
     if not isinstance(entries_data, list):
         raise DatabricksCatalogError("Databricks catalog entries must be a list")
 
+    dbu_unit_price_usd = float(pricing_profile_data["dbu_unit_price_usd"])
+    if dbu_unit_price_usd <= 0.0:
+        raise DatabricksCatalogError("Databricks catalog pricing_profile.dbu_unit_price_usd must be positive")
+    photon_dbu_unit_price_usd = float(pricing_profile_data["photon_dbu_unit_price_usd"])
+    if photon_dbu_unit_price_usd <= 0.0:
+        raise DatabricksCatalogError("Databricks catalog pricing_profile.photon_dbu_unit_price_usd must be positive")
+
     seen_skus: set[str] = set()
     entries: list[DatabricksCatalogEntry] = []
     for raw_entry in entries_data:
@@ -194,8 +201,8 @@ def _catalog_from_payload(payload: dict[str, Any]) -> DatabricksCatalog:
         cloud=str(payload["cloud"]),
         pricing_profile=DatabricksPricingProfile(
             name=str(pricing_profile_data["name"]),
-            dbu_unit_price_usd=float(pricing_profile_data["dbu_unit_price_usd"]),
-            photon_dbu_unit_price_usd=float(pricing_profile_data["photon_dbu_unit_price_usd"]),
+            dbu_unit_price_usd=dbu_unit_price_usd,
+            photon_dbu_unit_price_usd=photon_dbu_unit_price_usd,
         ),
         captured_at=str(payload["captured_at"]),
         source={str(key): str(value) for key, value in source.items()},
