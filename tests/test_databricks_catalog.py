@@ -100,6 +100,29 @@ def test_load_catalog_from_path_reports_missing_nested_pricing_key(tmp_path):
         load_catalog_from_path(path)
 
 
+def test_load_catalog_from_path_reports_missing_top_level_field(tmp_path):
+    path = tmp_path / "broken-missing-version.json"
+    path.write_text(
+        json.dumps(
+            {
+                "cloud": "azure",
+                "pricing_profile": {
+                    "name": "standard_jobs",
+                    "dbu_unit_price_usd": 0.15,
+                    "photon_dbu_unit_price_usd": 0.15,
+                },
+                "captured_at": "2026-03-19T00:00:00Z",
+                "source": {"type": "test", "url": "https://example.test"},
+                "entries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DatabricksCatalogError, match="Databricks catalog is missing required field: catalog_version"):
+        load_catalog_from_path(path)
+
+
 def test_load_catalog_from_path_reports_invalid_entry_numeric_value(tmp_path):
     path = tmp_path / "broken-entry-numeric.json"
     path.write_text(
@@ -126,6 +149,33 @@ def test_load_catalog_from_path_reports_invalid_entry_numeric_value(tmp_path):
     )
 
     with pytest.raises(DatabricksCatalogError, match="Invalid Databricks catalog value"):
+        load_catalog_from_path(path)
+
+
+def test_load_catalog_from_path_reports_duplicate_sku_entries(tmp_path):
+    path = tmp_path / "broken-duplicate-sku.json"
+    path.write_text(
+        json.dumps(
+            {
+                "catalog_version": 1,
+                "cloud": "azure",
+                "pricing_profile": {
+                    "name": "standard_jobs",
+                    "dbu_unit_price_usd": 0.15,
+                    "photon_dbu_unit_price_usd": 0.15,
+                },
+                "captured_at": "2026-03-19T00:00:00Z",
+                "source": {"type": "test", "url": "https://example.test"},
+                "entries": [
+                    {"sku": "Standard_D4ps_v6", "dbu_per_hour": 1.17},
+                    {"sku": "Standard_D4ps_v6", "dbu_per_hour": 1.17},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DatabricksCatalogError, match="Duplicate Databricks catalog entry for SKU: Standard_D4ps_v6"):
         load_catalog_from_path(path)
 
 
@@ -237,6 +287,34 @@ def test_load_azure_dbu_pricing_rows_warns_when_no_usable_rows_loaded(tmp_path, 
     assert "Loaded 0 usable Azure Databricks DBU pricing rows" in caplog.text
 
 
+def test_load_azure_dbu_pricing_rows_warns_when_rows_are_skipped_for_blank_node_type_id(tmp_path, monkeypatch, caplog):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "databricks_azure_dbu_pricing.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "node_type_id,category,num_cores,memory_gb,dbu_per_hour,local_disk_gb,num_gpus,photon_capable,deprecated",
+                ",General Purpose,4,16.0,1.0,150,0,True,False",
+                "Standard_D4ds_v5,General Purpose,4,16.0,1.0,150,0,True,False",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("spotvm.databricks_catalog.resources.files", lambda _pkg: tmp_path)
+    import spotvm.databricks_catalog as databricks_catalog
+
+    databricks_catalog._load_azure_dbu_pricing_rows.cache_clear()
+    databricks_catalog._azure_dbu_pricing_index.cache_clear()
+
+    with caplog.at_level("WARNING", logger="spotvm"):
+        rows = load_azure_dbu_pricing_rows()
+
+    assert len(rows) == 1
+    assert "Skipped 1 Azure Databricks DBU pricing row(s) with blank node_type_id" in caplog.text
+
+
 def test_azure_node_type_pricing_row_validates_required_fields():
     from spotvm.databricks_catalog import AzureNodeTypePricingRow
 
@@ -252,3 +330,27 @@ def test_azure_node_type_pricing_row_validates_required_fields():
             photon_capable=True,
             deprecated=False,
         )
+
+
+def test_load_azure_dbu_pricing_rows_rejects_fractional_integer_fields(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "databricks_azure_dbu_pricing.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "node_type_id,category,num_cores,memory_gb,dbu_per_hour,local_disk_gb,num_gpus,photon_capable,deprecated",
+                "Standard_D4ds_v5,General Purpose,3.5,16.0,1.0,150,0,True,False",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("spotvm.databricks_catalog.resources.files", lambda _pkg: tmp_path)
+    import spotvm.databricks_catalog as databricks_catalog
+
+    databricks_catalog._load_azure_dbu_pricing_rows.cache_clear()
+    databricks_catalog._azure_dbu_pricing_index.cache_clear()
+
+    with pytest.raises(DatabricksCatalogError, match="row 2, column num_cores"):
+        load_azure_dbu_pricing_rows()
