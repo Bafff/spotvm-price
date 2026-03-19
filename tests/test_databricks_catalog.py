@@ -10,19 +10,7 @@ from spotvm.databricks_catalog import (
     load_catalog,
     load_catalog_from_path,
     lookup_azure_node_type_pricing,
-    lookup_sku,
 )
-
-
-def test_lookup_sku_returns_dbu_and_photon_values():
-    catalog = load_catalog()
-
-    entry = lookup_sku(catalog, "Standard_D4ps_v6")
-
-    assert entry is not None
-    assert entry.sku == "Standard_D4ps_v6"
-    assert entry.dbu_per_hour == 1.17
-    assert entry.photon_dbu_per_hour == 1.17
 
 
 def test_load_catalog_exposes_stable_metadata_shape():
@@ -44,12 +32,6 @@ def test_load_catalog_exposes_stable_metadata_shape():
     }
     assert isinstance(payload["entries"], list)
     json.dumps(payload)
-
-
-def test_lookup_sku_is_case_sensitive_exact_match():
-    catalog = load_catalog()
-
-    assert lookup_sku(catalog, "standard_d4ps_v6") is None
 
 
 def test_load_catalog_from_path_reports_malformed_json(tmp_path):
@@ -84,6 +66,31 @@ def test_load_catalog_from_path_rejects_zero_photon_unit_price(tmp_path):
         load_catalog_from_path(path)
 
 
+def test_load_catalog_from_path_reports_missing_nested_pricing_key(tmp_path):
+    path = tmp_path / "broken-pricing-key.json"
+    path.write_text(
+        json.dumps(
+            {
+                "catalog_version": 1,
+                "cloud": "azure",
+                "pricing_profile": {
+                    "name": "standard_jobs",
+                    "dbu_unit_price_usd": 0.15,
+                },
+                "captured_at": "2026-03-19T00:00:00Z",
+                "source": {"type": "test", "url": "https://example.test"},
+                "entries": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        DatabricksCatalogError, match="pricing_profile is missing required field: photon_dbu_unit_price_usd"
+    ):
+        load_catalog_from_path(path)
+
+
 def test_load_azure_dbu_pricing_rows_contains_known_saved_entries():
     rows = load_azure_dbu_pricing_rows()
 
@@ -105,3 +112,27 @@ def test_lookup_azure_node_type_pricing_returns_saved_row():
 
 def test_lookup_azure_node_type_pricing_is_case_sensitive():
     assert lookup_azure_node_type_pricing("standard_d8ds_v5") is None
+
+
+def test_load_azure_dbu_pricing_rows_reports_row_and_column_for_invalid_numeric_value(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "databricks_azure_dbu_pricing.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "node_type_id,category,num_cores,memory_gb,dbu_per_hour,local_disk_gb,num_gpus,photon_capable,deprecated",
+                "Standard_D4ds_v5,General Purpose,4,16.0,N/A,150,0,True,False",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("spotvm.databricks_catalog.resources.files", lambda _pkg: tmp_path)
+    import spotvm.databricks_catalog as databricks_catalog
+
+    databricks_catalog._load_azure_dbu_pricing_rows.cache_clear()
+    databricks_catalog._azure_dbu_pricing_index.cache_clear()
+
+    with pytest.raises(DatabricksCatalogError, match="row 2, column dbu_per_hour"):
+        load_azure_dbu_pricing_rows()

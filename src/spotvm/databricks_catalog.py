@@ -78,13 +78,6 @@ def load_catalog_from_path(path: Path) -> DatabricksCatalog:
     return _catalog_from_text(raw_text, source_label=f"Databricks catalog at {path}")
 
 
-def lookup_sku(catalog: DatabricksCatalog, sku: str) -> DatabricksCatalogEntry | None:
-    for entry in catalog.entries:
-        if entry.sku == sku:
-            return entry
-    return None
-
-
 def load_azure_dbu_pricing_rows() -> list[AzureNodeTypePricingRow]:
     return list(_load_azure_dbu_pricing_rows())
 
@@ -99,7 +92,7 @@ def _load_azure_dbu_pricing_rows() -> tuple[AzureNodeTypePricingRow, ...]:
 
     reader = csv.DictReader(raw_text.splitlines())
     rows: list[AzureNodeTypePricingRow] = []
-    for item in reader:
+    for row_number, item in enumerate(reader, start=2):
         node_type_id = (item.get("node_type_id") or "").strip()
         if not node_type_id:
             continue
@@ -107,13 +100,23 @@ def _load_azure_dbu_pricing_rows() -> tuple[AzureNodeTypePricingRow, ...]:
             AzureNodeTypePricingRow(
                 node_type_id=node_type_id,
                 category=_optional_str(item.get("category")),
-                num_cores=_optional_int(item.get("num_cores")),
-                memory_gb=_optional_float(item.get("memory_gb")),
-                dbu_per_hour=_optional_float(item.get("dbu_per_hour")),
-                local_disk_gb=_optional_int(item.get("local_disk_gb")),
-                num_gpus=_optional_int(item.get("num_gpus")),
-                photon_capable=_optional_bool(item.get("photon_capable")),
-                deprecated=_optional_bool(item.get("deprecated")),
+                num_cores=_optional_int(item.get("num_cores"), row_number=row_number, column_name="num_cores"),
+                memory_gb=_optional_float(item.get("memory_gb"), row_number=row_number, column_name="memory_gb"),
+                dbu_per_hour=_optional_float(
+                    item.get("dbu_per_hour"),
+                    row_number=row_number,
+                    column_name="dbu_per_hour",
+                ),
+                local_disk_gb=_optional_int(
+                    item.get("local_disk_gb"), row_number=row_number, column_name="local_disk_gb"
+                ),
+                num_gpus=_optional_int(item.get("num_gpus"), row_number=row_number, column_name="num_gpus"),
+                photon_capable=_optional_bool(
+                    item.get("photon_capable"),
+                    row_number=row_number,
+                    column_name="photon_capable",
+                ),
+                deprecated=_optional_bool(item.get("deprecated"), row_number=row_number, column_name="deprecated"),
             )
         )
     return tuple(rows)
@@ -164,10 +167,22 @@ def _catalog_from_payload(payload: dict[str, Any]) -> DatabricksCatalog:
     if not isinstance(entries_data, list):
         raise DatabricksCatalogError("Databricks catalog entries must be a list")
 
-    dbu_unit_price_usd = float(pricing_profile_data["dbu_unit_price_usd"])
+    dbu_unit_price_usd = float(
+        _required_mapping_value(
+            pricing_profile_data,
+            "dbu_unit_price_usd",
+            context="Databricks catalog pricing_profile",
+        )
+    )
     if dbu_unit_price_usd <= 0.0:
         raise DatabricksCatalogError("Databricks catalog pricing_profile.dbu_unit_price_usd must be positive")
-    photon_dbu_unit_price_usd = float(pricing_profile_data["photon_dbu_unit_price_usd"])
+    photon_dbu_unit_price_usd = float(
+        _required_mapping_value(
+            pricing_profile_data,
+            "photon_dbu_unit_price_usd",
+            context="Databricks catalog pricing_profile",
+        )
+    )
     if photon_dbu_unit_price_usd <= 0.0:
         raise DatabricksCatalogError("Databricks catalog pricing_profile.photon_dbu_unit_price_usd must be positive")
 
@@ -185,9 +200,15 @@ def _catalog_from_payload(payload: dict[str, Any]) -> DatabricksCatalog:
         entries.append(
             DatabricksCatalogEntry(
                 sku=sku,
-                dbu_per_hour=float(raw_entry["dbu_per_hour"]),
+                dbu_per_hour=float(
+                    _required_mapping_value(
+                        raw_entry,
+                        "dbu_per_hour",
+                        context=f"Databricks catalog entry for SKU {sku}",
+                    )
+                ),
                 photon_dbu_per_hour=(
-                    float(raw_entry["photon_dbu_per_hour"])
+                    float(raw_entry.get("photon_dbu_per_hour"))
                     if raw_entry.get("photon_dbu_per_hour") is not None
                     else None
                 ),
@@ -215,23 +236,46 @@ def _optional_str(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
-
-
-def _optional_float(value: str | None) -> float | None:
+def _optional_float(
+    value: str | None,
+    *,
+    row_number: int,
+    column_name: str,
+) -> float | None:
     parsed = _optional_str(value)
     if parsed is None:
         return None
-    return float(parsed)
+    try:
+        return float(parsed)
+    except ValueError as exc:
+        raise DatabricksCatalogError(
+            f"Invalid Azure DBU pricing CSV value at row {row_number}, column {column_name}: {parsed!r}"
+        ) from exc
 
 
-def _optional_int(value: str | None) -> int | None:
+def _optional_int(
+    value: str | None,
+    *,
+    row_number: int,
+    column_name: str,
+) -> int | None:
     parsed = _optional_str(value)
     if parsed is None:
         return None
-    return int(float(parsed))
+    try:
+        return int(float(parsed))
+    except ValueError as exc:
+        raise DatabricksCatalogError(
+            f"Invalid Azure DBU pricing CSV value at row {row_number}, column {column_name}: {parsed!r}"
+        ) from exc
 
 
-def _optional_bool(value: str | None) -> bool | None:
+def _optional_bool(
+    value: str | None,
+    *,
+    row_number: int,
+    column_name: str,
+) -> bool | None:
     parsed = _optional_str(value)
     if parsed is None:
         return None
@@ -239,4 +283,13 @@ def _optional_bool(value: str | None) -> bool | None:
         return True
     if parsed == "False":
         return False
-    raise DatabricksCatalogError(f"Unexpected boolean value in Azure DBU pricing CSV: {parsed}")
+    raise DatabricksCatalogError(
+        f"Invalid Azure DBU pricing CSV value at row {row_number}, column {column_name}: {parsed!r}"
+    )
+
+
+def _required_mapping_value(mapping: dict[str, Any], key: str, *, context: str) -> Any:
+    try:
+        return mapping[key]
+    except KeyError as exc:
+        raise DatabricksCatalogError(f"{context} is missing required field: {key}") from exc
