@@ -70,11 +70,12 @@ def save_run_results(
     filename = timestamp.replace(":", "-") + ".json"
     filepath = runs_dir / filename
 
-    with filepath.open("w") as f:
-        try:
-            json.dump(asdict(snapshot), f, indent=2)
-        except TypeError as exc:
-            raise _serialization_error(filepath) from exc
+    try:
+        serialized_snapshot = json.dumps(asdict(snapshot), indent=2)
+    except TypeError as exc:
+        raise _serialization_error(filepath) from exc
+
+    filepath.write_text(serialized_snapshot, encoding="utf-8")
 
     return filepath
 
@@ -117,7 +118,9 @@ def load_historical_runs(
     return snapshots
 
 
-def _run_snapshot_from_payload(data: dict[str, Any]) -> RunSnapshot:
+def _run_snapshot_from_payload(data: object) -> RunSnapshot:
+    if not isinstance(data, dict):
+        raise _invalid_snapshot_payload()
     timestamp = data["timestamp"]
     config = data["config"]
     candidates = data["candidates"]
@@ -138,8 +141,20 @@ def _invalid_snapshot_type(field_name: str, expected: str) -> HistoricalSnapshot
     return HistoricalSnapshotError(f"{field_name} must be {expected}")
 
 
+def _invalid_snapshot_payload() -> HistoricalSnapshotError:
+    return HistoricalSnapshotError("snapshot payload must be an object")
+
+
 def _serialization_error(filepath: Path) -> ValueError:
     return ValueError(f"Failed to serialize historical run snapshot: {filepath}")
+
+
+def _csv_value(candidate: dict[str, Any], key: str) -> Any:
+    """Return the candidate value for *key*, falling back to ``""`` for ``None``."""
+    value = candidate.get(key)
+    if value is None:
+        return ""
+    return value
 
 
 def generate_history_csv(
@@ -176,25 +191,17 @@ def generate_history_csv(
                 "vm_size": candidate.get("vm_size"),
                 "region": candidate.get("region"),
                 "zone": candidate.get("availability_zone") or "",
-                "price_usd": candidate.get("price_usd") if candidate.get("price_usd") is not None else "",
-                "eviction_rate": candidate.get("eviction_rate") if candidate.get("eviction_rate") is not None else "",
+                "price_usd": _csv_value(candidate, "price_usd"),
+                "eviction_rate": _csv_value(candidate, "eviction_rate"),
                 "placement_score": candidate.get("placement_score") or "",
-                "quota_available": candidate.get("quota_available")
-                if candidate.get("quota_available") is not None
-                else "",
-                "performance_relative": candidate.get("performance_relative")
-                if candidate.get("performance_relative") is not None
-                else "",
-                "price_per_performance": candidate.get("price_per_performance")
-                if candidate.get("price_per_performance") is not None
-                else "",
-                "recommendation_rank": candidate.get("recommendation_rank")
-                if candidate.get("recommendation_rank") is not None
-                else "",
+                "quota_available": _csv_value(candidate, "quota_available"),
+                "performance_relative": _csv_value(candidate, "performance_relative"),
+                "price_per_performance": _csv_value(candidate, "price_per_performance"),
+                "recommendation_rank": _csv_value(candidate, "recommendation_rank"),
             }
             if include_databricks:
                 for field in DATABRICKS_OPTIONAL_FIELDS:
-                    row[field] = candidate.get(field) if candidate.get(field) is not None else ""
+                    row[field] = _csv_value(candidate, field)
             rows.append(row)
 
     # Write CSV

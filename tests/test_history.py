@@ -113,10 +113,12 @@ def test_save_run_results_wraps_json_serialization_type_error(
     def raising_dump(*_args, **_kwargs):
         raise TypeError("not serializable")
 
-    monkeypatch.setattr("spotvm.history.json.dump", raising_dump)
+    monkeypatch.setattr("spotvm.history.json.dumps", raising_dump)
 
     with pytest.raises(ValueError, match="Failed to serialize historical run snapshot"):
         save_run_results(sample_candidates, sample_config, temp_results_dir)
+
+    assert list((temp_results_dir / "runs").glob("*.json")) == []
 
 
 def test_load_historical_runs_empty_dir(temp_results_dir):
@@ -177,6 +179,20 @@ def test_load_historical_runs_skips_invalid_snapshot_shape(temp_results_dir, sam
         ),
         encoding="utf-8",
     )
+
+    with caplog.at_level(logging.WARNING, logger="spotvm"):
+        snapshots = load_historical_runs(temp_results_dir)
+
+    assert len(snapshots) == 1
+    assert "Failed to load historical run" in caplog.text
+
+
+def test_load_historical_runs_skips_top_level_array_snapshot(
+    temp_results_dir, sample_candidates, sample_config, caplog
+):
+    save_run_results(sample_candidates, sample_config, temp_results_dir)
+    bad_path = temp_results_dir / "runs" / "array.json"
+    bad_path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
 
     with caplog.at_level(logging.WARNING, logger="spotvm"):
         snapshots = load_historical_runs(temp_results_dir)

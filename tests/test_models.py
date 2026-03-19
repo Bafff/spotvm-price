@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+import pytest
+
+from spotvm.models import CandidateInsight, effective_price_usd
+
+
+@pytest.mark.parametrize(
+    ("candidate", "expected"),
+    [
+        (
+            CandidateInsight(
+                region="eastus",
+                vm_size="Standard_D4as_v5",
+                placement_score=None,
+                quota_available=None,
+                price_usd=0.10,
+                total_price_usd=0.25,
+                price_last_updated=None,
+                eviction_rate=None,
+                eviction_last_updated=None,
+            ),
+            0.25,
+        ),
+        (
+            CandidateInsight(
+                region="eastus",
+                vm_size="Standard_D4as_v5",
+                placement_score=None,
+                quota_available=None,
+                price_usd=0.0,
+                total_price_usd=0.0,
+                price_last_updated=None,
+                eviction_rate=None,
+                eviction_last_updated=None,
+            ),
+            0.0,
+        ),
+        (
+            CandidateInsight(
+                region="eastus",
+                vm_size="Standard_D4as_v5",
+                placement_score=None,
+                quota_available=None,
+                price_usd=1,
+                total_price_usd=None,
+                price_last_updated=None,
+                eviction_rate=None,
+                eviction_last_updated=None,
+            ),
+            1.0,
+        ),
+        (
+            CandidateInsight(
+                region="eastus",
+                vm_size="Standard_D4as_v5",
+                placement_score=None,
+                quota_available=None,
+                price_usd=None,
+                total_price_usd=None,
+                price_last_updated=None,
+                eviction_rate=None,
+                eviction_last_updated=None,
+            ),
+            None,
+        ),
+    ],
+)
+def test_effective_price_usd_uses_total_then_raw_price(candidate, expected):
+    assert effective_price_usd(candidate) == expected

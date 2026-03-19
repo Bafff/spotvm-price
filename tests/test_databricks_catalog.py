@@ -5,7 +5,9 @@ import json
 import pytest
 
 from spotvm.databricks_catalog import (
+    DatabricksCatalogEntry,
     DatabricksCatalogError,
+    DatabricksPricingProfile,
     load_azure_dbu_pricing_rows,
     load_catalog,
     load_catalog_from_path,
@@ -96,6 +98,45 @@ def test_load_catalog_from_path_reports_missing_nested_pricing_key(tmp_path):
         DatabricksCatalogError, match="pricing_profile is missing required field: photon_dbu_unit_price_usd"
     ):
         load_catalog_from_path(path)
+
+
+def test_load_catalog_from_path_reports_invalid_entry_numeric_value(tmp_path):
+    path = tmp_path / "broken-entry-numeric.json"
+    path.write_text(
+        json.dumps(
+            {
+                "catalog_version": 1,
+                "cloud": "azure",
+                "pricing_profile": {
+                    "name": "standard_jobs",
+                    "dbu_unit_price_usd": 0.15,
+                    "photon_dbu_unit_price_usd": 0.15,
+                },
+                "captured_at": "2026-03-19T00:00:00Z",
+                "source": {"type": "test", "url": "https://example.test"},
+                "entries": [
+                    {
+                        "sku": "Standard_D4ps_v6",
+                        "dbu_per_hour": "bad",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(DatabricksCatalogError, match="Invalid Databricks catalog value"):
+        load_catalog_from_path(path)
+
+
+def test_databricks_pricing_profile_validates_positive_prices():
+    with pytest.raises(ValueError, match="dbu_unit_price_usd must be positive"):
+        DatabricksPricingProfile(name="standard_jobs", dbu_unit_price_usd=0.0, photon_dbu_unit_price_usd=0.15)
+
+
+def test_databricks_catalog_entry_validates_positive_dbu_rates():
+    with pytest.raises(ValueError, match="dbu_per_hour must be positive"):
+        DatabricksCatalogEntry(sku="Standard_D4ps_v6", dbu_per_hour=0.0)
 
 
 def test_load_azure_dbu_pricing_rows_contains_known_saved_entries():

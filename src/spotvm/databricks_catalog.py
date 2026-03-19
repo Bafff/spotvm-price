@@ -21,6 +21,12 @@ class DatabricksPricingProfile:
     dbu_unit_price_usd: float
     photon_dbu_unit_price_usd: float
 
+    def __post_init__(self) -> None:
+        if self.dbu_unit_price_usd <= 0.0:
+            raise ValueError("dbu_unit_price_usd must be positive")
+        if self.photon_dbu_unit_price_usd <= 0.0:
+            raise ValueError("photon_dbu_unit_price_usd must be positive")
+
 
 @dataclass(frozen=True)
 class DatabricksCatalogEntry:
@@ -28,6 +34,12 @@ class DatabricksCatalogEntry:
     dbu_per_hour: float
     photon_dbu_per_hour: float | None = None
     notes: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.dbu_per_hour <= 0.0:
+            raise ValueError("dbu_per_hour must be positive")
+        if self.photon_dbu_per_hour is not None and self.photon_dbu_per_hour <= 0.0:
+            raise ValueError("photon_dbu_per_hour must be positive")
 
 
 @dataclass(frozen=True)
@@ -169,66 +181,65 @@ def _catalog_from_payload(payload: dict[str, Any]) -> DatabricksCatalog:
     if not isinstance(entries_data, list):
         raise DatabricksCatalogError("Databricks catalog entries must be a list")
 
-    dbu_unit_price_usd = float(
-        _required_mapping_value(
-            pricing_profile_data,
-            "dbu_unit_price_usd",
-            context="Databricks catalog pricing_profile",
+    try:
+        dbu_unit_price_usd = float(
+            _required_mapping_value(
+                pricing_profile_data,
+                "dbu_unit_price_usd",
+                context="Databricks catalog pricing_profile",
+            )
         )
-    )
-    if dbu_unit_price_usd <= 0.0:
-        raise DatabricksCatalogError("Databricks catalog pricing_profile.dbu_unit_price_usd must be positive")
-    photon_dbu_unit_price_usd = float(
-        _required_mapping_value(
-            pricing_profile_data,
-            "photon_dbu_unit_price_usd",
-            context="Databricks catalog pricing_profile",
-        )
-    )
-    if photon_dbu_unit_price_usd <= 0.0:
-        raise DatabricksCatalogError("Databricks catalog pricing_profile.photon_dbu_unit_price_usd must be positive")
-
-    seen_skus: set[str] = set()
-    entries: list[DatabricksCatalogEntry] = []
-    for raw_entry in entries_data:
-        if not isinstance(raw_entry, dict):
-            raise DatabricksCatalogError("Each Databricks catalog entry must be an object")
-        sku = raw_entry.get("sku")
-        if not isinstance(sku, str) or not sku:
-            raise DatabricksCatalogError("Each Databricks catalog entry requires a non-empty sku")
-        if sku in seen_skus:
-            raise DatabricksCatalogError(f"Duplicate Databricks catalog entry for SKU: {sku}")
-        seen_skus.add(sku)
-        entries.append(
-            DatabricksCatalogEntry(
-                sku=sku,
-                dbu_per_hour=float(
-                    _required_mapping_value(
-                        raw_entry,
-                        "dbu_per_hour",
-                        context=f"Databricks catalog entry for SKU {sku}",
-                    )
-                ),
-                photon_dbu_per_hour=(
-                    float(photon_raw) if (photon_raw := raw_entry.get("photon_dbu_per_hour")) is not None else None
-                ),
-                notes=str(raw_entry["notes"]) if raw_entry.get("notes") is not None else None,
+        photon_dbu_unit_price_usd = float(
+            _required_mapping_value(
+                pricing_profile_data,
+                "photon_dbu_unit_price_usd",
+                context="Databricks catalog pricing_profile",
             )
         )
 
-    entries.sort(key=lambda entry: entry.sku)
-    return DatabricksCatalog(
-        catalog_version=int(payload["catalog_version"]),
-        cloud=str(payload["cloud"]),
-        pricing_profile=DatabricksPricingProfile(
-            name=str(pricing_profile_data["name"]),
-            dbu_unit_price_usd=dbu_unit_price_usd,
-            photon_dbu_unit_price_usd=photon_dbu_unit_price_usd,
-        ),
-        captured_at=str(payload["captured_at"]),
-        source=MappingProxyType({str(key): str(value) for key, value in source.items()}),
-        entries=tuple(entries),
-    )
+        seen_skus: set[str] = set()
+        entries: list[DatabricksCatalogEntry] = []
+        for raw_entry in entries_data:
+            if not isinstance(raw_entry, dict):
+                raise DatabricksCatalogError("Each Databricks catalog entry must be an object")
+            sku = raw_entry.get("sku")
+            if not isinstance(sku, str) or not sku:
+                raise DatabricksCatalogError("Each Databricks catalog entry requires a non-empty sku")
+            if sku in seen_skus:
+                raise DatabricksCatalogError(f"Duplicate Databricks catalog entry for SKU: {sku}")
+            seen_skus.add(sku)
+            entries.append(
+                DatabricksCatalogEntry(
+                    sku=sku,
+                    dbu_per_hour=float(
+                        _required_mapping_value(
+                            raw_entry,
+                            "dbu_per_hour",
+                            context=f"Databricks catalog entry for SKU {sku}",
+                        )
+                    ),
+                    photon_dbu_per_hour=(
+                        float(photon_raw) if (photon_raw := raw_entry.get("photon_dbu_per_hour")) is not None else None
+                    ),
+                    notes=str(raw_entry["notes"]) if raw_entry.get("notes") is not None else None,
+                )
+            )
+
+        entries.sort(key=lambda entry: entry.sku)
+        return DatabricksCatalog(
+            catalog_version=int(payload["catalog_version"]),
+            cloud=str(payload["cloud"]),
+            pricing_profile=DatabricksPricingProfile(
+                name=str(pricing_profile_data["name"]),
+                dbu_unit_price_usd=dbu_unit_price_usd,
+                photon_dbu_unit_price_usd=photon_dbu_unit_price_usd,
+            ),
+            captured_at=str(payload["captured_at"]),
+            source=MappingProxyType({str(key): str(value) for key, value in source.items()}),
+            entries=tuple(entries),
+        )
+    except (TypeError, ValueError) as exc:
+        raise DatabricksCatalogError(f"Invalid Databricks catalog value: {exc}") from exc
 
 
 def _optional_str(value: str | None) -> str | None:

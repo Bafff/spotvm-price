@@ -4,7 +4,7 @@ import logging
 from collections.abc import Iterable
 from datetime import datetime, timezone
 
-from .databricks_catalog import load_catalog, lookup_azure_node_type_pricing
+from .databricks_catalog import DatabricksCatalogError, load_catalog, lookup_azure_node_type_pricing
 from .models import CandidateInsight, CPUArchitecture, HistoricalMetrics, PlacementScoreResult, effective_price_usd
 from .vm_specs import (
     VMSpec,
@@ -148,29 +148,32 @@ def enrich_with_databricks_cost(
         candidate.databricks_dbu_cost_usd = row.dbu_per_hour * dbu_unit_price
         candidate.databricks_catalog_updated = catalog_updated
 
-        photon_cost_usd: float | None = None
-        if include_photon and row.photon_capable:
-            candidate.databricks_photon_dbu_per_hour = row.dbu_per_hour * STANDARD_JOBS_PHOTON_MULTIPLIER
-            photon_cost_usd = candidate.databricks_photon_dbu_per_hour * photon_dbu_unit_price
-            candidate.databricks_photon_cost_usd = photon_cost_usd
-
         # Photon cost replaces the base DBU component in the user-facing total
         # because databricks_photon_dbu_per_hour stores the full Photon rate.
-        if photon_cost_usd is not None:
-            effective_databricks_cost = photon_cost_usd
-        else:
-            effective_databricks_cost = candidate.databricks_dbu_cost_usd
-        if compute_price is not None and effective_databricks_cost is not None:
-            candidate.total_price_usd = compute_price + effective_databricks_cost
+        databricks_cost = candidate.databricks_dbu_cost_usd
+        if include_photon and row.photon_capable:
+            candidate.databricks_photon_dbu_per_hour = row.dbu_per_hour * STANDARD_JOBS_PHOTON_MULTIPLIER
+            candidate.databricks_photon_cost_usd = candidate.databricks_photon_dbu_per_hour * photon_dbu_unit_price
+            databricks_cost = candidate.databricks_photon_cost_usd
+
+        if compute_price is not None and databricks_cost is not None:
+            candidate.total_price_usd = compute_price + databricks_cost
 
     return candidates
 
 
 def _parse_catalog_timestamp(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise _invalid_catalog_timestamp(value) from exc
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _invalid_catalog_timestamp(value: object) -> DatabricksCatalogError:
+    return DatabricksCatalogError(f"Invalid Databricks catalog captured_at timestamp: {value!r}")
 
 
 def summarize_top_candidates(

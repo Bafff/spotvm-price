@@ -64,6 +64,37 @@ def test_rank_candidates_prefers_price_per_performance_before_raw_price():
     assert [candidate.recommendation_rank for candidate in ranked] == [1, 2]
 
 
+def test_rank_candidates_prefers_effective_total_price_for_databricks_candidates():
+    candidates = [
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D4as_v5",
+            placement_score="High",
+            quota_available=True,
+            price_usd=0.10,
+            total_price_usd=0.40,
+            price_last_updated=None,
+            eviction_rate=2.0,
+            eviction_last_updated=None,
+        ),
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D8as_v5",
+            placement_score="High",
+            quota_available=True,
+            price_usd=0.20,
+            total_price_usd=0.30,
+            price_last_updated=None,
+            eviction_rate=2.0,
+            eviction_last_updated=None,
+        ),
+    ]
+
+    ranked = rank_candidates(candidates)
+
+    assert [candidate.vm_size for candidate in ranked] == ["Standard_D8as_v5", "Standard_D4as_v5"]
+
+
 def test_merge_datasets_keeps_distinct_zone_candidates_for_same_sku_and_region():
     placement_scores = [
         PlacementScoreResult(
@@ -319,4 +350,28 @@ def test_enrich_with_databricks_cost_raises_when_catalog_loading_fails(monkeypat
     )
 
     with pytest.raises(DatabricksCatalogError, match="broken catalog"):
+        enrich_with_databricks_cost([candidate], include_photon=False)
+
+
+def test_enrich_with_databricks_cost_raises_when_catalog_timestamp_is_invalid(monkeypatch):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4ds_v5",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at="not-a-timestamp",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+        ),
+    )
+
+    with pytest.raises(DatabricksCatalogError, match="Invalid Databricks catalog captured_at timestamp"):
         enrich_with_databricks_cost([candidate], include_photon=False)
