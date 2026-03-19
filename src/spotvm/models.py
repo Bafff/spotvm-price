@@ -66,12 +66,12 @@ class CandidateInsight:
     databricks_catalog_updated: datetime | None = None
 
 
-def effective_price_usd(candidate: object) -> float | None:
-    """Return the user-facing hourly price for a candidate."""
-    total_price = getattr(candidate, "total_price_usd", None)
-    if isinstance(total_price, (int, float)):
-        return float(total_price)
-    price = getattr(candidate, "price_usd", None)
-    if isinstance(price, (int, float)):
-        return float(price)
-    return None
+def effective_price_usd(candidate: CandidateInsight) -> float | None:
+    """Return the user-facing hourly price for a candidate.
+
+    Prefers total_price_usd (which includes Databricks DBU cost when present)
+    over the raw Azure VM price_usd.
+    """
+    if candidate.total_price_usd is not None:
+        return candidate.total_price_usd
+    return candidate.price_usd

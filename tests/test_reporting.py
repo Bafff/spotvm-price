@@ -86,10 +86,18 @@ def test_render_table_shortens_heuristic_performance_note():
     assert "vCPU/RAM heuristic because" not in table
 
 
-def test_format_catalog_updated_formats_datetime():
-    value = _format_catalog_updated(datetime(2026, 3, 19, 13, 45))
-
-    assert value == "2026-03-19"
+@pytest.mark.parametrize(
+    ("input_value", "expected"),
+    [
+        (datetime(2026, 3, 19, 13, 45), "2026-03-19"),
+        (None, "-"),
+        ("", "-"),
+        ("2026-03-19T12:00:00Z", "2026-03-19"),
+        ("2026", "2026"),
+    ],
+)
+def test_format_catalog_updated(input_value, expected):
+    assert _format_catalog_updated(input_value) == expected
 
 
 def test_export_to_csv(tmp_path):

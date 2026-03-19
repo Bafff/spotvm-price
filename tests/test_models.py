@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from spotvm.models import CandidateInsight, effective_price_usd
+from spotvm.models import DATABRICKS_OPTIONAL_FIELDS, CandidateInsight, effective_price_usd
 
 
 @pytest.mark.parametrize(
@@ -68,3 +68,10 @@ from spotvm.models import CandidateInsight, effective_price_usd
 )
 def test_effective_price_usd_uses_total_then_raw_price(candidate, expected):
     assert effective_price_usd(candidate) == expected
+
+
+def test_databricks_optional_fields_are_candidate_insight_attributes():
+    """Prevent drift between DATABRICKS_OPTIONAL_FIELDS and CandidateInsight."""
+    dataclass_fields = set(CandidateInsight.__dataclass_fields__)
+    for field in DATABRICKS_OPTIONAL_FIELDS:
+        assert field in dataclass_fields, f"{field!r} listed in DATABRICKS_OPTIONAL_FIELDS but missing from CandidateInsight"

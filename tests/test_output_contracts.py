@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from types import SimpleNamespace
 
 from spotvm.cli import _build_report
 from spotvm.history import RunSnapshot, generate_history_csv
+from spotvm.models import CandidateInsight
 from spotvm.reporting import CSV_COLUMNS, TABLE_COLUMNS, export_to_csv
 
 
@@ -38,7 +38,7 @@ def _make_candidate(**overrides):
         "notes": None,
     }
     defaults.update(overrides)
-    return SimpleNamespace(**defaults)
+    return CandidateInsight(**defaults)
 
 
 _EXPECTED_REPORT_TOP_KEYS = {"generatedAt", "candidates"}

@@ -291,10 +291,10 @@ def _format_dt(value: datetime | None) -> str:
 
 
 def _format_catalog_updated(value: datetime | str | None) -> str:
-    if not value:
-        return "-"
     if isinstance(value, datetime):
         return value.strftime("%Y-%m-%d")
+    if value is None or value == "":
+        return "-"
     return value[:10] if len(value) >= 10 else value
 
 
@@ -412,7 +412,6 @@ def export_to_csv(
         "coremark": _csv_format_coremark,
         "coremark_per_vcpu": _csv_format_coremark_per_vcpu,
         "datetime": _csv_format_datetime,
-        "text": _csv_format_text,
     }
 
     rows: list[list[str]] = []
@@ -507,10 +506,6 @@ def _csv_format_datetime(value: datetime | str | None) -> str:
     if isinstance(value, str):
         return value
     return value.isoformat()
-
-
-def _csv_format_text(value: str | None) -> str:
-    return value or ""
 
 
 def _csv_format_coremark(value: int | None) -> str:
