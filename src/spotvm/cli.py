@@ -5,11 +5,15 @@ import json
 import logging
 import signal
 import sys
+import tempfile
 import time
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from . import config as config_defaults
 from .analysis import (
     enrich_with_coremark,
     enrich_with_performance,
@@ -20,14 +24,76 @@ from .analysis import (
     summarize_top_candidates,
 )
 from .auth import AzureAuthenticator
-from .config import VALID_CPU_ARCHS, ToolConfig, load_config_file, merge_cli_overrides
+from .config import (
+    VALID_CPU_ARCHS,
+    ToolConfig,
+    load_config_file,
+    merge_cli_overrides,
+)
 from .http_client import AzureHttpError, AzureRestClient
-from .placement_score import fetch_placement_scores
-from .reporting import export_to_csv, render_table, set_colors_enabled
-from .resource_graph import fetch_historical_metrics
+from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
+from .placement_score import PlacementScoreRequest, fetch_placement_scores
+from .projection import project_for_report
+from .reporting import RenderOptions, export_to_csv, initialize_color_output, render_table
+from .resource_graph import ResourceGraphRequest, fetch_historical_metrics
 from .vm_specs import discover_skus
 
-MAX_UNATTENDED_FAILURES = 3
+
+@dataclass(frozen=True)
+class AnalysisRunRequest:
+    no_color: bool
+    min_vcpu: int | None
+    min_ram: int | None
+    no_max_limit: bool
+    explicit_sizes: bool
+    max_price: float | None
+    max_eviction: float | None
+    min_performance: float | None
+    csv: Path | None
+    results_dir: Path
+    save_results: bool
+
+
+def _build_analysis_run_request(args: argparse.Namespace, *, save_results: bool) -> AnalysisRunRequest:
+    return AnalysisRunRequest(
+        no_color=args.no_color,
+        min_vcpu=args.min_vcpu,
+        min_ram=args.min_ram,
+        no_max_limit=args.no_max_limit,
+        explicit_sizes=args.explicit_sizes,
+        max_price=args.max_price,
+        max_eviction=args.max_eviction,
+        min_performance=args.min_performance,
+        csv=args.csv,
+        results_dir=args.results_dir,
+        save_results=save_results,
+    )
+
+
+def _build_resource_graph_request(config: ToolConfig) -> ResourceGraphRequest:
+    return ResourceGraphRequest(
+        regions=config.regions,
+        sizes=config.sizes,
+        os_type=config.os_type,
+        cache_ttl_minutes=config.cache_ttl_minutes,
+        retry_attempts=config.retry_attempts,
+        retry_backoff_seconds=config.retry_backoff_seconds,
+    )
+
+
+def _build_placement_score_request(config: ToolConfig) -> PlacementScoreRequest:
+    return PlacementScoreRequest(
+        subscription_id=config.subscription_id,
+        regions=config.regions,
+        sizes=config.sizes,
+        desired_count=config.desired_count,
+        availability_zones=config.availability_zones,
+        cache_ttl_minutes=config.cache_ttl_minutes,
+        max_sizes_per_request=config.max_sizes_per_request,
+        max_regions_per_request=config.max_regions_per_request,
+        retry_attempts=config.retry_attempts,
+        retry_backoff_seconds=config.retry_backoff_seconds,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,6 +111,13 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    _add_base_arguments(parser)
+    _add_filtering_arguments(parser)
+    _add_history_arguments(parser)
+    return parser
+
+
+def _add_base_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--subscription-id",
         help="Azure subscription ID (only required with --placement-check)",
@@ -114,6 +187,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Baseline VM size for relative performance comparison (e.g., Standard_D4as_v6 = 100%%)",
     )
 
+
+def _add_filtering_arguments(parser: argparse.ArgumentParser) -> None:
     # Requirements-based filtering
     parser.add_argument(
         "--min-vcpu",
@@ -154,6 +229,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Minimum performance relative to baseline in percentage (requires --baseline-sku, e.g., 80 for 80%%)",
     )
 
+
+def _add_history_arguments(parser: argparse.ArgumentParser) -> None:
     # Historical data features
     parser.add_argument(
         "--save-results",
@@ -196,8 +273,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Export results to CSV file (e.g., results.csv)",
     )
 
-    return parser
-
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
@@ -206,78 +281,99 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
     args = parser.parse_args(argv)
+    logger = _build_cli_logger(args)
+    history_rc = _run_history_mode_if_requested(
+        args=args,
+        logger=logger,
+        run_history_analysis=_run_history_analysis,
+    )
+    if history_rc is not None:
+        return history_rc
+    prepared = _prepare_analysis_execution(
+        parser=parser,
+        args=args,
+        logger=logger,
+    )
+    if isinstance(prepared, int):
+        return prepared
+    config, request = prepared
+    return _run_analysis_mode(
+        request=request,
+        config=config,
+        logger=logger,
+        clear_cache=args.clear_cache,
+        interval_minutes=args.run_unattended,
+        run_single_analysis=_run_single_analysis,
+        run_unattended_monitoring=_run_unattended_monitoring,
+    )
 
+
+def _build_cli_logger(args: argparse.Namespace) -> logging.Logger:
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.WARNING,
         format="%(asctime)s %(levelname)s %(message)s",
     )
     logger = logging.getLogger("spotvm")
-    # Keep our own logger at INFO so our messages still appear
     if not args.verbose:
         logger.setLevel(logging.INFO)
+    if not args.no_color:
+        initialize_color_output()
+    return logger
 
-    # Handle --analyze-history mode (separate from normal runs)
-    if args.analyze_history:
-        from .history import analyze_history
 
-        results_dir = args.results_dir
-        history_output = args.history_output or (results_dir / "history.csv")
+def _run_history_mode_if_requested(
+    *,
+    args: argparse.Namespace,
+    logger: logging.Logger,
+    run_history_analysis: Callable[..., int],
+) -> int | None:
+    if not args.analyze_history:
+        return None
+    return run_history_analysis(
+        results_dir=args.results_dir,
+        depth=args.history_depth,
+        history_output=args.history_output,
+        logger=logger,
+    )
 
-        logger.info("Analyzing historical data from %s", results_dir)
-        num_runs, num_datapoints, csv_path = analyze_history(
-            results_dir=results_dir,
-            depth=args.history_depth,
-            output_path=history_output,
-        )
 
-        print("Historical Analysis Complete:")
-        print(f"  Runs analyzed: {num_runs}")
-        print(f"  Data points: {num_datapoints}")
-        print(f"  CSV output: {csv_path}")
-        print("\nUse this CSV for visualization with tools like:")
-        print(f"  - Excel/Google Sheets: Import {csv_path}")
-        print(f"  - Python: pd.read_csv('{csv_path}')")
-        print("  - Grafana: CSV data source plugin")
-
-        return 0
-
+def _prepare_analysis_execution(
+    *,
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    logger: logging.Logger,
+) -> tuple[ToolConfig, AnalysisRunRequest] | int:
     base_config: dict[str, Any] = {}
     if args.config:
         base_config = load_config_file(args.config)
 
-    # Auto-discover SKUs only when neither CLI nor config specifies sizes.
-    # cpu_arch can come from config here; min_vcpu/min_ram are still CLI-only.
-    sizes = args.sizes if args.sizes is not None else base_config.get("sizes")
-    args.explicit_sizes = bool(sizes)
-    effective_cpu_arch = args.cpu_arch if args.cpu_arch is not None else base_config.get("cpu_arch")
-    if effective_cpu_arch is not None:
-        if not isinstance(effective_cpu_arch, str):
-            parser.error(f"cpu_arch must be one of {sorted(VALID_CPU_ARCHS)}")
-        effective_cpu_arch = effective_cpu_arch.lower()
-        if effective_cpu_arch not in VALID_CPU_ARCHS:
-            parser.error(f"cpu_arch must be one of {sorted(VALID_CPU_ARCHS)}")
-    if not sizes and (args.min_vcpu is not None or args.min_ram is not None or effective_cpu_arch is not None):
-        requirements = []
-        if args.min_vcpu is not None:
-            requirements.append(f"vCPU≥{args.min_vcpu}")
-        if args.min_ram is not None:
-            requirements.append(f"RAM≥{args.min_ram} GB")
-        if effective_cpu_arch:
-            requirements.append(f"arch={effective_cpu_arch}")
-        logger.info(f"No --sizes specified, auto-discovering SKUs matching requirements ({', '.join(requirements)})")
-        discover_kwargs = {
-            "min_vcpu": args.min_vcpu,
-            "min_ram": args.min_ram,
-            "cpu_arch": effective_cpu_arch,
-        }
-        if args.no_max_limit:
-            discover_kwargs["no_max_limit"] = True
-        sizes = discover_skus(**discover_kwargs)
-        if not sizes:
-            logger.error("No SKUs found matching specified requirements")
-            return 1
-        logger.info(f"Auto-discovered {len(sizes)} SKUs: {', '.join(sizes[:5])}{'...' if len(sizes) > 5 else ''}")
+    sizes, auto_discovery_attempted = _resolve_requested_sizes(
+        parser=parser,
+        args=args,
+        base_config=base_config,
+        logger=logger,
+    )
+    if auto_discovery_attempted and not sizes:
+        logger.error("No SKUs found matching specified requirements")
+        return 1
 
+    config = _build_runtime_config(
+        parser=parser,
+        args=args,
+        base_config=base_config,
+        sizes=sizes,
+    )
+    request = _build_analysis_run_request(args, save_results=args.save_results)
+    return config, request
+
+
+def _build_runtime_config(
+    *,
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    base_config: dict[str, Any],
+    sizes: list[str] | None,
+) -> ToolConfig:
     overrides: dict[str, Any] = {
         "subscription_id": args.subscription_id,
         "regions": args.regions,
@@ -310,105 +406,42 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--min-performance requires --baseline-sku (on CLI or in config)")
 
     try:
-        config = ToolConfig.from_dict(config_data)
+        return ToolConfig.from_dict(config_data)
     except (TypeError, ValueError) as exc:
         parser.error(str(exc))
-        return 1
+        raise SystemExit(2) from exc
 
-    if args.clear_cache:
+
+def _run_analysis_mode(
+    *,
+    request: AnalysisRunRequest,
+    config: ToolConfig,
+    logger: logging.Logger,
+    clear_cache: bool,
+    interval_minutes: int | None,
+    run_single_analysis: Callable[..., None],
+    run_unattended_monitoring: Callable[..., int],
+) -> int:
+    if clear_cache:
         from . import cache
 
         cache.clear()
         logger.info("Cache cleared")
 
-    # Unattended mode: run continuously
-    if args.run_unattended:
-        # Force save results in unattended mode
-        save_results_enabled = True
-        interval_minutes = args.run_unattended
-
-        logger.info(
-            f"Starting unattended monitoring mode: running every {interval_minutes} minutes. Press Ctrl+C to stop."
-        )
-        _nc = args.no_color
-        print(f"{'[*]' if _nc else '🔄'} Monitoring mode started (interval: {interval_minutes} min)")
-        print(f"{'[>]' if _nc else '📊'} Results will be saved to: {args.results_dir}/runs/")
-        print(f"{'[!]' if _nc else '⏸️ '} Press Ctrl+C to stop\n")
-
-        # Setup signal handler for graceful shutdown
-        stop_requested = False
-
-        def signal_handler(signum, frame):
-            nonlocal stop_requested
-            stop_requested = True
-            print(f"\n{'[x]' if _nc else '⏹️ '} Stop requested, finishing current run...")
-
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-
-        run_count = 0
-        unexpected_error_count = 0
-        while not stop_requested:
-            run_count += 1
-            print(f"\n{'=' * 60}")
-            print(f"Run #{run_count} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            print(f"{'=' * 60}")
-
-            try:
-                _run_single_analysis(
-                    args=args,
-                    config=config,
-                    logger=logger,
-                    save_results=save_results_enabled,
-                )
-                unexpected_error_count = 0
-            except AzureHttpError as exc:
-                unexpected_error_count = 0
-                logger.error(f"Azure API request failed: {exc}")  # noqa: TRY400 - traceback is noise for API failures
-                logger.info("Continuing despite error...")
-            except Exception:
-                unexpected_error_count += 1
-                logger.exception(
-                    "Unexpected error in unattended run (%d/%d)",
-                    unexpected_error_count,
-                    MAX_UNATTENDED_FAILURES,
-                )
-                if unexpected_error_count >= MAX_UNATTENDED_FAILURES:
-                    logger.error(  # noqa: TRY400 - traceback already emitted immediately above
-                        "Stopping unattended mode after %d consecutive unexpected errors",
-                        MAX_UNATTENDED_FAILURES,
-                    )
-                    print(
-                        f"\n{'[x]' if _nc else '❌'} Stopping monitoring after "
-                        f"{MAX_UNATTENDED_FAILURES} consecutive unexpected errors."
-                    )
-                    return 1
-                logger.info("Continuing despite error...")
-
-            if not stop_requested:
-                next_run = datetime.now() + timedelta(minutes=interval_minutes)
-
-                logger.info(f"Next run at {next_run.strftime('%H:%M:%S')}")
-                print(f"\n{'[.]' if _nc else '💤'} Sleeping for {interval_minutes} minutes...")
-                print(f"   Next run at: {next_run.strftime('%H:%M:%S')}")
-
-                # Sleep in small intervals to allow quicker Ctrl+C response
-                sleep_seconds = interval_minutes * 60
-                for _ in range(sleep_seconds):
-                    if stop_requested:
-                        break
-                    time.sleep(1)
-
-        print(f"\n{'[OK]' if _nc else '✅'} Monitoring stopped after {run_count} run(s)")
-        return 0
-
-    # Normal mode: run once
-    try:
-        _run_single_analysis(
-            args=args,
+    if interval_minutes:
+        return run_unattended_monitoring(
+            request=replace(request, save_results=True),
             config=config,
             logger=logger,
-            save_results=args.save_results,
+            interval_minutes=interval_minutes,
+            run_single_analysis=run_single_analysis,
+        )
+
+    try:
+        run_single_analysis(
+            request=request,
+            config=config,
+            logger=logger,
         )
     except AzureHttpError as exc:
         logger.error("Azure API request failed: %s", exc)  # noqa: TRY400 - user-facing API failure should stay concise
@@ -417,58 +450,347 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _run_single_analysis(
-    args,
+def _run_unattended_monitoring(
+    *,
+    request: AnalysisRunRequest,
     config: ToolConfig,
-    logger,
-    save_results: bool,
+    logger: logging.Logger,
+    interval_minutes: int,
+    run_single_analysis,
+    emit=print,
+    sleep=None,
+    install_signal_handlers: bool = True,
+    should_stop=None,
+) -> int:
+    logger.info(f"Starting unattended monitoring mode: running every {interval_minutes} minutes. Press Ctrl+C to stop.")
+    _nc = request.no_color
+    emit(f"{'[*]' if _nc else '🔄'} Monitoring mode started (interval: {interval_minutes} min)")
+    emit(f"{'[>]' if _nc else '📊'} Results will be saved to: {request.results_dir}/runs/")
+    emit(f"{'[!]' if _nc else '⏸️ '} Press Ctrl+C to stop\n")
+
+    stop_requested = False
+
+    def signal_handler(signum, frame):
+        nonlocal stop_requested
+        stop_requested = True
+        emit(f"\n{'[x]' if _nc else '⏹️ '} Stop requested, finishing current run...")
+
+    if install_signal_handlers:
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
+    if sleep is None:
+        sleep = time.sleep
+
+    if should_stop is None:
+
+        def should_stop() -> bool:
+            return stop_requested
+
+    run_count = 0
+    unexpected_error_count = 0
+    while not should_stop():
+        run_count += 1
+        emit(f"\n{'=' * 60}")
+        emit(f"Run #{run_count} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        emit(f"{'=' * 60}")
+
+        unexpected_error_count, exit_code = _run_unattended_iteration(
+            request=request,
+            config=config,
+            logger=logger,
+            run_single_analysis=run_single_analysis,
+            unexpected_error_count=unexpected_error_count,
+            emit=emit,
+        )
+        if exit_code is not None:
+            return exit_code
+
+        if not should_stop():
+            _sleep_until_next_run(
+                interval_minutes=interval_minutes,
+                logger=logger,
+                emit=emit,
+                sleep=sleep,
+                should_stop=should_stop,
+                no_color=_nc,
+            )
+
+    emit(f"\n{'[OK]' if _nc else '✅'} Monitoring stopped after {run_count} run(s)")
+    return 0
+
+
+def _run_unattended_iteration(
+    *,
+    request: AnalysisRunRequest,
+    config: ToolConfig,
+    logger: logging.Logger,
+    run_single_analysis,
+    unexpected_error_count: int,
+    emit=print,
+) -> tuple[int, int | None]:
+    try:
+        run_single_analysis(
+            request=request,
+            config=config,
+            logger=logger,
+        )
+    except AzureHttpError as exc:
+        logger.error(f"Azure API request failed: {exc}")  # noqa: TRY400 - traceback is noise for API failures
+        logger.info("Continuing despite error...")
+        return 0, None
+    except Exception:
+        unexpected_error_count += 1
+        logger.exception(
+            "Unexpected error in unattended run (%d/%d)",
+            unexpected_error_count,
+            config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES,
+        )
+        if unexpected_error_count >= config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES:
+            logger.error(  # noqa: TRY400 - traceback already emitted immediately above
+                "Stopping unattended mode after %d consecutive unexpected errors",
+                config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES,
+            )
+            emit(
+                f"\n{'[x]' if request.no_color else '❌'} Stopping monitoring after "
+                f"{config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES} consecutive unexpected errors."
+            )
+            return unexpected_error_count, 1
+        logger.info("Continuing despite error...")
+        return unexpected_error_count, None
+    else:
+        return 0, None
+
+
+def _sleep_until_next_run(
+    *,
+    interval_minutes: int,
+    logger: logging.Logger,
+    emit=print,
+    sleep=time.sleep,
+    should_stop,
+    no_color: bool = True,
+    now=None,
 ) -> None:
-    """Execute a single analysis run.
+    if now is None:
+        now = datetime.now
 
-    Args:
-        args: Parsed command-line arguments
-        config: Tool configuration
-        logger: Logger instance
-        save_results: Whether to save results to disk
-    """
-    # Handle color output setting
-    _nc = args.no_color
-    if _nc:
-        set_colors_enabled(False)
+    next_run = now() + timedelta(minutes=interval_minutes)
+    logger.info(f"Next run at {next_run.strftime('%H:%M:%S')}")
+    emit(f"\n{'[.]' if no_color else '💤'} Sleeping for {interval_minutes} minutes...")
+    emit(f"   Next run at: {next_run.strftime('%H:%M:%S')}")
 
-    authenticator = AzureAuthenticator()
-    client = AzureRestClient(authenticator)
+    sleep_seconds = interval_minutes * 60
+    for _ in range(sleep_seconds):
+        if should_stop():
+            break
+        sleep(1)
 
-    placement_scores = fetch_placement_scores(client, config) if config.enable_placement else []
-    historical_metrics = fetch_historical_metrics(client, config)
 
+def _resolve_effective_cpu_arch(
+    *,
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    base_config: dict[str, Any],
+) -> str | None:
+    effective_cpu_arch = args.cpu_arch if args.cpu_arch is not None else base_config.get("cpu_arch")
+    if effective_cpu_arch is None:
+        return None
+    if not isinstance(effective_cpu_arch, str):
+        parser.error(f"cpu_arch must be one of {sorted(VALID_CPU_ARCHS)}")
+        raise SystemExit(2)
+    effective_cpu_arch = effective_cpu_arch.lower()
+    if effective_cpu_arch not in VALID_CPU_ARCHS:
+        parser.error(f"cpu_arch must be one of {sorted(VALID_CPU_ARCHS)}")
+        raise SystemExit(2)
+    return effective_cpu_arch
+
+
+def _discover_requested_sizes(
+    *,
+    args: argparse.Namespace,
+    effective_cpu_arch: str | None,
+    logger: logging.Logger,
+) -> tuple[list[str] | None, bool]:
+    should_auto_discover = args.min_vcpu is not None or args.min_ram is not None or effective_cpu_arch is not None
+    if not should_auto_discover:
+        return None, False
+
+    requirements = []
+    if args.min_vcpu is not None:
+        requirements.append(f"vCPU≥{args.min_vcpu}")
+    if args.min_ram is not None:
+        requirements.append(f"RAM≥{args.min_ram} GB")
+    if effective_cpu_arch:
+        requirements.append(f"arch={effective_cpu_arch}")
+    logger.info(f"No --sizes specified, auto-discovering SKUs matching requirements ({', '.join(requirements)})")
+
+    discover_kwargs = {
+        "min_vcpu": args.min_vcpu,
+        "min_ram": args.min_ram,
+        "cpu_arch": effective_cpu_arch,
+    }
+    if args.no_max_limit:
+        discover_kwargs["no_max_limit"] = True
+    sizes = discover_skus(**discover_kwargs)
+    if sizes:
+        logger.info(f"Auto-discovered {len(sizes)} SKUs: {', '.join(sizes[:5])}{'...' if len(sizes) > 5 else ''}")
+    return sizes, True
+
+
+def _resolve_requested_sizes(
+    *,
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    base_config: dict[str, Any],
+    logger: logging.Logger,
+) -> tuple[list[str] | None, bool]:
+    # Auto-discover SKUs only when neither CLI nor config specifies sizes.
+    # cpu_arch can come from config here; min_vcpu/min_ram are still CLI-only.
+    sizes = args.sizes if args.sizes is not None else base_config.get("sizes")
+    args.explicit_sizes = bool(sizes)
+    effective_cpu_arch = _resolve_effective_cpu_arch(
+        parser=parser,
+        args=args,
+        base_config=base_config,
+    )
+    if sizes:
+        return sizes, False
+    return _discover_requested_sizes(
+        args=args,
+        effective_cpu_arch=effective_cpu_arch,
+        logger=logger,
+    )
+
+
+def _run_history_analysis(
+    *,
+    results_dir: Path,
+    depth: int | None,
+    history_output: Path | None,
+    logger: logging.Logger,
+    emit=print,
+) -> int:
+    from .history import analyze_history
+
+    output_path = history_output or (results_dir / "history.csv")
+
+    logger.info("Analyzing historical data from %s", results_dir)
+    num_runs, num_datapoints, csv_path = analyze_history(
+        results_dir=results_dir,
+        depth=depth,
+        output_path=output_path,
+    )
+
+    emit("Historical Analysis Complete:")
+    emit(f"  Runs analyzed: {num_runs}")
+    emit(f"  Data points: {num_datapoints}")
+    emit(f"  CSV output: {csv_path}")
+    emit("\nUse this CSV for visualization with tools like:")
+    emit(f"  - Excel/Google Sheets: Import {csv_path}")
+    emit(f"  - Python: pd.read_csv('{csv_path}')")
+    emit("  - Grafana: CSV data source plugin")
+
+    return 0
+
+
+def _write_json_atomic(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            json.dump(payload, handle, indent=2, default=_json_serializer)
+            handle.write("\n")
+            temp_path = Path(handle.name)
+        temp_path.replace(path)
+    except Exception:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        raise
+
+
+def _fetch_analysis_inputs(
+    *,
+    client: AzureRestClient,
+    config: ToolConfig,
+) -> tuple[list[PlacementScoreResult], list[HistoricalMetrics]]:
+    placement_scores: list[PlacementScoreResult] = []
+    if config.enable_placement:
+        placement_request = _build_placement_score_request(config)
+        placement_scores = fetch_placement_scores(client, placement_request)
+    resource_graph_request = _build_resource_graph_request(config)
+    historical_metrics = fetch_historical_metrics(client, resource_graph_request)
+    return placement_scores, historical_metrics
+
+
+def _build_ranked_candidates(
+    *,
+    placement_scores: list[PlacementScoreResult],
+    historical_metrics: list[HistoricalMetrics],
+    request: AnalysisRunRequest,
+    config: ToolConfig,
+) -> list[CandidateInsight]:
     candidates = merge_datasets(placement_scores, historical_metrics)
 
-    # Filter by hardware requirements (before ranking to reduce dataset)
-    # Use config values so config-file settings (cpu_arch, etc.) are honored
-    effective_no_max_limit = getattr(args, "no_max_limit", False) or getattr(args, "explicit_sizes", False)
+    effective_no_max_limit = request.no_max_limit or request.explicit_sizes
     candidates = filter_by_requirements(
         candidates,
-        min_vcpu=args.min_vcpu,
-        min_ram=args.min_ram,
+        min_vcpu=request.min_vcpu,
+        min_ram=request.min_ram,
         cpu_arch=config.cpu_arch,
         no_max_limit=effective_no_max_limit,
     )
 
     ranked = rank_candidates(candidates)
     ranked = enrich_with_performance(ranked, config.baseline_sku)
-    ranked = enrich_with_coremark(ranked)  # Add CoreMark benchmark data
-
-    # Filter by cost constraints (after enrichment for min_performance filter)
+    ranked = enrich_with_coremark(ranked)
     ranked = filter_by_cost(
         ranked,
-        max_price=args.max_price,
-        max_eviction=args.max_eviction,
-        min_performance=args.min_performance,
+        max_price=request.max_price,
+        max_eviction=request.max_eviction,
+        min_performance=request.min_performance,
     )
 
     if config.result_limit:
         ranked = ranked[: config.result_limit]
+    return ranked
+
+
+def _run_single_analysis(
+    request: AnalysisRunRequest,
+    config: ToolConfig,
+    logger,
+) -> None:
+    """Execute a single analysis run.
+
+    Args:
+        request: CLI execution request
+        config: Tool configuration
+        logger: Logger instance
+    """
+    # Handle color output setting
+    _nc = request.no_color
+    render_options = RenderOptions(colors_enabled=(not _nc and sys.stdout.isatty()))
+
+    authenticator = AzureAuthenticator()
+    client = AzureRestClient(authenticator)
+    placement_scores, historical_metrics = _fetch_analysis_inputs(
+        client=client,
+        config=config,
+    )
+    ranked = _build_ranked_candidates(
+        placement_scores=placement_scores,
+        historical_metrics=historical_metrics,
+        request=request,
+        config=config,
+    )
 
     def emit(*values: Any, **kwargs: Any) -> None:
         if config.emit_json:
@@ -478,64 +800,144 @@ def _run_single_analysis(
     def emit_error(*values: Any, **kwargs: Any) -> None:
         print(*values, file=sys.stderr, **kwargs)
 
-    # Save results for historical analysis if requested (even if empty,
-    # so automation/unattended monitoring records that a run completed)
-    if save_results:
-        from .history import save_run_results
+    if _persist_analysis_outputs(
+        ranked,
+        request=request,
+        config=config,
+        logger=logger,
+        emit=emit,
+        emit_error=emit_error,
+    ):
+        return
 
-        try:
-            saved_path = save_run_results(
-                candidates=ranked,
-                config=config,
-                results_dir=args.results_dir,
-            )
-        except OSError as exc:
-            logger.warning("Failed to save run results: %s", exc)
-            emit_error(f"Failed to save run results: {exc}")
-        else:
-            logger.info("Results saved to %s", saved_path)
-            emit(f"{'[OK]' if _nc else '✅'} Results saved to: {saved_path}\n")
+    _render_analysis_results(
+        ranked,
+        request=request,
+        config=config,
+        render_options=render_options,
+        emit=emit,
+    )
+
+
+def _persist_analysis_outputs(
+    ranked: list[CandidateInsight],
+    *,
+    request: AnalysisRunRequest,
+    config: ToolConfig,
+    logger: logging.Logger,
+    emit,
+    emit_error,
+) -> bool:
+    _nc = request.no_color
+
+    _save_run_results_if_requested(
+        ranked,
+        request=request,
+        config=config,
+        logger=logger,
+        emit=emit,
+        emit_error=emit_error,
+    )
 
     # Export to CSV if requested (even if empty, so downstream tools see the run)
-    if args.csv:
+    if request.csv:
         try:
             export_to_csv(
                 ranked,
-                args.csv,
+                request.csv,
                 show_placement=config.enable_placement,
                 show_baseline=config.baseline_sku is not None,
             )
         except OSError as exc:
-            logger.error("Failed to export CSV to %s: %s", args.csv, exc)  # noqa: TRY400 - expected filesystem failure path
-            emit_error(f"{'[x]' if _nc else '❌'} Failed to export CSV to: {args.csv} ({exc})\n")
+            logger.error(  # noqa: TRY400 - expected filesystem failure path
+                "Failed to export CSV to %s: %s",
+                request.csv,
+                exc,
+            )
+            emit_error(f"{'[x]' if _nc else '❌'} Failed to export CSV to: {request.csv} ({exc})\n")
         else:
-            logger.info("Results exported to CSV: %s", args.csv)
-            emit(f"{'[OK]' if _nc else '✅'} CSV exported to: {args.csv}\n")
+            logger.info("Results exported to CSV: %s", request.csv)
+            emit(f"{'[OK]' if _nc else '✅'} CSV exported to: {request.csv}\n")
 
-    # Emit JSON / save report (even if empty)
-    if config.emit_json or config.save_report:
-        report_payload = _build_report(ranked)
-        if config.emit_json:
-            print(json.dumps(report_payload, indent=2, default=_json_serializer), file=sys.stdout)
-        if config.save_report:
-            try:
-                config.save_report.parent.mkdir(parents=True, exist_ok=True)
-                config.save_report.write_text(
-                    json.dumps(report_payload, indent=2, default=_json_serializer),
-                    encoding="utf-8",
-                )
-            except OSError as exc:
-                logger.error(  # noqa: TRY400 - expected filesystem failure path
-                    "Failed to save report to %s: %s",
-                    config.save_report,
-                    exc,
-                )
-                emit_error(f"{'[x]' if _nc else '❌'} Failed to save report to: {config.save_report} ({exc})\n")
-            else:
-                logger.info("Saved report to %s", config.save_report)
-        if config.emit_json:
-            return
+    return _emit_report_if_requested(
+        ranked,
+        request=request,
+        config=config,
+        logger=logger,
+        emit_error=emit_error,
+    )
 
+
+def _save_run_results_if_requested(
+    ranked: list[CandidateInsight],
+    *,
+    request: AnalysisRunRequest,
+    config: ToolConfig,
+    logger: logging.Logger,
+    emit,
+    emit_error,
+) -> None:
+    if not request.save_results:
+        return
+
+    # Save results for historical analysis even if the candidate list is empty,
+    # so unattended monitoring still records that a run completed.
+    from .history import save_run_results
+
+    try:
+        saved_path = save_run_results(
+            candidates=ranked,
+            config=config,
+            results_dir=request.results_dir,
+        )
+    except OSError as exc:
+        logger.warning("Failed to save run results: %s", exc)
+        emit_error(f"Failed to save run results: {exc}")
+    else:
+        _nc = request.no_color
+        logger.info("Results saved to %s", saved_path)
+        emit(f"{'[OK]' if _nc else '✅'} Results saved to: {saved_path}\n")
+
+
+def _emit_report_if_requested(
+    ranked: list[CandidateInsight],
+    *,
+    request: AnalysisRunRequest,
+    config: ToolConfig,
+    logger: logging.Logger,
+    emit_error,
+) -> bool:
+    if not (config.emit_json or config.save_report):
+        return False
+
+    report_payload = _build_report(ranked)
+    if config.emit_json:
+        print(json.dumps(report_payload, indent=2, default=_json_serializer), file=sys.stdout)
+    if config.save_report:
+        try:
+            _write_json_atomic(config.save_report, report_payload)
+        except OSError as exc:
+            _nc = request.no_color
+            logger.error(  # noqa: TRY400 - expected filesystem failure path
+                "Failed to save report to %s: %s",
+                config.save_report,
+                exc,
+            )
+            emit_error(f"{'[x]' if _nc else '❌'} Failed to save report to: {config.save_report} ({exc})\n")
+        else:
+            logger.info("Saved report to %s", config.save_report)
+
+    return config.emit_json
+
+
+def _render_analysis_results(
+    ranked: list[CandidateInsight],
+    *,
+    request: AnalysisRunRequest,
+    config: ToolConfig,
+    render_options: RenderOptions,
+    emit,
+) -> None:
     if not ranked:
         emit("No candidates match the specified filters. Try relaxing constraints.")
         return
@@ -545,6 +947,7 @@ def _run_single_analysis(
             ranked,
             show_placement=config.enable_placement,
             show_baseline=config.baseline_sku is not None,
+            render_options=render_options,
         )
     )
 
@@ -566,7 +969,7 @@ def _run_single_analysis(
             )
 
     # Print color legend if colors are enabled
-    if not args.no_color:
+    if not request.no_color:
         from colorama import Fore, Style
 
         emit("\nColor Legend:")
@@ -603,31 +1006,10 @@ def _run_single_analysis(
         )
 
 
-def _build_report(candidates: list[Any]) -> dict[str, Any]:
+def _build_report(candidates: list[CandidateInsight]) -> dict[str, Any]:
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
-        "candidates": [
-            {
-                "rank": item.recommendation_rank,
-                "region": item.region,
-                "availabilityZone": item.availability_zone,
-                "vmSize": item.vm_size,
-                "cpuArchitecture": item.cpu_arch,
-                "placementScore": item.placement_score,
-                "quotaAvailable": item.quota_available,
-                "priceUSDPerHour": item.price_usd,
-                "priceLastUpdated": _json_serializer(item.price_last_updated),
-                "evictionRatePercent": item.eviction_rate,
-                "performanceRelativePercent": item.performance_relative,
-                "pricePerPerformance": item.price_per_performance,
-                "performanceBasis": getattr(item, "performance_basis", None),
-                "performanceNote": getattr(item, "performance_note", None),
-                "coremarkScore": item.coremark_score,
-                "coremarkPerVCPU": item.coremark_per_vcpu,
-                "notes": _merge_notes(item.notes, getattr(item, "performance_note", None)),
-            }
-            for item in candidates
-        ],
+        "candidates": [project_for_report(item, _json_serializer, _merge_notes) for item in candidates],
     }
 
 

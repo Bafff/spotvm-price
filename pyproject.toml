@@ -24,6 +24,7 @@ dev = [
     "pre-commit==4.3.0",
     "pytest>=8.3",
     "ruff==0.15.5",
+    "types-PyYAML>=6.0",
     "types-requests>=2.32.4",
 ]
 

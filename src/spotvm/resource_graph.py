@@ -4,34 +4,48 @@ import json
 import logging
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, cast
+from urllib.parse import urlunsplit
 
 from . import cache
-from .config import ToolConfig
 from .http_client import AzureRestClient
 from .models import HistoricalMetrics
 
 logger = logging.getLogger("spotvm")
 
 RESOURCE_GRAPH_API_VERSION = "2022-10-01"
-RESOURCE_GRAPH_ENDPOINT = (
-    f"https://management.azure.com/providers/Microsoft.ResourceGraph/resources?api-version={RESOURCE_GRAPH_API_VERSION}"
-)
+AZURE_MANAGEMENT_HOST = "management.azure.com"
+RESOURCE_GRAPH_PATH = "/providers/Microsoft.ResourceGraph/resources"
+MIN_PLAUSIBLE_UNIX_TIMESTAMP = datetime(2015, 1, 1, tzinfo=timezone.utc).timestamp()
+MAX_PLAUSIBLE_UNIX_TIMESTAMP = datetime(2041, 1, 1, tzinfo=timezone.utc).timestamp()
+
+
+@dataclass(frozen=True)
+class ResourceGraphRequest:
+    regions: list[str]
+    sizes: list[str]
+    os_type: str
+    cache_ttl_minutes: int
+    retry_attempts: int
+    retry_backoff_seconds: float
 
 
 def fetch_historical_metrics(
     client: AzureRestClient,
-    config: ToolConfig,
+    request: ResourceGraphRequest,
 ) -> list[HistoricalMetrics]:
-    price_query = _build_price_query(config)
-    eviction_query = _build_eviction_query(config)
+    price_query = _build_price_query(request)
+    eviction_query = _build_eviction_query(request)
+    logger.debug(
+        "Built Resource Graph queries for %d SKU filters across %d regions",
+        len(request.sizes),
+        len(request.regions),
+    )
 
-    logger.debug("Price query: %s", price_query)
-    logger.debug("Eviction query: %s", eviction_query)
-
-    price_rows = _execute_query(client, config, price_query, "price")
-    eviction_rows = _execute_query(client, config, eviction_query, "eviction")
+    price_rows = _execute_query(client, request, price_query, "price")
+    eviction_rows = _execute_query(client, request, eviction_query, "eviction")
 
     logger.debug("Price rows returned: %d", len(price_rows))
     logger.debug("Eviction rows returned: %d", len(eviction_rows))
@@ -78,7 +92,7 @@ def fetch_historical_metrics(
 
 def _execute_query(
     client: AzureRestClient,
-    config: ToolConfig,
+    request: ResourceGraphRequest,
     query: str,
     cache_prefix: str,
 ) -> list[dict[str, Any]]:
@@ -92,10 +106,8 @@ def _execute_query(
         },
     }
 
-    logger.debug("Executing query with authorizationScopeFilter=AtScopeAboveAndBelow")
-
     cache_key = _cache_key(cache_prefix, payload)
-    cached = cache.load(cache_key, config.cache_ttl_minutes)
+    cached = cache.load(cache_key, request.cache_ttl_minutes)
     if cached is not None:
         if not isinstance(cached, dict):
             logger.warning("Ignoring malformed cached %s data", cache_prefix)
@@ -108,17 +120,27 @@ def _execute_query(
 
     logger.debug("Executing %s query against Resource Graph API", cache_prefix)
     response = client.post_json(
-        RESOURCE_GRAPH_ENDPOINT,
+        _resource_graph_endpoint(),
         payload,
-        retry_attempts=config.retry_attempts,
-        retry_backoff_seconds=config.retry_backoff_seconds,
+        retry_attempts=request.retry_attempts,
+        retry_backoff_seconds=request.retry_backoff_seconds,
     )
     logger.debug("Response keys: %s", list(response.keys()))
     logger.debug("Response data length: %d", len(response.get("data", [])))
-    if response.get("data"):
-        logger.debug("Sample data item: %s", response["data"][0] if response["data"] else "N/A")
-    cache.store(cache_key, response, config.cache_ttl_minutes)
+    cache.store(cache_key, response, request.cache_ttl_minutes)
     return cast(list[dict[str, Any]], response.get("data", []))
+
+
+def _resource_graph_endpoint() -> str:
+    return urlunsplit(
+        (
+            "https",
+            AZURE_MANAGEMENT_HOST,
+            RESOURCE_GRAPH_PATH,
+            f"api-version={RESOURCE_GRAPH_API_VERSION}",
+            "",
+        )
+    )
 
 
 def _cache_key(prefix: str, payload: dict) -> str:
@@ -126,10 +148,10 @@ def _cache_key(prefix: str, payload: dict) -> str:
     return f"resource-graph:{prefix}:{serialized}"
 
 
-def _build_price_query(config: ToolConfig) -> str:
-    region_filter = _in_expression("location", config.regions)
-    sku_list = _in_list(config.sizes)
-    os_filter = f"| where osType =~ '{config.os_type}'" if config.os_type else ""
+def _build_price_query(request: ResourceGraphRequest) -> str:
+    region_filter = _in_expression("location", request.regions)
+    sku_list = _in_list(request.sizes)
+    os_filter = f"| where osType =~ '{request.os_type}'" if request.os_type else ""
     return (
         "spotresources\n"
         "| where type =~ 'microsoft.compute/skuspotpricehistory/ostype/location'\n"
@@ -143,9 +165,9 @@ def _build_price_query(config: ToolConfig) -> str:
     )
 
 
-def _build_eviction_query(config: ToolConfig) -> str:
-    region_filter = _in_expression("location", config.regions)
-    sku_list = _in_list(config.sizes)
+def _build_eviction_query(request: ResourceGraphRequest) -> str:
+    region_filter = _in_expression("location", request.regions)
+    sku_list = _in_list(request.sizes)
     return (
         "spotresources\n"
         "| where type =~ 'microsoft.compute/skuspotevictionrate/location'\n"
@@ -199,18 +221,22 @@ def _extract_eviction(entry: dict | None) -> tuple[float | None, datetime | None
     rate = None
 
     if eviction_str:
-        # Try to parse as direct number first
-        rate = _to_float(eviction_str)
+        cleaned_value = eviction_str.strip() if isinstance(eviction_str, str) else eviction_str
+
+        # Parse plain numeric strings directly. Range/plus forms need bespoke parsing
+        # to avoid warning before the fallback path succeeds.
+        if not isinstance(cleaned_value, str) or re.fullmatch(r"\d+(?:\.\d+)?", cleaned_value):
+            rate = _to_float(cleaned_value)
 
         # If that fails, try to extract from range (e.g., "5-10" -> 10, "0-5" -> 5)
-        if rate is None and isinstance(eviction_str, str):
+        if rate is None and isinstance(cleaned_value, str):
             # Extract upper bound from range like "5-10" -> 10
-            match = re.search(r"-(\d+(?:\.\d+)?)", eviction_str)
+            match = re.search(r"-(\d+(?:\.\d+)?)", cleaned_value)
             if match:
                 rate = _to_float(match.group(1))
             else:
                 # Try single number like "5" -> 5
-                match = re.search(r"^(\d+(?:\.\d+)?)", eviction_str)
+                match = re.search(r"^(\d+(?:\.\d+)?)", cleaned_value)
                 if match:
                     rate = _to_float(match.group(1))
         if rate is None:
@@ -264,9 +290,21 @@ def _parse_datetime_string(value: Any) -> datetime | None:
             if dt.tzinfo is None and value.endswith("Z"):
                 dt = dt.replace(tzinfo=timezone.utc)
         except ValueError:
+            numeric_value = _parse_timestamp_string(value)
+            if numeric_value is not None:
+                return datetime.fromtimestamp(numeric_value, tz=timezone.utc)
             logger.debug("Could not parse datetime string: %r", value)
+            return None
         else:
             return dt
-        return None
     logger.debug("Unsupported datetime type %s: %r", type(value).__name__, value)
+    return None
+
+
+def _parse_timestamp_string(value: str) -> float | None:
+    candidate = value.strip()
+    if re.fullmatch(r"\d+(?:\.\d+)?", candidate):
+        timestamp = float(candidate)
+        if MIN_PLAUSIBLE_UNIX_TIMESTAMP <= timestamp < MAX_PLAUSIBLE_UNIX_TIMESTAMP:
+            return timestamp
     return None
