@@ -707,10 +707,13 @@ class TestMainWithMocks:
 
     def test_build_ranked_candidates_refreshes_databricks_catalog_caches(self, monkeypatch):
         monkeypatch.setattr("spotvm.cli.refresh_databricks_catalog_cache", MagicMock())
-        monkeypatch.setattr("spotvm.analysis.load_catalog", lambda: SimpleNamespace(
-            captured_at="2026-03-19T00:00:00Z",
-            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
-        ))
+        monkeypatch.setattr(
+            "spotvm.analysis.load_catalog",
+            lambda: SimpleNamespace(
+                captured_at="2026-03-19T00:00:00Z",
+                pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+            ),
+        )
         monkeypatch.setattr(
             "spotvm.analysis.lookup_azure_node_type_pricing",
             lambda _sku: SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),

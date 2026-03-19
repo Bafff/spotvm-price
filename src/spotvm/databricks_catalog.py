@@ -366,18 +366,18 @@ def _float_mapping_value(mapping: dict[str, Any], key: str, *, context: str) -> 
     return _float_value(_required_mapping_value(mapping, key, context=context), context=f"{context}.{key}")
 
 
-def _float_optional_value(value: object, *, context: str) -> float:
+def _float_optional_value(value: Any, *, context: str) -> float:
     return _float_value(value, context=context)
 
 
-def _float_value(value: object, *, context: str) -> float:
+def _float_value(value: Any, *, context: str) -> float:
     try:
         return float(value)
     except (TypeError, ValueError) as exc:
         raise DatabricksCatalogError(f"Invalid Databricks catalog value for {context}: {value!r}") from exc
 
 
-def _int_value(value: object, *, context: str) -> int:
+def _int_value(value: Any, *, context: str) -> int:
     try:
         return int(value)
     except (TypeError, ValueError) as exc:
@@ -388,13 +388,15 @@ def _string_mapping_value(mapping: dict[str, Any], key: str, *, context: str) ->
     return _string_value(_required_mapping_value(mapping, key, context=context), context=f"{context}.{key}")
 
 
-def _string_value(value: object, *, context: str) -> str:
+def _string_value(value: Any, *, context: str) -> str:
     if not isinstance(value, str):
         raise DatabricksCatalogError(f"Invalid Databricks catalog value for {context}: {value!r}")
     return value
 
 
-def _pricing_profile(*, name: str, dbu_unit_price_usd: float, photon_dbu_unit_price_usd: float) -> DatabricksPricingProfile:
+def _pricing_profile(
+    *, name: str, dbu_unit_price_usd: float, photon_dbu_unit_price_usd: float
+) -> DatabricksPricingProfile:
     try:
         return DatabricksPricingProfile(
             name=name,

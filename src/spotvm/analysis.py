@@ -187,12 +187,14 @@ def _parse_catalog_timestamp(value: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise DatabricksCatalogError(
-            f"Invalid Databricks catalog captured_at timestamp: {value!r}"
-        ) from exc
+        raise _invalid_catalog_timestamp(value) from exc
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _invalid_catalog_timestamp(value: object) -> DatabricksCatalogError:
+    return DatabricksCatalogError(f"Invalid Databricks catalog captured_at timestamp: {value!r}")
 
 
 def summarize_top_candidates(
