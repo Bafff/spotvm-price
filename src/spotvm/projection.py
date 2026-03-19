@@ -7,12 +7,18 @@ from .models import DATABRICKS_OPTIONAL_FIELDS, CandidateInsight, effective_pric
 
 
 def project_for_history(candidate: CandidateInsight) -> dict[str, Any]:
-    """Project a candidate to a dictionary for historical JSON storage."""
+    """Project a candidate to a dictionary for historical JSON storage.
+
+    The snapshot keeps ``price_usd`` as the raw Azure VM price so historical
+    runs remain comparable regardless of whether Databricks enrichment was
+    enabled. Databricks-aware totals, when present, are recorded separately in
+    ``total_price_usd`` and related Databricks fields.
+    """
     payload = {
         "vm_size": candidate.vm_size,
         "region": candidate.region,
         "availability_zone": candidate.availability_zone,
-        "price_usd": effective_price_usd(candidate),
+        "price_usd": candidate.price_usd,
         "eviction_rate": candidate.eviction_rate,
         "placement_score": candidate.placement_score,
         "quota_available": candidate.quota_available,
@@ -53,11 +59,11 @@ def project_for_report(
         "evictionRatePercent": candidate.eviction_rate,
         "performanceRelativePercent": candidate.performance_relative,
         "pricePerPerformance": candidate.price_per_performance,
-        "performanceBasis": getattr(candidate, "performance_basis", None),
-        "performanceNote": getattr(candidate, "performance_note", None),
+        "performanceBasis": candidate.performance_basis,
+        "performanceNote": candidate.performance_note,
         "coremarkScore": candidate.coremark_score,
         "coremarkPerVCPU": candidate.coremark_per_vcpu,
-        "notes": merge_notes(candidate.notes, getattr(candidate, "performance_note", None)),
+        "notes": merge_notes(candidate.notes, candidate.performance_note),
     }
     if show_databricks:
         payload["computePriceUSDPerHour"] = candidate.compute_price_usd

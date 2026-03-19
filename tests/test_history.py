@@ -313,7 +313,7 @@ def test_save_run_results_persists_databricks_fields_when_present(temp_results_d
             vm_size="Standard_D4ps_v6",
             region="centralus",
             availability_zone=None,
-            price_usd=0.381,
+            price_usd=0.03,
             price_last_updated=datetime(2025, 1, 25, 14, 30),
             eviction_rate=2.5,
             eviction_last_updated=datetime(2025, 1, 25, 14, 30),
@@ -340,6 +340,7 @@ def test_save_run_results_persists_databricks_fields_when_present(temp_results_d
         data = json.load(f)
 
     candidate = data["candidates"][0]
+    assert candidate["price_usd"] == 0.03
     assert candidate["compute_price_usd"] == 0.03
     assert candidate["databricks_dbu_per_hour"] == 1.17
     assert candidate["databricks_dbu_cost_usd"] == 0.1755
@@ -355,7 +356,7 @@ def test_generate_history_csv_appends_databricks_columns_when_present(temp_resul
             vm_size="Standard_D4ps_v6",
             region="centralus",
             availability_zone=None,
-            price_usd=0.381,
+            price_usd=0.03,
             price_last_updated=datetime(2025, 1, 25, 14, 30),
             eviction_rate=2.5,
             eviction_last_updated=datetime(2025, 1, 25, 14, 30),
@@ -386,6 +387,7 @@ def test_generate_history_csv_appends_databricks_columns_when_present(temp_resul
     assert "databricks_dbu_cost_usd" in headers
     assert "total_price_usd" in headers
     assert "databricks_catalog_updated" in headers
+    assert row["price_usd"] == "0.03"
     assert row["compute_price_usd"] == "0.03"
     assert row["total_price_usd"] == "0.381"
 

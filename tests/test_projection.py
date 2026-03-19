@@ -135,3 +135,25 @@ def test_project_for_history_serializes_databricks_catalog_updated_datetime():
     projected = project_for_history(candidate)
 
     assert projected["databricks_catalog_updated"] == "2026-03-19T00:00:00+00:00"
+
+
+def test_project_for_history_keeps_raw_price_when_total_price_is_present():
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4s_v5",
+        placement_score="High",
+        quota_available=True,
+        price_usd=0.03,
+        price_last_updated=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        eviction_rate=5.0,
+        eviction_last_updated=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        compute_price_usd=0.03,
+        databricks_dbu_per_hour=1.17,
+        databricks_dbu_cost_usd=0.1755,
+        total_price_usd=0.2055,
+    )
+
+    projected = project_for_history(candidate)
+
+    assert projected["price_usd"] == 0.03
+    assert projected["total_price_usd"] == 0.2055
