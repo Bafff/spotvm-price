@@ -120,7 +120,13 @@ def enrich_with_databricks_cost(
     *,
     include_photon: bool = False,
 ) -> list[CandidateInsight]:
-    """Overlay Databricks DBU pricing onto matching Azure VM candidates."""
+    """Overlay Databricks DBU pricing onto matching Azure VM candidates.
+
+    Keeps ``price_usd`` as the raw Azure VM price and stores the Databricks-aware
+    result separately in ``total_price_usd``. When Photon mode is enabled, the
+    Photon value is treated as the full Photon DBU rate for the candidate rather
+    than as an additive surcharge delta.
+    """
     if not candidates:
         return candidates
 
@@ -147,6 +153,8 @@ def enrich_with_databricks_cost(
             photon_cost_usd = candidate.databricks_photon_dbu_per_hour * photon_dbu_unit_price
             candidate.databricks_photon_cost_usd = photon_cost_usd
 
+        # Photon cost replaces the base DBU component in the user-facing total
+        # because databricks_photon_dbu_per_hour stores the full Photon rate.
         effective_databricks_cost = photon_cost_usd or candidate.databricks_dbu_cost_usd
         if compute_price is not None and effective_databricks_cost is not None:
             candidate.total_price_usd = compute_price + effective_databricks_cost

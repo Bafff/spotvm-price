@@ -366,6 +366,13 @@ class TestBuildParser:
         assert "effective default" in help_text
         assert "placement-check" in help_text
 
+    def test_help_describes_photon_as_full_rate_not_surcharge(self):
+        parser = build_parser()
+        help_text = " ".join(parser.format_help().split())
+
+        assert "--include-photon-cost" in help_text
+        assert "full Photon DBU rate" in help_text
+
     def test_resolve_effective_cpu_arch_normalizes_config_value(self):
         parser = build_parser()
         args = parser.parse_args(["--config", "ignored.json"])

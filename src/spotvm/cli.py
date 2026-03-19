@@ -196,7 +196,7 @@ def _add_base_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--include-photon-cost",
         action="store_true",
-        help="Add Photon surcharge when Databricks cost mode is enabled",
+        help="Use the full Photon DBU rate when Databricks cost mode is enabled",
     )
     parser.add_argument(
         "--refresh-databricks-catalog",

@@ -51,6 +51,8 @@ Notes captured from the browser session:
 - Photon Jobs: `2.5x`
 
 These multipliers explain UI totals, but the vendored CSV stores only the base per-node `dbu_per_hour` values.
+When `spotvm` shows Photon output, it treats the Photon number as the full Photon
+DBU rate for the node type, not as a separate additive surcharge field.
 
 ## Reuse In Code
 
