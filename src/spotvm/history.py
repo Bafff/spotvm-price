@@ -21,6 +21,10 @@ from .projection import project_for_history
 logger = logging.getLogger("spotvm")
 
 
+class HistoricalSnapshotError(ValueError):
+    pass
+
+
 @dataclass
 class RunSnapshot:
     """Snapshot of a single tool run with all results."""
@@ -103,7 +107,7 @@ def load_historical_runs(
             with filepath.open("r") as f:
                 data = json.load(f)
                 snapshots.append(_run_snapshot_from_payload(data))
-        except (OSError, json.JSONDecodeError, KeyError, ValueError) as exc:
+        except (OSError, json.JSONDecodeError, KeyError, HistoricalSnapshotError) as exc:
             logger.warning("Failed to load historical run %s: %s", filepath, exc)
             continue
 
@@ -115,16 +119,20 @@ def _run_snapshot_from_payload(data: dict[str, Any]) -> RunSnapshot:
     config = data["config"]
     candidates = data["candidates"]
     if not isinstance(timestamp, str):
-        raise ValueError("timestamp must be a string")
+        raise _invalid_snapshot_type("timestamp", "a string")
     if not isinstance(config, dict):
-        raise ValueError("config must be a mapping")
+        raise _invalid_snapshot_type("config", "a mapping")
     if not isinstance(candidates, list):
-        raise ValueError("candidates must be a list")
+        raise _invalid_snapshot_type("candidates", "a list")
     return RunSnapshot(
         timestamp=timestamp,
         config=config,
         candidates=candidates,
     )
+
+
+def _invalid_snapshot_type(field_name: str, expected: str) -> HistoricalSnapshotError:
+    return HistoricalSnapshotError(f"{field_name} must be {expected}")
 
 
 def generate_history_csv(

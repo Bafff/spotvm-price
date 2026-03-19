@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import csv
 import json
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from functools import cache
 from importlib import resources
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
-from typing import Mapping
 
 
 class DatabricksCatalogError(RuntimeError):
@@ -210,9 +210,7 @@ def _catalog_from_payload(payload: dict[str, Any]) -> DatabricksCatalog:
                     )
                 ),
                 photon_dbu_per_hour=(
-                    float(raw_entry.get("photon_dbu_per_hour"))
-                    if raw_entry.get("photon_dbu_per_hour") is not None
-                    else None
+                    float(photon_raw) if (photon_raw := raw_entry.get("photon_dbu_per_hour")) is not None else None
                 ),
                 notes=str(raw_entry["notes"]) if raw_entry.get("notes") is not None else None,
             )
@@ -238,6 +236,8 @@ def _optional_str(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
 def _optional_float(
     value: str | None,
     *,

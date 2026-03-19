@@ -645,7 +645,7 @@ class TestMainWithMocks:
             "spotvm.analysis.load_catalog",
             lambda: SimpleNamespace(
                 captured_at="2026-03-19T00:00:00Z",
-                pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15),
+                pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
             ),
         )
 
