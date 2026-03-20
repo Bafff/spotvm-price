@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from functools import cache
 from importlib import resources
+from importlib.resources import as_file
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -119,7 +120,11 @@ class DatabricksCatalog:
             raise ValueError("cloud must be non-empty")
         normalized_captured_at = _coerce_catalog_timestamp(self.captured_at)
         object.__setattr__(self, "captured_at", normalized_captured_at)
-        normalized_source = MappingProxyType({str(key): str(value) for key, value in self.source.items()})
+        if not isinstance(self.source, Mapping):
+            raise TypeError("source must be a mapping of string keys and values")
+        if not all(isinstance(key, str) and isinstance(value, str) for key, value in self.source.items()):
+            raise TypeError("source must be a mapping of string keys and values")
+        normalized_source = MappingProxyType(dict(self.source))
         object.__setattr__(self, "source", normalized_source)
         if not normalized_captured_at:
             raise ValueError("captured_at must be non-empty")
@@ -162,7 +167,13 @@ def load_azure_dbu_pricing_rows() -> list[AzureNodeTypePricingRow]:
 
 
 def load_azure_dbu_pricing_last_updated() -> datetime:
-    return load_catalog().captured_at
+    csv_resource = resources.files("spotvm").joinpath("data/databricks_azure_dbu_pricing.csv")
+    try:
+        with as_file(csv_resource) as csv_path:
+            csv_mtime = datetime.fromtimestamp(csv_path.stat().st_mtime, tz=timezone.utc)
+    except OSError as exc:
+        raise DatabricksCatalogError("Failed to stat vendored Azure DBU pricing CSV") from exc
+    return max(load_catalog().captured_at, csv_mtime)
 
 
 @cache

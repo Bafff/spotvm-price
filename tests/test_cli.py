@@ -348,7 +348,7 @@ class TestMainWithMocks:
         assert "Stopping monitoring after 2 consecutive unexpected errors" in captured.out
 
     @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 2)
-    def test_run_unattended_iteration_resets_error_count_after_azure_http_error(self):
+    def test_run_unattended_iteration_preserves_error_count_after_azure_http_error(self):
         logger = MagicMock()
         request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
@@ -363,7 +363,7 @@ class TestMainWithMocks:
             emit=_stdout_emitter,
         )
 
-        assert unexpected_error_count == 0
+        assert unexpected_error_count == 1
         assert exit_code is None
         logger.exception.assert_not_called()
         logger.error.assert_called_once_with(
@@ -712,7 +712,8 @@ class TestMainWithMocks:
         assert ranked[0].databricks_dbu_cost_usd == 0.15
         assert ranked[0].total_price_usd == 0.20
 
-    def test_build_ranked_candidates_does_not_refresh_databricks_catalog_caches_per_run(self, monkeypatch):
+    def test_build_ranked_candidates_refreshes_databricks_catalog_caches_per_run(self, monkeypatch):
+        monkeypatch.setattr("spotvm.cli.refresh_databricks_catalog_cache", MagicMock())
         monkeypatch.setattr(
             "spotvm.analysis.load_catalog",
             lambda: SimpleNamespace(
@@ -735,32 +736,26 @@ class TestMainWithMocks:
                 include_databricks_cost=True,
             ),
         )
-        assert not hasattr(cli, "refresh_databricks_catalog_cache")
+        cli.refresh_databricks_catalog_cache.assert_called_once_with()
 
-    def test_build_ranked_candidates_continues_without_databricks_overlay_on_catalog_error(self, monkeypatch):
-        warning_logger = MagicMock()
-        monkeypatch.setattr("spotvm.cli.logger", warning_logger)
+    def test_build_ranked_candidates_propagates_databricks_overlay_failure(self, monkeypatch):
+        monkeypatch.setattr("spotvm.cli.refresh_databricks_catalog_cache", MagicMock())
         monkeypatch.setattr(
             "spotvm.cli.enrich_with_databricks_cost",
             MagicMock(side_effect=DatabricksCatalogError("broken catalog")),
         )
 
-        ranked = _build_ranked_candidates(
-            placement_scores=[],
-            historical_metrics=[_historical_metric("Standard_D4s_v4", price_usd=0.05, eviction_rate=5.0)],
-            request=_analysis_args(),
-            config=ToolConfig(
-                regions=["centralus"],
-                sizes=["Standard_D4s_v4"],
-                include_databricks_cost=True,
-            ),
-        )
-
-        assert [candidate.vm_size for candidate in ranked] == ["Standard_D4s_v4"]
-        assert ranked[0].price_usd == 0.05
-        assert ranked[0].total_price_usd is None
-        assert ranked[0].notes == "Databricks cost overlay unavailable; Azure-only pricing shown."
-        warning_logger.warning.assert_called_once()
+        with pytest.raises(DatabricksCatalogError, match="broken catalog"):
+            _build_ranked_candidates(
+                placement_scores=[],
+                historical_metrics=[_historical_metric("Standard_D4s_v4", price_usd=0.05, eviction_rate=5.0)],
+                request=_analysis_args(),
+                config=ToolConfig(
+                    regions=["centralus"],
+                    sizes=["Standard_D4s_v4"],
+                    include_databricks_cost=True,
+                ),
+            )
 
     def test_explicit_sizes_bypass_bounded_hardware_window(self, monkeypatch, capsys):
         _stub_analysis_fetches(
