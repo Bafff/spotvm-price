@@ -130,7 +130,7 @@ def enrich_with_databricks_cost(
     Keeps ``price_usd`` as the raw Azure VM price and stores the Databricks-aware
     result separately in ``total_price_usd``.  When Photon mode is enabled, the
     Photon DBU rate is derived by multiplying the base ``dbu_per_hour`` by the
-    standard-jobs Photon multiplier (2.5x).  The resulting Photon cost replaces
+    Photon Jobs multiplier (2.5x). The resulting Photon cost replaces
     (not supplements) the base DBU cost when computing ``total_price_usd``.
     """
     if not candidates:

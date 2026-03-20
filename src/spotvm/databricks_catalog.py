@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -29,19 +30,25 @@ class DatabricksPricingProfile:
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("name must be non-empty")
+        if not math.isfinite(self.dbu_unit_price_usd):
+            raise ValueError("dbu_unit_price_usd must be finite")
         if self.dbu_unit_price_usd <= 0.0:
             raise ValueError("dbu_unit_price_usd must be positive")
+        if not math.isfinite(self.photon_dbu_unit_price_usd):
+            raise ValueError("photon_dbu_unit_price_usd must be finite")
         if self.photon_dbu_unit_price_usd <= 0.0:
             raise ValueError("photon_dbu_unit_price_usd must be positive")
 
 
 @dataclass(frozen=True)
 class DatabricksCatalogEntry:
-    """Manual JSON snapshot entry used for validation and catalog metadata.
+    """Manual JSON snapshot entry used for validation, metadata, and unit prices.
 
     Runtime VM enrichment uses the vendored Azure CSV because it has the broadest
     Azure SKU coverage. The JSON entry list remains a validated reference
-    snapshot rather than the authoritative lookup table for all VM sizes.
+    snapshot rather than the authoritative VM-size lookup table for all SKUs.
+    Photon per-SKU rates here are informational; runtime enrichment uses the
+    shared Photon Jobs multiplier on top of the CSV base DBU rate.
     """
 
     sku: str
@@ -52,10 +59,15 @@ class DatabricksCatalogEntry:
     def __post_init__(self) -> None:
         if not self.sku:
             raise ValueError("sku must be non-empty")
+        if not math.isfinite(self.dbu_per_hour):
+            raise ValueError("dbu_per_hour must be finite")
         if self.dbu_per_hour <= 0.0:
             raise ValueError("dbu_per_hour must be positive")
-        if self.photon_dbu_per_hour is not None and self.photon_dbu_per_hour <= 0.0:
-            raise ValueError("photon_dbu_per_hour must be positive")
+        if self.photon_dbu_per_hour is not None:
+            if not math.isfinite(self.photon_dbu_per_hour):
+                raise ValueError("photon_dbu_per_hour must be finite")
+            if self.photon_dbu_per_hour <= 0.0:
+                raise ValueError("photon_dbu_per_hour must be positive")
 
 
 @dataclass(frozen=True)
@@ -75,14 +87,20 @@ class AzureNodeTypePricingRow:
             raise ValueError("node_type_id must be non-empty")
         if self.num_cores is not None and self.num_cores <= 0:
             raise ValueError("num_cores must be positive")
-        if self.memory_gb is not None and self.memory_gb < 0.0:
-            raise ValueError("memory_gb must be non-negative")
+        if self.memory_gb is not None:
+            if not math.isfinite(self.memory_gb):
+                raise ValueError("memory_gb must be finite")
+            if self.memory_gb < 0.0:
+                raise ValueError("memory_gb must be non-negative")
         if self.local_disk_gb is not None and self.local_disk_gb < 0:
             raise ValueError("local_disk_gb must be non-negative")
         if self.num_gpus is not None and self.num_gpus < 0:
             raise ValueError("num_gpus must be non-negative")
-        if self.dbu_per_hour is not None and self.dbu_per_hour <= 0.0:
-            raise ValueError("dbu_per_hour must be positive")
+        if self.dbu_per_hour is not None:
+            if not math.isfinite(self.dbu_per_hour):
+                raise ValueError("dbu_per_hour must be finite")
+            if self.dbu_per_hour <= 0.0:
+                raise ValueError("dbu_per_hour must be positive")
 
 
 @dataclass(frozen=True)
@@ -101,6 +119,10 @@ class DatabricksCatalog:
             raise ValueError("cloud must be non-empty")
         if not self.captured_at:
             raise ValueError("captured_at must be non-empty")
+        try:
+            datetime.fromisoformat(self.captured_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("captured_at must be a valid ISO 8601 timestamp") from exc
         sorted_skus = tuple(entry.sku for entry in self.entries)
         if sorted_skus != tuple(sorted(sorted_skus)):
             raise ValueError("entries must be sorted by sku")

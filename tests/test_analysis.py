@@ -6,7 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from spotvm.analysis import enrich_with_databricks_cost, merge_datasets, rank_candidates, summarize_top_candidates
+from spotvm.analysis import (
+    _append_note,
+    enrich_with_databricks_cost,
+    merge_datasets,
+    rank_candidates,
+    summarize_top_candidates,
+)
 from spotvm.databricks_catalog import DatabricksCatalogError
 from spotvm.models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
 
@@ -242,6 +248,38 @@ def test_enrich_with_databricks_cost_adds_jobs_photon_surcharge(monkeypatch):
     assert enriched.total_price_usd == pytest.approx(0.4221)
 
 
+def test_enrich_with_databricks_cost_keeps_photon_fields_empty_when_photon_capability_is_unknown(monkeypatch):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4ds_v5",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at="2026-03-19T00:00:00Z",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+        ),
+    )
+    monkeypatch.setattr(
+        "spotvm.analysis.lookup_azure_node_type_pricing",
+        lambda _sku: SimpleNamespace(dbu_per_hour=1.0, photon_capable=None),
+    )
+
+    [enriched] = enrich_with_databricks_cost([candidate], include_photon=True)
+
+    assert enriched.databricks_dbu_per_hour == 1.0
+    assert enriched.databricks_photon_dbu_per_hour is None
+    assert enriched.databricks_photon_cost_usd is None
+    assert enriched.total_price_usd == pytest.approx(0.1971)
+
+
 def test_enrich_with_databricks_cost_keeps_photon_fields_empty_for_non_photon_vm(monkeypatch):
     candidate = CandidateInsight(
         region="centralus",
@@ -453,6 +491,53 @@ def test_enrich_with_databricks_cost_warns_when_catalog_entry_lacks_dbu_rate(mon
     assert enriched.notes == "Databricks DBU rate missing for this SKU."
     assert "Databricks DBU rate missing for 1 candidate(s)" in caplog.text
     assert "Standard_D4ds_v5" in caplog.text
+
+
+def test_enrich_with_databricks_cost_appends_note_without_overwriting_existing_note(monkeypatch):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_Unknown",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+        notes="Existing note",
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at="2026-03-19T00:00:00Z",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+        ),
+    )
+    monkeypatch.setattr("spotvm.analysis.lookup_azure_node_type_pricing", lambda _sku: None)
+
+    [enriched] = enrich_with_databricks_cost([candidate], include_photon=False)
+
+    assert enriched.notes == "Existing note; Databricks DBU data not available for this SKU."
+
+
+@pytest.mark.parametrize(
+    ("existing", "note", "expected"),
+    [
+        (None, "Databricks DBU data not available for this SKU.", "Databricks DBU data not available for this SKU."),
+        (
+            "Databricks DBU data not available for this SKU.",
+            "Databricks DBU data not available for this SKU.",
+            "Databricks DBU data not available for this SKU.",
+        ),
+        (
+            "Existing note",
+            "Databricks DBU data not available for this SKU.",
+            "Existing note; Databricks DBU data not available for this SKU.",
+        ),
+    ],
+)
+def test_append_note_handles_empty_dedup_and_concat(existing, note, expected):
+    assert _append_note(existing, note) == expected
 
 
 def test_enrich_with_databricks_cost_short_circuits_empty_candidate_list(monkeypatch):

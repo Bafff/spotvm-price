@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from spotvm.models import CandidateInsight
-from spotvm.projection import project_for_history, project_for_report
+from spotvm.projection import project_for_csv, project_for_history, project_for_report
 
 
 def test_project_for_history_returns_expected_keys():
@@ -183,3 +183,52 @@ def test_project_for_history_keeps_raw_price_when_total_price_is_present():
 
     assert projected["price_usd"] == 0.03
     assert projected["total_price_usd"] == 0.2055
+
+
+def test_project_for_csv_includes_databricks_and_photon_fields_when_enabled():
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4s_v5",
+        placement_score="High",
+        quota_available=True,
+        price_usd=0.03,
+        price_last_updated=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        eviction_rate=5.0,
+        eviction_last_updated=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        recommendation_rank=1,
+        compute_price_usd=0.03,
+        databricks_dbu_per_hour=1.17,
+        databricks_dbu_cost_usd=0.1755,
+        databricks_photon_dbu_per_hour=2.5,
+        databricks_photon_cost_usd=0.375,
+        total_price_usd=0.405,
+        databricks_catalog_updated=datetime(2026, 3, 19, tzinfo=timezone.utc),
+    )
+    formatters = {
+        "quota": lambda value: "" if value is None else ("Yes" if value else "No"),
+        "price": lambda value: "" if value is None else f"{value:.4f}",
+        "numeric": lambda value: "" if value is None else f"{value:g}",
+        "percentage": lambda value: "" if value is None else f"{value:.1f}",
+        "performance": lambda value: "" if value is None else f"{value:.0f}",
+        "price_per_perf": lambda value: "" if value is None else f"{value:.6f}",
+        "coremark": lambda value: "" if value is None else str(value),
+        "coremark_per_vcpu": lambda value: "" if value is None else f"{value:.0f}",
+        "datetime": lambda value: "" if value is None else value.isoformat(),
+    }
+
+    projected = project_for_csv(
+        candidate,
+        "AMD",
+        formatters,
+        lambda _item: "joined notes",
+        show_databricks=True,
+        show_photon=True,
+    )
+
+    assert projected["VM Price (USD/hr)"] == "0.03"
+    assert projected["DBU per Hour"] == "1.17"
+    assert projected["Databricks Cost (USD/hr)"] == "0.1755"
+    assert projected["Photon DBU per Hour"] == "2.5"
+    assert projected["Photon Cost (USD/hr)"] == "0.375"
+    assert projected["Total Cost (USD/hr)"] == "0.405"
+    assert projected["Databricks Catalog Updated"] == "2026-03-19T00:00:00+00:00"

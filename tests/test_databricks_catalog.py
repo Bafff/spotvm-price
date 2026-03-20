@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 
 import pytest
 
@@ -191,9 +192,27 @@ def test_databricks_pricing_profile_requires_non_empty_name():
         DatabricksPricingProfile(name="", dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15)
 
 
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+def test_databricks_pricing_profile_rejects_non_finite_prices(value):
+    with pytest.raises(ValueError, match="must be finite"):
+        DatabricksPricingProfile(name="standard_jobs", dbu_unit_price_usd=value, photon_dbu_unit_price_usd=0.15)
+
+    with pytest.raises(ValueError, match="must be finite"):
+        DatabricksPricingProfile(name="standard_jobs", dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=value)
+
+
 def test_databricks_catalog_entry_validates_positive_dbu_rates():
     with pytest.raises(ValueError, match="dbu_per_hour must be positive"):
         DatabricksCatalogEntry(sku="Standard_D4ps_v6", dbu_per_hour=0.0)
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+def test_databricks_catalog_entry_rejects_non_finite_rates(value):
+    with pytest.raises(ValueError, match="dbu_per_hour must be finite"):
+        DatabricksCatalogEntry(sku="Standard_D4ps_v6", dbu_per_hour=value)
+
+    with pytest.raises(ValueError, match="photon_dbu_per_hour must be finite"):
+        DatabricksCatalogEntry(sku="Standard_D4ps_v6", dbu_per_hour=1.0, photon_dbu_per_hour=value)
 
 
 def test_databricks_catalog_requires_sorted_unique_entries():
@@ -225,6 +244,16 @@ def test_databricks_catalog_requires_sorted_unique_entries():
             entries=(entry_a, DatabricksCatalogEntry(sku="Standard_A2", dbu_per_hour=2.0)),
         )
 
+    with pytest.raises(ValueError, match="captured_at must be a valid ISO 8601 timestamp"):
+        DatabricksCatalog(
+            catalog_version=1,
+            cloud="azure",
+            pricing_profile=pricing_profile,
+            captured_at="not-a-timestamp",
+            source={},
+            entries=(),
+        )
+
 
 @pytest.mark.parametrize(
     ("field_name", "value", "expected_message"),
@@ -249,6 +278,26 @@ def test_azure_node_type_pricing_row_rejects_negative_optional_capacity_fields(f
     kwargs[field_name] = value
 
     with pytest.raises(ValueError, match=expected_message):
+        AzureNodeTypePricingRow(**kwargs)
+
+
+@pytest.mark.parametrize("field_name", ["memory_gb", "dbu_per_hour"])
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+def test_azure_node_type_pricing_row_rejects_non_finite_float_fields(field_name, value):
+    kwargs = {
+        "node_type_id": "Standard_D4ds_v5",
+        "category": "General Purpose",
+        "num_cores": 4,
+        "memory_gb": 16.0,
+        "dbu_per_hour": 1.0,
+        "local_disk_gb": 150,
+        "num_gpus": 0,
+        "photon_capable": True,
+        "deprecated": False,
+    }
+    kwargs[field_name] = value
+
+    with pytest.raises(ValueError, match=f"{field_name} must be finite"):
         AzureNodeTypePricingRow(**kwargs)
 
 
