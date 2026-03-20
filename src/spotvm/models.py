@@ -70,8 +70,12 @@ def effective_price_usd(candidate: CandidateInsight) -> float | None:
     """Return the user-facing hourly price for a candidate.
 
     Prefers total_price_usd (which includes Databricks DBU cost when present)
-    over the raw Azure VM price_usd.
+    over the raw Azure VM price_usd. When Databricks enrichment ran but could
+    not compute a comparable total price, returns None instead of falling back
+    to the raw VM price.
     """
     if candidate.total_price_usd is not None:
         return candidate.total_price_usd
+    if candidate.compute_price_usd is not None:
+        return None
     return candidate.price_usd

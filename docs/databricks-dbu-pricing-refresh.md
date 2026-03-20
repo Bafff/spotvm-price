@@ -53,7 +53,8 @@ Notes captured from the browser session:
 These multipliers explain UI totals, but the vendored CSV stores only the base per-node `dbu_per_hour` values plus the `photon_capable` flag that gates Photon output.
 When `spotvm` shows Photon output, it derives a full Photon DBU rate from the base
 node `dbu_per_hour` and the Photon multiplier. That Photon rate replaces the base
-DBU rate in the displayed total; it is not modeled as an additive surcharge field.
+DBU rate only in the displayed total (`total_price_usd`); standard DBU fields
+remain populated for reference, and Photon is not modeled as an additive surcharge field.
 
 ## Reuse In Code
 

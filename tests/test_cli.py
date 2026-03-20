@@ -471,6 +471,34 @@ class TestMainWithMocks:
         assert logger.error.call_count == 2
         assert "Stopping unattended mode after" in logger.error.call_args_list[-1].args[0]
 
+    @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 3)
+    def test_run_unattended_iteration_continues_for_below_threshold_databricks_catalog_error(self):
+        logger = MagicMock()
+        request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
+        config = ToolConfig(
+            regions=["centralus"],
+            sizes=["Standard_D4s_v5"],
+            include_databricks_cost=True,
+        )
+        run_single_analysis = MagicMock(side_effect=DatabricksCatalogError("broken catalog"))
+
+        unexpected_error_count, exit_code = cli._run_unattended_iteration(
+            request=request,
+            config=config,
+            logger=logger,
+            run_single_analysis=run_single_analysis,
+            unexpected_error_count=1,
+            emit=_stdout_emitter,
+        )
+
+        assert unexpected_error_count == 2
+        assert exit_code is None
+        logger.exception.assert_not_called()
+        logger.info.assert_called_once_with("Continuing despite error...")
+        logger.error.assert_called_once()
+        assert logger.error.call_args.args[:3] == ("Databricks pricing catalog failed (%d/%d): %s", 2, 3)
+        assert str(logger.error.call_args.args[3]) == "broken catalog"
+
     def test_sleep_until_next_run_emits_schedule_and_stops_early(self, capsys):
         logger = MagicMock()
         slept: list[int] = []

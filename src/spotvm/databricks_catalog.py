@@ -1,8 +1,8 @@
 """Databricks pricing catalog loaders and validation helpers.
 
 This module uses two vendored data sources:
-- `databricks_pricing.json` for pricing-profile metadata and validated snapshot
-  entries
+- `databricks_pricing.json` for pricing-profile metadata, per-DBU unit prices,
+  and validated snapshot entries
 - `databricks_azure_dbu_pricing.csv` for broad Azure node-type DBU coverage used
   at runtime during SKU enrichment
 """
@@ -58,9 +58,9 @@ class DatabricksCatalogEntry:
     Runtime VM enrichment uses the vendored Azure CSV because it has the broadest
     Azure SKU coverage. The JSON entry list remains a validated reference
     snapshot rather than the authoritative VM-size lookup table for all SKUs.
-    Photon per-SKU rates here are informational and describe the base DBU rate
-    for Photon-capable SKUs before the shared Photon Jobs multiplier is applied
-    at runtime.
+    Photon per-SKU rates here are reference snapshot values only. Runtime
+    enrichment does not consume this field; it derives Photon totals from the
+    CSV base DBU rate and the shared Photon Jobs multiplier.
     """
 
     sku: str
@@ -196,10 +196,13 @@ def _load_azure_dbu_pricing_rows() -> tuple[AzureNodeTypePricingRow, ...]:
     _validate_azure_dbu_csv_headers(reader.fieldnames)
     rows: list[AzureNodeTypePricingRow] = []
     skipped_blank_node_type_id = 0
+    skipped_blank_node_type_id_rows: list[int] = []
     for row_number, item in enumerate(reader, start=2):
         node_type_id = (item.get("node_type_id") or "").strip()
         if not node_type_id:
             skipped_blank_node_type_id += 1
+            if len(skipped_blank_node_type_id_rows) < 5:
+                skipped_blank_node_type_id_rows.append(row_number)
             continue
         rows.append(
             AzureNodeTypePricingRow(
@@ -226,8 +229,9 @@ def _load_azure_dbu_pricing_rows() -> tuple[AzureNodeTypePricingRow, ...]:
         )
     if skipped_blank_node_type_id > 0:
         logger.warning(
-            "Skipped %d Azure Databricks DBU pricing row(s) with blank node_type_id",
+            "Skipped %d Azure Databricks DBU pricing row(s) with blank node_type_id (rows: %s)",
             skipped_blank_node_type_id,
+            ", ".join(str(row) for row in skipped_blank_node_type_id_rows),
         )
     if not rows:
         logger.warning("Loaded 0 usable Azure Databricks DBU pricing rows from %s", path)

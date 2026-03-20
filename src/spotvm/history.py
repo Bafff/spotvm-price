@@ -73,7 +73,7 @@ def save_run_results(
     try:
         serialized_snapshot = json.dumps(asdict(snapshot), indent=2)
     except TypeError as exc:
-        raise _serialization_error(filepath) from exc
+        raise _serialization_error(filepath, exc) from exc
 
     filepath.write_text(serialized_snapshot, encoding="utf-8")
 
@@ -132,8 +132,8 @@ def _required_snapshot_field(data: dict[str, Any], key: str) -> Any:
     return data.get(key)
 
 
-def _serialization_error(filepath: Path) -> ValueError:
-    return ValueError(f"Failed to serialize historical run snapshot: {filepath}")
+def _serialization_error(filepath: Path, cause: TypeError) -> ValueError:
+    return ValueError(f"Failed to serialize historical run snapshot: {filepath} ({cause})")
 
 
 def _missing_snapshot_field(key: str) -> HistoricalSnapshotError:
@@ -273,9 +273,17 @@ def _load_historical_runs_with_skipped_count(
             with filepath.open("r") as f:
                 data = json.load(f)
                 snapshots.append(_run_snapshot_from_payload(data))
-        except (OSError, json.JSONDecodeError, HistoricalSnapshotError) as exc:
+        except OSError as exc:
             skipped_files += 1
-            logger.warning("Failed to load historical run %s: %s", filepath, exc)
+            logger.warning("Failed to load historical run %s: read error: %s", filepath, exc)
+            continue
+        except json.JSONDecodeError as exc:
+            skipped_files += 1
+            logger.warning("Failed to load historical run %s: invalid JSON: %s", filepath, exc)
+            continue
+        except HistoricalSnapshotError as exc:
+            skipped_files += 1
+            logger.warning("Failed to load historical run %s: invalid snapshot payload: %s", filepath, exc)
             continue
 
     if skipped_files > 0 and not snapshots:

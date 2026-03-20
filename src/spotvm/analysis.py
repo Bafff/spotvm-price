@@ -24,7 +24,8 @@ PLACEMENT_ORDER = {"high": 3, "medium": 2, "low": 1}
 # Extracted from Databricks UI performance multipliers for Photon Jobs compute.
 # The same workspace config also exposes 2.0x for Photon All-Purpose, but this
 # tool models jobs-style Photon pricing, so the jobs multiplier is the correct
-# runtime constant here. See docs/databricks-dbu-pricing-refresh.md.
+# runtime constant here. Keep this in sync with the manual refresh notes in
+# docs/databricks-dbu-pricing-refresh.md if Databricks changes the multiplier.
 PHOTON_JOBS_MULTIPLIER = 2.5
 PlacementLookupKey = tuple[str, str, str | None]
 MetricsLookupKey = tuple[str, str]
@@ -493,6 +494,8 @@ def _cost_filter_message(
     min_performance: float | None,
 ) -> str | None:
     display_price = effective_price_usd(candidate)
+    if max_price is not None and candidate.compute_price_usd is not None and display_price is None:
+        return f"Filtered {candidate.vm_size} in {candidate.region}: Databricks total price unavailable for this SKU"
     if max_price is not None and display_price is not None and display_price > max_price:
         return f"Filtered {candidate.vm_size} in {candidate.region}: price ${display_price:.4f} > ${max_price} max"
     if max_eviction is not None and candidate.eviction_rate is not None and candidate.eviction_rate > max_eviction:

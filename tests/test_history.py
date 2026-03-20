@@ -12,6 +12,7 @@ from spotvm.config import ToolConfig
 from spotvm.history import (
     HistoricalSnapshotError,
     RunSnapshot,
+    _run_snapshot_from_payload,
     analyze_history,
     generate_history_csv,
     load_historical_runs,
@@ -117,7 +118,7 @@ def test_save_run_results_wraps_json_serialization_type_error(
 
     monkeypatch.setattr("spotvm.history.json.dumps", raising_dump)
 
-    with pytest.raises(ValueError, match="Failed to serialize historical run snapshot"):
+    with pytest.raises(ValueError, match=r"Failed to serialize historical run snapshot.*not serializable"):
         save_run_results(sample_candidates, sample_config, temp_results_dir)
 
     assert list((temp_results_dir / "runs").glob("*.json")) == []
@@ -199,7 +200,7 @@ def test_load_historical_runs_skips_invalid_snapshot_shape(temp_results_dir, sam
         snapshots = load_historical_runs(temp_results_dir)
 
     assert len(snapshots) == 1
-    assert "Failed to load historical run" in caplog.text
+    assert "invalid snapshot payload" in caplog.text
 
 
 def test_load_historical_runs_skips_top_level_array_snapshot(
@@ -213,7 +214,7 @@ def test_load_historical_runs_skips_top_level_array_snapshot(
         snapshots = load_historical_runs(temp_results_dir)
 
     assert len(snapshots) == 1
-    assert "Failed to load historical run" in caplog.text
+    assert "invalid snapshot payload" in caplog.text
 
 
 def test_load_historical_runs_skips_unreadable_file(
@@ -236,7 +237,34 @@ def test_load_historical_runs_skips_unreadable_file(
         snapshots = load_historical_runs(temp_results_dir)
 
     assert len(snapshots) == 1
-    assert "Failed to load historical run" in caplog.text
+    assert "read error" in caplog.text
+
+
+def test_run_snapshot_from_payload_rejects_non_mapping_payload():
+    with pytest.raises(HistoricalSnapshotError, match="snapshot payload must be an object"):
+        _run_snapshot_from_payload([1, 2, 3])
+
+
+def test_run_snapshot_from_payload_rejects_non_string_timestamp():
+    with pytest.raises(HistoricalSnapshotError, match="timestamp must be a string"):
+        _run_snapshot_from_payload(
+            {
+                "timestamp": 123,
+                "config": {},
+                "candidates": [],
+            }
+        )
+
+
+def test_run_snapshot_from_payload_rejects_non_list_candidates():
+    with pytest.raises(HistoricalSnapshotError, match="candidates must be a list"):
+        _run_snapshot_from_payload(
+            {
+                "timestamp": "2026-03-20T10:00:00Z",
+                "config": {},
+                "candidates": {},
+            }
+        )
 
 
 def test_generate_history_csv_creates_file(temp_results_dir, sample_candidates, sample_config):

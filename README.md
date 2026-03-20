@@ -204,7 +204,7 @@ uv run spotvm \
   --include-databricks-cost
 ```
 
-- `--include-databricks-cost` enables optional Databricks cost fields in JSON/CSV/table output when candidate rows carry catalog metadata.
+- `--include-databricks-cost` enables optional Databricks cost fields in JSON/CSV/table output. Databricks-specific columns appear in this mode, and unmatched SKUs keep empty Databricks cells plus an explanatory note.
 - `--include-photon-cost` requires `--include-databricks-cost`.
 - `--refresh-databricks-catalog` prints the manual refresh procedure and exits. It does not fetch or rewrite pricing data automatically.
 
