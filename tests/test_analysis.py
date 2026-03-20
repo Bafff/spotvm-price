@@ -6,13 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from spotvm.analysis import (
-    _parse_catalog_timestamp,
-    enrich_with_databricks_cost,
-    merge_datasets,
-    rank_candidates,
-    summarize_top_candidates,
-)
+from spotvm.analysis import enrich_with_databricks_cost, merge_datasets, rank_candidates, summarize_top_candidates
 from spotvm.databricks_catalog import DatabricksCatalogError
 from spotvm.models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
 
@@ -461,10 +455,11 @@ def test_enrich_with_databricks_cost_warns_when_catalog_entry_lacks_dbu_rate(mon
     assert "Standard_D4ds_v5" in caplog.text
 
 
-def test_parse_catalog_timestamp_assumes_utc_for_naive_input():
-    parsed = _parse_catalog_timestamp("2026-03-19T00:00:00")
+def test_enrich_with_databricks_cost_short_circuits_empty_candidate_list(monkeypatch):
+    load_catalog = pytest.fail
+    monkeypatch.setattr("spotvm.analysis.load_catalog", load_catalog)
 
-    assert parsed == datetime(2026, 3, 19, 0, 0, tzinfo=timezone.utc)
+    assert enrich_with_databricks_cost([], include_photon=False) == []
 
 
 def test_enrich_with_databricks_cost_uses_csv_refresh_timestamp(monkeypatch):

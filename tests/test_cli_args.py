@@ -359,6 +359,13 @@ class TestBuildParser:
         assert "next three distinct" in help_text
         assert "specs database" in help_text
 
+    def test_help_describes_databricks_aware_max_price_filtering(self):
+        parser = build_parser()
+        help_text = " ".join(parser.format_help().split())
+
+        assert "--max-price" in help_text
+        assert "combined VM + Databricks hourly cost" in help_text
+
     def test_help_describes_effective_desired_count_default(self):
         parser = build_parser()
         help_text = " ".join(parser.format_help().split())

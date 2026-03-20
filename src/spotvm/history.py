@@ -93,7 +93,9 @@ def load_historical_runs(
     Returns:
         List of RunSnapshot objects, sorted by timestamp (oldest first)
     """
-    snapshots, _skipped_files = _load_historical_runs_with_skipped_count(results_dir, depth)
+    snapshots, skipped_files = _load_historical_runs_with_skipped_count(results_dir, depth)
+    if skipped_files > 0:
+        logger.warning("Skipped %d invalid historical run file(s)", skipped_files)
     return snapshots
 
 

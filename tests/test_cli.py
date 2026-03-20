@@ -10,6 +10,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import spotvm.cli as cli
 from spotvm.cli import (
     AnalysisRunRequest,
@@ -17,6 +19,7 @@ from spotvm.cli import (
     _build_ranked_candidates,
     _emit_report_if_requested,
     _fetch_analysis_inputs,
+    _json_serializer,
     _persist_analysis_outputs,
     _prepare_analysis_execution,
     _render_analysis_results,
@@ -54,6 +57,11 @@ def _analysis_args(**overrides):
     }
     defaults.update(overrides)
     return AnalysisRunRequest(**defaults)
+
+
+def test_json_serializer_raises_for_unknown_type():
+    with pytest.raises(TypeError, match="Object of type object is not JSON serializable"):
+        _json_serializer(object())
 
 
 def _historical_metric(
@@ -229,7 +237,7 @@ class TestMainWithMocks:
 
     @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 1)
     @patch("spotvm.cli.signal.signal")
-    def test_run_unattended_monitoring_treats_azure_http_errors_as_non_fatal(
+    def test_run_unattended_monitoring_counts_azure_http_errors_toward_stop_threshold(
         self,
         mock_signal,
         capsys,
@@ -237,13 +245,8 @@ class TestMainWithMocks:
         logger = MagicMock()
         request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
-        run_single_analysis = MagicMock(
-            side_effect=[
-                AzureHttpError("https://example.test", 429, "busy"),
-                RuntimeError("boom"),
-            ]
-        )
-        should_stop_calls = iter([False, False, False])
+        run_single_analysis = MagicMock(side_effect=AzureHttpError("https://example.test", 429, "busy"))
+        should_stop_calls = iter([False, False])
 
         def should_stop() -> bool:
             return next(should_stop_calls)
@@ -260,18 +263,18 @@ class TestMainWithMocks:
         )
 
         assert rc == 1
-        assert run_single_analysis.call_count == 2
+        assert run_single_analysis.call_count == 1
         mock_signal.assert_called()
-        logger.exception.assert_called_once()
+        logger.exception.assert_not_called()
         logger.error.assert_any_call(
             "Azure API request failed: Azure API request failed (429) for https://example.test: busy"
         )
         logger.error.assert_any_call(
-            "Stopping unattended mode after %d consecutive unexpected errors",
+            "Stopping unattended mode after %d consecutive Azure API errors",
             1,
         )
         captured = capsys.readouterr()
-        assert "Stopping monitoring after 1 consecutive unexpected errors" in captured.out
+        assert "Stopping monitoring after 1 consecutive Azure API errors" in captured.out
 
     @patch("spotvm.cli.signal.signal")
     def test_run_unattended_monitoring_returns_zero_after_single_success_when_stop_requested(
@@ -340,7 +343,7 @@ class TestMainWithMocks:
         assert "Stopping monitoring after 2 consecutive unexpected errors" in captured.out
 
     @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 2)
-    def test_run_unattended_iteration_resets_error_count_after_azure_http_error(self):
+    def test_run_unattended_iteration_counts_azure_http_errors_toward_stop_threshold(self):
         logger = MagicMock()
         request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
@@ -355,13 +358,16 @@ class TestMainWithMocks:
             emit=_stdout_emitter,
         )
 
-        assert unexpected_error_count == 0
-        assert exit_code is None
+        assert unexpected_error_count == 2
+        assert exit_code == 1
         logger.exception.assert_not_called()
-        logger.error.assert_called_once_with(
+        logger.error.assert_any_call(
             "Azure API request failed: Azure API request failed (429) for https://example.test: busy"
         )
-        logger.info.assert_called_once_with("Continuing despite error...")
+        logger.error.assert_any_call(
+            "Stopping unattended mode after %d consecutive Azure API errors",
+            2,
+        )
 
     @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 2)
     def test_run_unattended_iteration_counts_databricks_catalog_errors_toward_stop_threshold(self):
@@ -730,6 +736,31 @@ class TestMainWithMocks:
         )
 
         cli.refresh_databricks_catalog_cache.assert_called_once_with()
+
+    def test_build_ranked_candidates_continues_without_databricks_overlay_on_catalog_error(self, monkeypatch):
+        monkeypatch.setattr("spotvm.cli.refresh_databricks_catalog_cache", MagicMock())
+        warning_logger = MagicMock()
+        monkeypatch.setattr("spotvm.cli.logger", warning_logger)
+        monkeypatch.setattr(
+            "spotvm.cli.enrich_with_databricks_cost",
+            MagicMock(side_effect=DatabricksCatalogError("broken catalog")),
+        )
+
+        ranked = _build_ranked_candidates(
+            placement_scores=[],
+            historical_metrics=[_historical_metric("Standard_D4s_v4", price_usd=0.05, eviction_rate=5.0)],
+            request=_analysis_args(),
+            config=ToolConfig(
+                regions=["centralus"],
+                sizes=["Standard_D4s_v4"],
+                include_databricks_cost=True,
+            ),
+        )
+
+        assert [candidate.vm_size for candidate in ranked] == ["Standard_D4s_v4"]
+        assert ranked[0].price_usd == 0.05
+        assert ranked[0].total_price_usd is None
+        warning_logger.warning.assert_called_once()
 
     def test_explicit_sizes_bypass_bounded_hardware_window(self, monkeypatch, capsys):
         _stub_analysis_fetches(

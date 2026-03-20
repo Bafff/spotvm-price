@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from datetime import datetime, timezone
 
 from .databricks_catalog import (
-    DatabricksCatalogError,
     load_azure_dbu_pricing_last_updated,
     load_catalog,
     lookup_azure_node_type_pricing,
@@ -22,8 +20,8 @@ from .vm_specs import (
 logger = logging.getLogger("spotvm")
 
 PLACEMENT_ORDER = {"high": 3, "medium": 2, "low": 1}
-# Extracted from Databricks UI performance multipliers for Standard Jobs Photon.
-STANDARD_JOBS_PHOTON_MULTIPLIER = 2.5
+# Extracted from Databricks UI performance multipliers for Photon Jobs compute.
+PHOTON_JOBS_MULTIPLIER = 2.5
 PlacementLookupKey = tuple[str, str, str | None]
 MetricsLookupKey = tuple[str, str]
 RankSortKey = tuple[int, float, float]
@@ -170,12 +168,12 @@ def enrich_with_databricks_cost(
         candidate.databricks_catalog_updated = catalog_updated
 
         # When Photon is enabled for a capable node, the Photon DBU cost
-        # (base * 2.5x multiplier) replaces the standard DBU cost in
+        # (base * 2.5x multiplier for Photon Jobs compute) replaces the standard DBU cost in
         # total_price_usd — Photon is an alternative compute tier, not an
         # additive surcharge.
         databricks_cost = candidate.databricks_dbu_cost_usd
         if include_photon and row.photon_capable:
-            candidate.databricks_photon_dbu_per_hour = row.dbu_per_hour * STANDARD_JOBS_PHOTON_MULTIPLIER
+            candidate.databricks_photon_dbu_per_hour = row.dbu_per_hour * PHOTON_JOBS_MULTIPLIER
             candidate.databricks_photon_cost_usd = candidate.databricks_photon_dbu_per_hour * photon_dbu_unit_price
             databricks_cost = candidate.databricks_photon_cost_usd
 
@@ -196,20 +194,6 @@ def enrich_with_databricks_cost(
         )
 
     return candidates
-
-
-def _parse_catalog_timestamp(value: str) -> datetime:
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise _invalid_catalog_timestamp(value) from exc
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed
-
-
-def _invalid_catalog_timestamp(value: object) -> DatabricksCatalogError:
-    return DatabricksCatalogError(f"Invalid Databricks catalog captured_at timestamp: {value!r}")
 
 
 def _append_note(existing: str | None, note: str) -> str:

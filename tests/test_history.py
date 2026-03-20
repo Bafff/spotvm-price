@@ -167,6 +167,19 @@ def test_load_historical_runs_skips_malformed_json_file(temp_results_dir, sample
     assert "Failed to load historical run" in caplog.text
 
 
+def test_load_historical_runs_reports_aggregate_skipped_file_count(
+    temp_results_dir, sample_candidates, sample_config, caplog
+):
+    save_run_results(sample_candidates, sample_config, temp_results_dir)
+    (temp_results_dir / "runs" / "broken.json").write_text("{not-valid-json", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="spotvm"):
+        snapshots = load_historical_runs(temp_results_dir)
+
+    assert len(snapshots) == 1
+    assert "Skipped 1 invalid historical run file(s)" in caplog.text
+
+
 def test_load_historical_runs_skips_invalid_snapshot_shape(temp_results_dir, sample_candidates, sample_config, caplog):
     save_run_results(sample_candidates, sample_config, temp_results_dir)
     bad_path = temp_results_dir / "runs" / "invalid-shape.json"

@@ -40,6 +40,8 @@ from .reporting import RenderOptions, export_to_csv, initialize_color_output, re
 from .resource_graph import ResourceGraphRequest, fetch_historical_metrics
 from .vm_specs import discover_skus
 
+logger = logging.getLogger("spotvm")
+
 
 @dataclass(frozen=True)
 class AnalysisRunRequest:
@@ -233,7 +235,10 @@ def _add_filtering_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--max-price",
         type=float,
-        help="Maximum acceptable price per hour in USD (e.g., 0.10 for $0.10/hr)",
+        help=(
+            "Maximum acceptable hourly price in USD "
+            "(uses combined VM + Databricks hourly cost when --include-databricks-cost is enabled)"
+        ),
     )
     parser.add_argument(
         "--max-eviction",
@@ -568,9 +573,20 @@ def _run_unattended_iteration(
             logger=logger,
         )
     except AzureHttpError as exc:
+        unexpected_error_count += 1
         logger.error(f"Azure API request failed: {exc}")  # noqa: TRY400 - traceback is noise for API failures
+        if unexpected_error_count >= config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES:
+            logger.error(  # noqa: TRY400 - stop condition is a state transition, not an exception report
+                "Stopping unattended mode after %d consecutive Azure API errors",
+                config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES,
+            )
+            emit(
+                f"\n{'[x]' if request.no_color else '❌'} Stopping monitoring after "
+                f"{config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES} consecutive Azure API errors."
+            )
+            return unexpected_error_count, 1
         logger.info("Continuing despite error...")
-        return 0, None
+        return unexpected_error_count, None
     except DatabricksCatalogError as exc:
         unexpected_error_count += 1
         logger.error(  # noqa: TRY400 - catalog failures are user-facing and do not need tracebacks
@@ -802,10 +818,13 @@ def _build_ranked_candidates(
     )
     if config.include_databricks_cost:
         refresh_databricks_catalog_cache()
-        candidates = enrich_with_databricks_cost(
-            candidates,
-            include_photon=config.include_photon_cost,
-        )
+        try:
+            candidates = enrich_with_databricks_cost(
+                candidates,
+                include_photon=config.include_photon_cost,
+            )
+        except DatabricksCatalogError as exc:
+            logger.warning("Databricks cost overlay unavailable; continuing with Azure-only pricing: %s", exc)
 
     ranked = rank_candidates(candidates)
     ranked = enrich_with_performance(ranked, config.baseline_sku)
@@ -1105,7 +1124,13 @@ def _merge_notes(*notes: Any) -> Any:
 def _json_serializer(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat(timespec="seconds")
-    return value
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise _unsupported_json_type_error(value)
+
+
+def _unsupported_json_type_error(value: Any) -> TypeError:
+    return TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 if __name__ == "__main__":

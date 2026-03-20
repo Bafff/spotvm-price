@@ -94,6 +94,19 @@ class DatabricksCatalog:
     source: Mapping[str, str]
     entries: tuple[DatabricksCatalogEntry, ...]
 
+    def __post_init__(self) -> None:
+        if self.catalog_version <= 0:
+            raise ValueError("catalog_version must be positive")
+        if not self.cloud:
+            raise ValueError("cloud must be non-empty")
+        if not self.captured_at:
+            raise ValueError("captured_at must be non-empty")
+        sorted_skus = tuple(entry.sku for entry in self.entries)
+        if sorted_skus != tuple(sorted(sorted_skus)):
+            raise ValueError("entries must be sorted by sku")
+        if len(sorted_skus) != len(set(sorted_skus)):
+            raise ValueError("entries must not contain duplicate sku values")
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "catalog_version": self.catalog_version,
@@ -206,7 +219,7 @@ def refresh_catalog_instructions() -> str:
         "1. Open any Databricks workspace in Chrome DevTools.\n"
         "2. Open the Console tab.\n"
         "3. Run JSON.stringify(window.settings['defaultNodeTypeToPricingUnitsMap']).\n"
-        "4. Save the extracted Azure node-type DBU data as src/spotvm/data/databricks_azure_dbu_pricing.csv.\n"
+        "4. Convert the extracted JSON map into the CSV layout at src/spotvm/data/databricks_azure_dbu_pricing.csv.\n"
         "5. See docs/databricks-dbu-pricing-refresh.md for the full procedure and multiplier notes."
     )
 

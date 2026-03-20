@@ -30,6 +30,7 @@ def test_refresh_catalog_instructions_reference_manual_devtools_workflow():
     assert "Chrome DevTools" in instructions
     assert "window.settings['defaultNodeTypeToPricingUnitsMap']" in instructions
     assert "src/spotvm/data/databricks_azure_dbu_pricing.csv" in instructions
+    assert "convert" in instructions.lower()
     assert "manual" in instructions.lower()
 
 

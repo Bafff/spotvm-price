@@ -6,6 +6,7 @@ import pytest
 
 from spotvm.databricks_catalog import (
     AzureNodeTypePricingRow,
+    DatabricksCatalog,
     DatabricksCatalogEntry,
     DatabricksCatalogError,
     DatabricksPricingProfile,
@@ -193,6 +194,36 @@ def test_databricks_pricing_profile_requires_non_empty_name():
 def test_databricks_catalog_entry_validates_positive_dbu_rates():
     with pytest.raises(ValueError, match="dbu_per_hour must be positive"):
         DatabricksCatalogEntry(sku="Standard_D4ps_v6", dbu_per_hour=0.0)
+
+
+def test_databricks_catalog_requires_sorted_unique_entries():
+    pricing_profile = DatabricksPricingProfile(
+        name="standard_jobs",
+        dbu_unit_price_usd=0.15,
+        photon_dbu_unit_price_usd=0.15,
+    )
+    entry_a = DatabricksCatalogEntry(sku="Standard_A2", dbu_per_hour=1.0)
+    entry_b = DatabricksCatalogEntry(sku="Standard_A1", dbu_per_hour=1.0)
+
+    with pytest.raises(ValueError, match="entries must be sorted by sku"):
+        DatabricksCatalog(
+            catalog_version=1,
+            cloud="azure",
+            pricing_profile=pricing_profile,
+            captured_at="2026-03-19T00:00:00Z",
+            source={},
+            entries=(entry_a, entry_b),
+        )
+
+    with pytest.raises(ValueError, match="entries must not contain duplicate sku values"):
+        DatabricksCatalog(
+            catalog_version=1,
+            cloud="azure",
+            pricing_profile=pricing_profile,
+            captured_at="2026-03-19T00:00:00Z",
+            source={},
+            entries=(entry_a, DatabricksCatalogEntry(sku="Standard_A2", dbu_per_hour=2.0)),
+        )
 
 
 @pytest.mark.parametrize(
