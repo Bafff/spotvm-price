@@ -36,6 +36,25 @@ def test_enrich_with_performance_marks_heuristic_fallback_when_coremark_missing(
     assert "CoreMark" in enriched.performance_note
 
 
+def test_enrich_with_performance_uses_effective_total_price_for_price_performance():
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4s_v4",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.05,
+        total_price_usd=0.20,
+        price_last_updated=datetime(2025, 1, 25, 14, 0),
+        eviction_rate=2.0,
+        eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+    )
+
+    [enriched] = enrich_with_performance([candidate], baseline_sku="Standard_D4s_v5")
+
+    assert enriched.performance_relative == pytest.approx(100.0)
+    assert enriched.price_per_performance == pytest.approx(0.0020)
+
+
 def test_calculate_relative_performance_details_prefers_coremark_basis():
     perf, basis = calculate_relative_performance_details("Standard_D4as_v5", "Standard_D4s_v5")
 

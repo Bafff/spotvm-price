@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import math
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -41,6 +43,24 @@ def test_load_catalog_exposes_stable_metadata_shape():
 
 def test_load_catalog_source_is_immutable_mapping():
     catalog = load_catalog()
+
+    with pytest.raises(TypeError):
+        catalog.source["extra"] = "value"
+
+
+def test_direct_databricks_catalog_constructor_wraps_source_as_immutable_mapping():
+    catalog = DatabricksCatalog(
+        catalog_version=1,
+        cloud="azure",
+        pricing_profile=DatabricksPricingProfile(
+            name="standard_jobs",
+            dbu_unit_price_usd=0.15,
+            photon_dbu_unit_price_usd=0.15,
+        ),
+        captured_at="2026-03-19T00:00:00Z",
+        source={"type": "manual"},
+        entries=(),
+    )
 
     with pytest.raises(TypeError):
         catalog.source["extra"] = "value"
@@ -396,6 +416,41 @@ def test_load_azure_dbu_pricing_rows_accepts_lowercase_boolean_values(tmp_path, 
 
     assert rows[0].photon_capable is True
     assert rows[0].deprecated is False
+
+
+def test_load_azure_dbu_pricing_rows_rejects_invalid_boolean_values(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "databricks_azure_dbu_pricing.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "node_type_id,category,num_cores,memory_gb,dbu_per_hour,local_disk_gb,num_gpus,photon_capable,deprecated",
+                "Standard_D4ds_v5,General Purpose,4,16.0,1.0,150,0,yes,False",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("spotvm.databricks_catalog.resources.files", lambda _pkg: tmp_path)
+    import spotvm.databricks_catalog as databricks_catalog
+
+    databricks_catalog._load_azure_dbu_pricing_rows.cache_clear()
+    databricks_catalog._azure_dbu_pricing_index.cache_clear()
+
+    with pytest.raises(DatabricksCatalogError, match="expected True or False"):
+        load_azure_dbu_pricing_rows()
+
+
+def test_load_azure_dbu_pricing_last_updated_uses_catalog_captured_at(monkeypatch):
+    monkeypatch.setattr(
+        "spotvm.databricks_catalog.load_catalog",
+        lambda: SimpleNamespace(captured_at=datetime(2026, 3, 19, 12, 0, tzinfo=timezone.utc)),
+    )
+
+    from spotvm.databricks_catalog import load_azure_dbu_pricing_last_updated
+
+    assert load_azure_dbu_pricing_last_updated() == datetime(2026, 3, 19, 12, 0, tzinfo=timezone.utc)
 
 
 def test_load_azure_dbu_pricing_rows_warns_when_no_usable_rows_loaded(tmp_path, monkeypatch, caplog):

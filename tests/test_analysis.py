@@ -217,7 +217,7 @@ def test_enrich_with_databricks_cost_populates_cost_fields(monkeypatch):
     assert enriched.databricks_catalog_updated == datetime(2026, 3, 20, 8, 30, tzinfo=timezone.utc)
 
 
-def test_enrich_with_databricks_cost_adds_jobs_photon_surcharge(monkeypatch):
+def test_enrich_with_databricks_cost_applies_photon_jobs_rate(monkeypatch):
     candidate = CandidateInsight(
         region="centralus",
         vm_size="Standard_D4ds_v5",

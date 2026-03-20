@@ -108,7 +108,7 @@ class DatabricksCatalog:
     catalog_version: int
     cloud: str
     pricing_profile: DatabricksPricingProfile
-    captured_at: str
+    captured_at: datetime
     source: Mapping[str, str]
     entries: tuple[DatabricksCatalogEntry, ...]
 
@@ -117,12 +117,12 @@ class DatabricksCatalog:
             raise ValueError("catalog_version must be positive")
         if not self.cloud:
             raise ValueError("cloud must be non-empty")
-        if not self.captured_at:
+        normalized_captured_at = _coerce_catalog_timestamp(self.captured_at)
+        object.__setattr__(self, "captured_at", normalized_captured_at)
+        normalized_source = MappingProxyType({str(key): str(value) for key, value in self.source.items()})
+        object.__setattr__(self, "source", normalized_source)
+        if not normalized_captured_at:
             raise ValueError("captured_at must be non-empty")
-        try:
-            datetime.fromisoformat(self.captured_at.replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise ValueError("captured_at must be a valid ISO 8601 timestamp") from exc
         sorted_skus = tuple(entry.sku for entry in self.entries)
         if sorted_skus != tuple(sorted(sorted_skus)):
             raise ValueError("entries must be sorted by sku")
@@ -134,7 +134,7 @@ class DatabricksCatalog:
             "catalog_version": self.catalog_version,
             "cloud": self.cloud,
             "pricing_profile": asdict(self.pricing_profile),
-            "captured_at": self.captured_at,
+            "captured_at": _format_catalog_timestamp(self.captured_at),
             "source": dict(self.source),
             "entries": [asdict(entry) for entry in self.entries],
         }
@@ -162,13 +162,7 @@ def load_azure_dbu_pricing_rows() -> list[AzureNodeTypePricingRow]:
 
 
 def load_azure_dbu_pricing_last_updated() -> datetime:
-    resource = resources.files("spotvm").joinpath("data/databricks_azure_dbu_pricing.csv")
-    with resources.as_file(resource) as path:
-        try:
-            modified_at = path.stat().st_mtime
-        except OSError as exc:
-            raise DatabricksCatalogError("Failed to inspect vendored Azure DBU pricing CSV") from exc
-    return datetime.fromtimestamp(modified_at, tz=timezone.utc)
+    return load_catalog().captured_at
 
 
 @cache
@@ -238,8 +232,8 @@ def refresh_databricks_catalog_cache() -> None:
 def refresh_catalog_instructions() -> str:
     return (
         "Manual refresh only.\n"
-        "1. Open any Databricks workspace in Chrome DevTools.\n"
-        "2. Open the Console tab.\n"
+        "1. Open any Databricks workspace.\n"
+        "2. Open Chrome DevTools and switch to the Console tab.\n"
         "3. Run JSON.stringify(window.settings['defaultNodeTypeToPricingUnitsMap']).\n"
         "4. Convert the extracted JSON map into the CSV layout at src/spotvm/data/databricks_azure_dbu_pricing.csv.\n"
         "5. See docs/databricks-dbu-pricing-refresh.md for the full procedure and multiplier notes."
@@ -292,6 +286,7 @@ def _catalog_from_payload(payload: dict[str, Any]) -> DatabricksCatalog:
     catalog_version_int = _int_value(catalog_version, context="Databricks catalog catalog_version")
     cloud_text = _string_value(cloud, context="Databricks catalog cloud")
     captured_at_text = _string_value(captured_at, context="Databricks catalog captured_at")
+    captured_at_timestamp = _coerce_catalog_timestamp(captured_at_text)
 
     seen_skus: set[str] = set()
     entries: list[DatabricksCatalogEntry] = []
@@ -332,10 +327,28 @@ def _catalog_from_payload(payload: dict[str, Any]) -> DatabricksCatalog:
             dbu_unit_price_usd=dbu_unit_price_usd,
             photon_dbu_unit_price_usd=photon_dbu_unit_price_usd,
         ),
-        captured_at=captured_at_text,
-        source=MappingProxyType({str(key): str(value) for key, value in source.items()}),
+        captured_at=captured_at_timestamp,
+        source=source,
         entries=tuple(entries),
     )
+
+
+def _coerce_catalog_timestamp(value: datetime | str) -> datetime:
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    if not value:
+        raise ValueError("captured_at must be non-empty")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("captured_at must be a valid ISO 8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _format_catalog_timestamp(value: datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
 
 
 def _optional_str(value: str | None) -> str | None:

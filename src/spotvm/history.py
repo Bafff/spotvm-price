@@ -141,7 +141,7 @@ def _missing_snapshot_field(key: str) -> HistoricalSnapshotError:
 
 
 def _csv_value(candidate: dict[str, Any], key: str) -> Any:
-    """Return the candidate value for *key*, falling back to ``""`` for ``None``."""
+    """Return the candidate value for *key*, falling back to ``""`` for missing keys or ``None``."""
     value = candidate.get(key)
     if value is None:
         return ""

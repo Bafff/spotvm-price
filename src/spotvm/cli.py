@@ -31,7 +31,7 @@ from .config import (
     load_config_file,
     merge_cli_overrides,
 )
-from .databricks_catalog import DatabricksCatalogError, refresh_catalog_instructions, refresh_databricks_catalog_cache
+from .databricks_catalog import DatabricksCatalogError, refresh_catalog_instructions
 from .http_client import AzureHttpError, AzureRestClient
 from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
 from .placement_score import PlacementScoreRequest, fetch_placement_scores
@@ -573,20 +573,9 @@ def _run_unattended_iteration(
             logger=logger,
         )
     except AzureHttpError as exc:
-        unexpected_error_count += 1
         logger.error(f"Azure API request failed: {exc}")  # noqa: TRY400 - traceback is noise for API failures
-        if unexpected_error_count >= config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES:
-            logger.error(  # noqa: TRY400 - stop condition is a state transition, not an exception report
-                "Stopping unattended mode after %d consecutive Azure API errors",
-                config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES,
-            )
-            emit(
-                f"\n{'[x]' if request.no_color else '❌'} Stopping monitoring after "
-                f"{config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES} consecutive Azure API errors."
-            )
-            return unexpected_error_count, 1
         logger.info("Continuing despite error...")
-        return unexpected_error_count, None
+        return 0, None
     except DatabricksCatalogError as exc:
         unexpected_error_count += 1
         logger.error(  # noqa: TRY400 - catalog failures are user-facing and do not need tracebacks
@@ -817,13 +806,17 @@ def _build_ranked_candidates(
         no_max_limit=effective_no_max_limit,
     )
     if config.include_databricks_cost:
-        refresh_databricks_catalog_cache()
         try:
             candidates = enrich_with_databricks_cost(
                 candidates,
                 include_photon=config.include_photon_cost,
             )
         except DatabricksCatalogError as exc:
+            for candidate in candidates:
+                candidate.notes = _append_output_note(
+                    candidate.notes,
+                    "Databricks cost overlay unavailable; Azure-only pricing shown.",
+                )
             logger.warning("Databricks cost overlay unavailable; continuing with Azure-only pricing: %s", exc)
 
     ranked = rank_candidates(candidates)
@@ -839,6 +832,14 @@ def _build_ranked_candidates(
     if config.result_limit:
         ranked = ranked[: config.result_limit]
     return ranked
+
+
+def _append_output_note(existing: str | None, note: str) -> str:
+    if existing is None or existing == "":
+        return note
+    if note in existing:
+        return existing
+    return f"{existing}; {note}"
 
 
 def _run_single_analysis(

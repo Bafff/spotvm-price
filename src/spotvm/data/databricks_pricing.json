@@ -28,13 +28,11 @@
     {
       "sku": "Standard_D8plds_v6",
       "dbu_per_hour": 2.34,
-      "photon_dbu_per_hour": 2.34,
       "notes": ""
     },
     {
       "sku": "Standard_D8pls_v6",
       "dbu_per_hour": 2.34,
-      "photon_dbu_per_hour": 2.34,
       "notes": ""
     },
     {

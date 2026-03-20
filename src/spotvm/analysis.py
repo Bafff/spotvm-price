@@ -21,6 +21,7 @@ logger = logging.getLogger("spotvm")
 
 PLACEMENT_ORDER = {"high": 3, "medium": 2, "low": 1}
 # Extracted from Databricks UI performance multipliers for Photon Jobs compute.
+# See docs/databricks-dbu-pricing-refresh.md for the manual refresh workflow.
 PHOTON_JOBS_MULTIPLIER = 2.5
 PlacementLookupKey = tuple[str, str, str | None]
 MetricsLookupKey = tuple[str, str]
