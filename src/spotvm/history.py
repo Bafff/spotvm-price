@@ -140,6 +140,10 @@ def _missing_snapshot_field(key: str) -> HistoricalSnapshotError:
     return HistoricalSnapshotError(f"{key} is missing")
 
 
+def _all_historical_runs_failed() -> HistoricalSnapshotError:
+    return HistoricalSnapshotError("All historical run files failed to load")
+
+
 def _csv_value(candidate: dict[str, Any], key: str) -> Any:
     """Return the candidate value for *key*, falling back to ``""`` for missing keys or ``None``."""
     value = candidate.get(key)
@@ -273,5 +277,8 @@ def _load_historical_runs_with_skipped_count(
             skipped_files += 1
             logger.warning("Failed to load historical run %s: %s", filepath, exc)
             continue
+
+    if skipped_files > 0 and not snapshots:
+        raise _all_historical_runs_failed()
 
     return snapshots, skipped_files

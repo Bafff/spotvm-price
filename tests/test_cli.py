@@ -34,6 +34,7 @@ from spotvm.cli import (
 )
 from spotvm.config import ToolConfig
 from spotvm.databricks_catalog import DatabricksCatalogError
+from spotvm.history import HistoricalSnapshotError
 from spotvm.http_client import AzureHttpError
 from spotvm.models import CandidateInsight, HistoricalMetrics
 from spotvm.placement_score import PlacementScoreRequest
@@ -169,7 +170,7 @@ class TestMainWithMocks:
         assert kwargs["depth"] == 7
         assert kwargs["history_output"] == history_output
 
-    @patch("spotvm.history.analyze_history", return_value=(3, 9, Path("/tmp/history.csv"), 1))
+    @patch("spotvm.history.analyze_history")
     def test_run_history_analysis_uses_default_output_path_and_prints_summary(
         self,
         mock_analyze_history,
@@ -177,7 +178,10 @@ class TestMainWithMocks:
         capsys,
     ):
         results_dir = tmp_path / "results"
+        csv_path = tmp_path / "history.csv"
+        csv_path.write_text("timestamp\n", encoding="utf-8")
         logger = MagicMock()
+        mock_analyze_history.return_value = (3, 9, csv_path, 1)
 
         rc = _run_history_analysis(
             results_dir=results_dir,
@@ -199,7 +203,58 @@ class TestMainWithMocks:
         assert "Runs analyzed: 3" in captured.out
         assert "Data points: 9" in captured.out
         assert "Skipped invalid files: 1" in captured.out
-        assert "Python: pd.read_csv('/tmp/history.csv')" in captured.out
+        assert f"Python: pd.read_csv('{csv_path}')" in captured.out
+
+    @patch("spotvm.history.analyze_history")
+    def test_run_history_analysis_reports_when_no_csv_was_created(
+        self,
+        mock_analyze_history,
+        tmp_path,
+        capsys,
+    ):
+        results_dir = tmp_path / "results"
+        missing_csv = tmp_path / "missing-history.csv"
+        logger = MagicMock()
+        mock_analyze_history.return_value = (0, 0, missing_csv, 0)
+
+        rc = _run_history_analysis(
+            results_dir=results_dir,
+            depth=None,
+            history_output=None,
+            logger=logger,
+            emit=_stdout_emitter,
+        )
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "CSV output: not created (no data points)" in captured.out
+        assert "pd.read_csv" not in captured.out
+
+    @patch(
+        "spotvm.history.analyze_history", side_effect=HistoricalSnapshotError("All historical run files failed to load")
+    )
+    def test_run_history_analysis_returns_two_when_all_historical_runs_are_invalid(
+        self,
+        mock_analyze_history,
+        tmp_path,
+    ):
+        results_dir = tmp_path / "results"
+        logger = MagicMock()
+
+        rc = _run_history_analysis(
+            results_dir=results_dir,
+            depth=None,
+            history_output=None,
+            logger=logger,
+            emit=_stdout_emitter,
+        )
+
+        assert rc == 2
+        mock_analyze_history.assert_called_once()
+        logger.error.assert_called_once_with(
+            "Historical analysis failed: %s",
+            "All historical run files failed to load",
+        )
 
     @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 1)
     @patch("spotvm.cli.time.sleep")

@@ -734,26 +734,33 @@ def _run_history_analysis(
     logger: logging.Logger,
     emit=print,
 ) -> int:
-    from .history import analyze_history
+    from .history import HistoricalSnapshotError, analyze_history
 
     output_path = history_output or (results_dir / "history.csv")
 
     logger.info("Analyzing historical data from %s", results_dir)
-    num_runs, num_datapoints, csv_path, skipped_files = analyze_history(
-        results_dir=results_dir,
-        depth=depth,
-        output_path=output_path,
-    )
+    try:
+        num_runs, num_datapoints, csv_path, skipped_files = analyze_history(
+            results_dir=results_dir,
+            depth=depth,
+            output_path=output_path,
+        )
+    except HistoricalSnapshotError as exc:
+        logger.error("Historical analysis failed: %s", str(exc))  # noqa: TRY400 - user-facing history failure should stay concise
+        return 2
 
     emit("Historical Analysis Complete:")
     emit(f"  Runs analyzed: {num_runs}")
     emit(f"  Data points: {num_datapoints}")
     emit(f"  Skipped invalid files: {skipped_files}")
-    emit(f"  CSV output: {csv_path}")
-    emit("\nUse this CSV for visualization with tools like:")
-    emit(f"  - Excel/Google Sheets: Import {csv_path}")
-    emit(f"  - Python: pd.read_csv('{csv_path}')")
-    emit("  - Grafana: CSV data source plugin")
+    if csv_path.exists():
+        emit(f"  CSV output: {csv_path}")
+        emit("\nUse this CSV for visualization with tools like:")
+        emit(f"  - Excel/Google Sheets: Import {csv_path}")
+        emit(f"  - Python: pd.read_csv('{csv_path}')")
+        emit("  - Grafana: CSV data source plugin")
+    else:
+        emit("  CSV output: not created (no data points)")
 
     return 0
 

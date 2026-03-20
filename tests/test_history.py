@@ -10,6 +10,7 @@ import pytest
 
 from spotvm.config import ToolConfig
 from spotvm.history import (
+    HistoricalSnapshotError,
     RunSnapshot,
     analyze_history,
     generate_history_csv,
@@ -357,6 +358,18 @@ def test_analyze_history_reports_skipped_invalid_files(temp_results_dir, sample_
     assert num_datapoints == 2
     assert skipped_files == 1
     assert csv_path.exists()
+
+
+def test_analyze_history_raises_when_all_historical_runs_are_invalid(temp_results_dir):
+    runs_dir = temp_results_dir / "runs"
+    runs_dir.mkdir()
+    (runs_dir / "broken.json").write_text("{bad-json", encoding="utf-8")
+
+    with pytest.raises(HistoricalSnapshotError, match="All historical run files failed to load"):
+        analyze_history(
+            results_dir=temp_results_dir,
+            depth=None,
+        )
 
 
 def test_csv_output_format(temp_results_dir, sample_candidates, sample_config):

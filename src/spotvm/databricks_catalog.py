@@ -66,7 +66,9 @@ class DatabricksCatalogEntry:
     notes: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.sku:
+        normalized_sku = self.sku.strip()
+        object.__setattr__(self, "sku", normalized_sku)
+        if not normalized_sku:
             raise ValueError("sku must be non-empty")
         if not math.isfinite(self.dbu_per_hour):
             raise ValueError("dbu_per_hour must be finite")
@@ -232,7 +234,10 @@ def lookup_azure_node_type_pricing(node_type_id: str) -> AzureNodeTypePricingRow
 
 @cache
 def _azure_dbu_pricing_index() -> dict[str, AzureNodeTypePricingRow]:
-    return {row.node_type_id: row for row in _load_azure_dbu_pricing_rows()}
+    rows = _load_azure_dbu_pricing_rows()
+    if not rows:
+        raise DatabricksCatalogError("Loaded 0 usable Azure Databricks DBU pricing rows from vendored catalog")
+    return {row.node_type_id: row for row in rows}
 
 
 def refresh_databricks_catalog_cache() -> None:
@@ -304,9 +309,10 @@ def _catalog_from_payload(payload: dict[str, Any]) -> DatabricksCatalog:
     for raw_entry in entries_data:
         if not isinstance(raw_entry, dict):
             raise DatabricksCatalogError("Each Databricks catalog entry must be an object")
-        sku = raw_entry.get("sku")
-        if not isinstance(sku, str) or not sku:
+        raw_sku = raw_entry.get("sku")
+        if not isinstance(raw_sku, str) or not raw_sku.strip():
             raise DatabricksCatalogError("Each Databricks catalog entry requires a non-empty sku")
+        sku = raw_sku.strip()
         if sku in seen_skus:
             raise DatabricksCatalogError(f"Duplicate Databricks catalog entry for SKU: {sku}")
         seen_skus.add(sku)
@@ -326,7 +332,10 @@ def _catalog_from_payload(payload: dict[str, Any]) -> DatabricksCatalog:
                     if (photon_raw := raw_entry.get("photon_dbu_per_hour")) is not None
                     else None
                 ),
-                notes=str(raw_entry["notes"]) if raw_entry.get("notes") is not None else None,
+                notes=_string_optional_value(
+                    raw_entry.get("notes"),
+                    context=f"Databricks catalog entry for SKU {sku}.notes",
+                ),
             )
         )
     entries.sort(key=lambda entry: entry.sku)
@@ -471,6 +480,12 @@ def _string_value(value: Any, *, context: str) -> str:
     if not isinstance(value, str):
         raise DatabricksCatalogError(f"Invalid Databricks catalog value for {context}: {value!r}")
     return value
+
+
+def _string_optional_value(value: Any, *, context: str) -> str | None:
+    if value is None:
+        return None
+    return _string_value(value, context=context)
 
 
 def _pricing_profile(
