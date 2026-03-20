@@ -10,6 +10,7 @@ import pytest
 
 from spotvm.config import ToolConfig
 from spotvm.history import (
+    RunSnapshot,
     analyze_history,
     generate_history_csv,
     load_historical_runs,
@@ -249,6 +250,56 @@ def test_generate_history_csv_creates_file(temp_results_dir, sample_candidates, 
     assert rows[0]["region"] == "centralus"
     assert rows[0]["price_usd"] == "0.0336"
     assert rows[0]["eviction_rate"] == "2.5"
+
+
+def test_generate_history_csv_keeps_empty_databricks_cells_for_plain_snapshots(temp_results_dir):
+    snapshots = [
+        RunSnapshot(
+            timestamp="2026-03-20T10:00:00Z",
+            config={},
+            candidates=[
+                {
+                    "vm_size": "Standard_D4as_v5",
+                    "region": "centralus",
+                    "availability_zone": "",
+                    "price_usd": 0.0336,
+                    "eviction_rate": 2.5,
+                }
+            ],
+        ),
+        RunSnapshot(
+            timestamp="2026-03-20T11:00:00Z",
+            config={},
+            candidates=[
+                {
+                    "vm_size": "Standard_D4as_v5",
+                    "region": "centralus",
+                    "availability_zone": "",
+                    "price_usd": 0.0336,
+                    "eviction_rate": 2.5,
+                    "compute_price_usd": 0.0336,
+                    "databricks_dbu_per_hour": 1.0,
+                    "databricks_dbu_cost_usd": 0.15,
+                    "total_price_usd": 0.1836,
+                    "databricks_catalog_updated": "2026-03-19T00:00:00+00:00",
+                }
+            ],
+        ),
+    ]
+    csv_path = temp_results_dir / "history.csv"
+
+    num_points = generate_history_csv(snapshots, csv_path)
+
+    assert num_points == 2
+    with csv_path.open("r", encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+
+    assert rows[0]["compute_price_usd"] == ""
+    assert rows[0]["databricks_dbu_per_hour"] == ""
+    assert rows[0]["total_price_usd"] == ""
+    assert rows[1]["compute_price_usd"] == "0.0336"
+    assert rows[1]["databricks_dbu_per_hour"] == "1.0"
+    assert rows[1]["total_price_usd"] == "0.1836"
 
 
 def test_generate_history_csv_handles_empty(temp_results_dir):

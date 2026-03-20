@@ -27,6 +27,8 @@ class DatabricksPricingProfile:
     photon_dbu_unit_price_usd: float
 
     def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("name must be non-empty")
         if self.dbu_unit_price_usd <= 0.0:
             raise ValueError("dbu_unit_price_usd must be positive")
         if self.photon_dbu_unit_price_usd <= 0.0:
@@ -73,6 +75,12 @@ class AzureNodeTypePricingRow:
             raise ValueError("node_type_id must be non-empty")
         if self.num_cores is not None and self.num_cores <= 0:
             raise ValueError("num_cores must be positive")
+        if self.memory_gb is not None and self.memory_gb < 0.0:
+            raise ValueError("memory_gb must be non-negative")
+        if self.local_disk_gb is not None and self.local_disk_gb < 0:
+            raise ValueError("local_disk_gb must be non-negative")
+        if self.num_gpus is not None and self.num_gpus < 0:
+            raise ValueError("num_gpus must be non-negative")
         if self.dbu_per_hour is not None and self.dbu_per_hour <= 0.0:
             raise ValueError("dbu_per_hour must be positive")
 
@@ -350,12 +358,13 @@ def _optional_bool(
     parsed = _optional_str(value)
     if parsed is None:
         return None
-    if parsed == "True":
+    normalized = parsed.lower()
+    if normalized == "true":
         return True
-    if parsed == "False":
+    if normalized == "false":
         return False
     raise DatabricksCatalogError(
-        f"Invalid Azure DBU pricing CSV value at row {row_number}, column {column_name}: {parsed!r}"
+        f"Invalid Azure DBU pricing CSV value at row {row_number}, column {column_name}: {parsed!r} (expected True or False)"
     )
 
 

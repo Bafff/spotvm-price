@@ -77,3 +77,13 @@ def test_databricks_optional_fields_are_candidate_insight_attributes():
         assert field in dataclass_fields, (
             f"{field!r} listed in DATABRICKS_OPTIONAL_FIELDS but missing from CandidateInsight"
         )
+
+
+def test_candidate_insight_databricks_fields_are_listed_in_optional_fields():
+    databricks_fields = {
+        field_name
+        for field_name in CandidateInsight.__dataclass_fields__
+        if field_name.startswith("databricks_") or field_name in {"compute_price_usd", "total_price_usd"}
+    }
+
+    assert databricks_fields == set(DATABRICKS_OPTIONAL_FIELDS)

@@ -573,14 +573,14 @@ def _run_unattended_iteration(
         return 0, None
     except DatabricksCatalogError as exc:
         unexpected_error_count += 1
-        logger.error(
+        logger.error(  # noqa: TRY400 - catalog failures are user-facing and do not need tracebacks
             "Databricks pricing catalog failed (%d/%d): %s",
             unexpected_error_count,
             config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES,
             exc,
         )
         if unexpected_error_count >= config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES:
-            logger.error(
+            logger.error(  # noqa: TRY400 - stop condition is a state transition, not an exception report
                 "Stopping unattended mode after %d consecutive Databricks catalog errors",
                 config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES,
             )

@@ -119,6 +119,32 @@ def test_project_for_report_uses_total_price_when_databricks_fields_present():
     assert projected["totalPriceUSDPerHour"] == 0.2055
 
 
+def test_project_for_report_ignores_photon_fields_when_databricks_output_is_disabled():
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4s_v5",
+        placement_score="High",
+        quota_available=True,
+        price_usd=0.03,
+        price_last_updated=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        eviction_rate=5.0,
+        eviction_last_updated=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        databricks_photon_dbu_per_hour=2.5,
+        databricks_photon_cost_usd=0.375,
+    )
+
+    projected = project_for_report(
+        candidate,
+        lambda value: value.isoformat() if value else None,
+        lambda *parts: "; ".join(p for p in parts if p),
+        show_databricks=False,
+        show_photon=True,
+    )
+
+    assert "photonDBUPerHour" not in projected
+    assert "photonCostUSDPerHour" not in projected
+
+
 def test_project_for_history_serializes_databricks_catalog_updated_datetime():
     candidate = CandidateInsight(
         region="centralus",

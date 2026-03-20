@@ -5,6 +5,7 @@ import json
 import pytest
 
 from spotvm.databricks_catalog import (
+    AzureNodeTypePricingRow,
     DatabricksCatalogEntry,
     DatabricksCatalogError,
     DatabricksPricingProfile,
@@ -184,9 +185,40 @@ def test_databricks_pricing_profile_validates_positive_prices():
         DatabricksPricingProfile(name="standard_jobs", dbu_unit_price_usd=0.0, photon_dbu_unit_price_usd=0.15)
 
 
+def test_databricks_pricing_profile_requires_non_empty_name():
+    with pytest.raises(ValueError, match="name must be non-empty"):
+        DatabricksPricingProfile(name="", dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15)
+
+
 def test_databricks_catalog_entry_validates_positive_dbu_rates():
     with pytest.raises(ValueError, match="dbu_per_hour must be positive"):
         DatabricksCatalogEntry(sku="Standard_D4ps_v6", dbu_per_hour=0.0)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "expected_message"),
+    [
+        ("memory_gb", -1.0, "memory_gb must be non-negative"),
+        ("local_disk_gb", -1, "local_disk_gb must be non-negative"),
+        ("num_gpus", -1, "num_gpus must be non-negative"),
+    ],
+)
+def test_azure_node_type_pricing_row_rejects_negative_optional_capacity_fields(field_name, value, expected_message):
+    kwargs = {
+        "node_type_id": "Standard_D4ds_v5",
+        "category": "General Purpose",
+        "num_cores": 4,
+        "memory_gb": 16.0,
+        "dbu_per_hour": 1.0,
+        "local_disk_gb": 150,
+        "num_gpus": 0,
+        "photon_capable": True,
+        "deprecated": False,
+    }
+    kwargs[field_name] = value
+
+    with pytest.raises(ValueError, match=expected_message):
+        AzureNodeTypePricingRow(**kwargs)
 
 
 def test_load_azure_dbu_pricing_rows_contains_known_saved_entries():
@@ -258,6 +290,32 @@ def test_load_azure_dbu_pricing_rows_requires_node_type_id_header(tmp_path, monk
 
     with pytest.raises(DatabricksCatalogError, match="missing required header: node_type_id"):
         load_azure_dbu_pricing_rows()
+
+
+def test_load_azure_dbu_pricing_rows_accepts_lowercase_boolean_values(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "databricks_azure_dbu_pricing.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "node_type_id,category,num_cores,memory_gb,dbu_per_hour,local_disk_gb,num_gpus,photon_capable,deprecated",
+                "Standard_D4ds_v5,General Purpose,4,16.0,1.0,150,0,true,false",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("spotvm.databricks_catalog.resources.files", lambda _pkg: tmp_path)
+    import spotvm.databricks_catalog as databricks_catalog
+
+    databricks_catalog._load_azure_dbu_pricing_rows.cache_clear()
+    databricks_catalog._azure_dbu_pricing_index.cache_clear()
+
+    rows = load_azure_dbu_pricing_rows()
+
+    assert rows[0].photon_capable is True
+    assert rows[0].deprecated is False
 
 
 def test_load_azure_dbu_pricing_rows_warns_when_no_usable_rows_loaded(tmp_path, monkeypatch, caplog):
