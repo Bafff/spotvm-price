@@ -194,7 +194,7 @@ def test_enrich_with_databricks_cost_populates_cost_fields(monkeypatch):
     monkeypatch.setattr(
         "spotvm.analysis.load_catalog",
         lambda: SimpleNamespace(
-            captured_at="2026-03-19T00:00:00Z",
+            captured_at=datetime(2026, 3, 20, 8, 30, tzinfo=timezone.utc),
             pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
         ),
     )
@@ -202,11 +202,6 @@ def test_enrich_with_databricks_cost_populates_cost_fields(monkeypatch):
         "spotvm.analysis.lookup_azure_node_type_pricing",
         lambda _sku: SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),
     )
-    monkeypatch.setattr(
-        "spotvm.analysis.load_azure_dbu_pricing_last_updated",
-        lambda: datetime(2026, 3, 20, 8, 30, tzinfo=timezone.utc),
-    )
-
     [enriched] = enrich_with_databricks_cost([candidate], include_photon=False)
 
     assert enriched.price_usd == 0.0471
@@ -214,6 +209,35 @@ def test_enrich_with_databricks_cost_populates_cost_fields(monkeypatch):
     assert enriched.databricks_dbu_per_hour == 1.0
     assert enriched.databricks_dbu_cost_usd == 0.15
     assert enriched.total_price_usd == 0.1971
+    assert enriched.databricks_catalog_updated == datetime(2026, 3, 20, 8, 30, tzinfo=timezone.utc)
+
+
+def test_enrich_with_databricks_cost_uses_loaded_catalog_timestamp(monkeypatch):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4ds_v5",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at=datetime(2026, 3, 20, 8, 30, tzinfo=timezone.utc),
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.30),
+        ),
+    )
+    monkeypatch.setattr(
+        "spotvm.analysis.lookup_azure_node_type_pricing",
+        lambda _sku: SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),
+    )
+
+    [enriched] = enrich_with_databricks_cost([candidate], include_photon=False)
+
     assert enriched.databricks_catalog_updated == datetime(2026, 3, 20, 8, 30, tzinfo=timezone.utc)
 
 
@@ -233,7 +257,7 @@ def test_enrich_with_databricks_cost_applies_photon_jobs_rate(monkeypatch):
         "spotvm.analysis.load_catalog",
         lambda: SimpleNamespace(
             captured_at="2026-03-19T00:00:00Z",
-            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.22),
         ),
     )
     monkeypatch.setattr(
@@ -244,8 +268,8 @@ def test_enrich_with_databricks_cost_applies_photon_jobs_rate(monkeypatch):
     [enriched] = enrich_with_databricks_cost([candidate], include_photon=True)
 
     assert enriched.databricks_photon_dbu_per_hour == 2.5
-    assert enriched.databricks_photon_cost_usd == pytest.approx(0.375)
-    assert enriched.total_price_usd == pytest.approx(0.4221)
+    assert enriched.databricks_photon_cost_usd == pytest.approx(0.55)
+    assert enriched.total_price_usd == pytest.approx(0.5971)
 
 
 def test_enrich_with_databricks_cost_keeps_photon_fields_empty_when_photon_capability_is_unknown(monkeypatch):
@@ -397,40 +421,6 @@ def test_enrich_with_databricks_cost_raises_when_catalog_loading_fails(monkeypat
         enrich_with_databricks_cost([candidate], include_photon=False)
 
 
-def test_enrich_with_databricks_cost_ignores_json_captured_at_when_csv_timestamp_is_available(monkeypatch):
-    candidate = CandidateInsight(
-        region="centralus",
-        vm_size="Standard_D4ds_v5",
-        placement_score=None,
-        quota_available=None,
-        price_usd=0.0471,
-        price_last_updated=None,
-        eviction_rate=5.0,
-        eviction_last_updated=None,
-    )
-
-    monkeypatch.setattr(
-        "spotvm.analysis.load_catalog",
-        lambda: SimpleNamespace(
-            captured_at="not-a-timestamp",
-            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
-        ),
-    )
-
-    monkeypatch.setattr(
-        "spotvm.analysis.load_azure_dbu_pricing_last_updated",
-        lambda: datetime(2026, 3, 20, 8, 30, tzinfo=timezone.utc),
-    )
-    monkeypatch.setattr(
-        "spotvm.analysis.lookup_azure_node_type_pricing",
-        lambda _sku: SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),
-    )
-
-    [enriched] = enrich_with_databricks_cost([candidate], include_photon=False)
-
-    assert enriched.databricks_catalog_updated == datetime(2026, 3, 20, 8, 30, tzinfo=timezone.utc)
-
-
 def test_enrich_with_databricks_cost_warns_about_unmatched_skus(monkeypatch, caplog):
     candidate = CandidateInsight(
         region="centralus",
@@ -545,34 +535,3 @@ def test_enrich_with_databricks_cost_short_circuits_empty_candidate_list(monkeyp
     monkeypatch.setattr("spotvm.analysis.load_catalog", load_catalog)
 
     assert enrich_with_databricks_cost([], include_photon=False) == []
-
-
-def test_enrich_with_databricks_cost_uses_csv_refresh_timestamp(monkeypatch):
-    candidate = CandidateInsight(
-        region="centralus",
-        vm_size="Standard_D4ds_v5",
-        placement_score=None,
-        quota_available=None,
-        price_usd=0.0471,
-        price_last_updated=None,
-        eviction_rate=5.0,
-        eviction_last_updated=None,
-    )
-    csv_updated = datetime(2026, 3, 20, 8, 30, tzinfo=timezone.utc)
-
-    monkeypatch.setattr(
-        "spotvm.analysis.load_catalog",
-        lambda: SimpleNamespace(
-            captured_at="2026-03-19T00:00:00Z",
-            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
-        ),
-    )
-    monkeypatch.setattr("spotvm.analysis.load_azure_dbu_pricing_last_updated", lambda: csv_updated)
-    monkeypatch.setattr(
-        "spotvm.analysis.lookup_azure_node_type_pricing",
-        lambda _sku: SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),
-    )
-
-    [enriched] = enrich_with_databricks_cost([candidate], include_photon=False)
-
-    assert enriched.databricks_catalog_updated == csv_updated

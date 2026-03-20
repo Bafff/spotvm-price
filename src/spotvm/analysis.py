@@ -4,7 +4,6 @@ import logging
 from collections.abc import Iterable
 
 from .databricks_catalog import (
-    load_azure_dbu_pricing_last_updated,
     load_catalog,
     lookup_azure_node_type_pricing,
 )
@@ -21,7 +20,9 @@ logger = logging.getLogger("spotvm")
 
 PLACEMENT_ORDER = {"high": 3, "medium": 2, "low": 1}
 # Extracted from Databricks UI performance multipliers for Photon Jobs compute.
-# See docs/databricks-dbu-pricing-refresh.md for the manual refresh workflow.
+# The same workspace config also exposes 2.0x for Photon All-Purpose, but this
+# tool models jobs-style Photon pricing, so the jobs multiplier is the correct
+# runtime constant here. See docs/databricks-dbu-pricing-refresh.md.
 PHOTON_JOBS_MULTIPLIER = 2.5
 PlacementLookupKey = tuple[str, str, str | None]
 MetricsLookupKey = tuple[str, str]
@@ -140,7 +141,7 @@ def enrich_with_databricks_cost(
     catalog = load_catalog()
     dbu_unit_price = catalog.pricing_profile.dbu_unit_price_usd
     photon_dbu_unit_price = catalog.pricing_profile.photon_dbu_unit_price_usd
-    catalog_updated = load_azure_dbu_pricing_last_updated()
+    catalog_updated = catalog.captured_at
     missing_catalog_match_count = 0
     missing_dbu_rate_count = 0
     missing_catalog_match_examples: list[str] = []

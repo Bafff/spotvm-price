@@ -39,7 +39,7 @@ def _colorize_eviction(rate: float | None, *, render_options: RenderOptions | No
     - Blue (<5%): Excellent - very low eviction risk
     - Green (5-10%): Good - low eviction risk
     - Yellow (10-15%): Medium - moderate eviction risk
-    - Red (15-24%): High - high eviction risk
+    - Red (15% to <25%): High - high eviction risk
     - Bright Red (≥25%): Critical - very high eviction risk
     """
     options = _resolve_render_options(render_options)

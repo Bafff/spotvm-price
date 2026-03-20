@@ -1,3 +1,12 @@
+"""Databricks pricing catalog loaders and validation helpers.
+
+This module uses two vendored data sources:
+- `databricks_pricing.json` for pricing-profile metadata and validated snapshot
+  entries
+- `databricks_azure_dbu_pricing.csv` for broad Azure node-type DBU coverage used
+  at runtime during SKU enrichment
+"""
+
 from __future__ import annotations
 
 import csv
@@ -125,8 +134,6 @@ class DatabricksCatalog:
             raise TypeError("source must be a mapping of string keys and values")
         normalized_source = MappingProxyType(dict(self.source))
         object.__setattr__(self, "source", normalized_source)
-        if not normalized_captured_at:
-            raise ValueError("captured_at must be non-empty")
         sorted_skus = tuple(entry.sku for entry in self.entries)
         if sorted_skus != tuple(sorted(sorted_skus)):
             raise ValueError("entries must be sorted by sku")

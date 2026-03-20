@@ -577,6 +577,8 @@ def _run_unattended_iteration(
             logger=logger,
         )
     except AzureHttpError as exc:
+        # Azure API failures are treated as transient service errors in
+        # unattended mode, so they do not count toward the stop threshold.
         logger.error(f"Azure API request failed: {exc}")  # noqa: TRY400 - traceback is noise for API failures
         logger.info("Continuing despite error...")
         return 0, None

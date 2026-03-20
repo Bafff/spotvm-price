@@ -106,6 +106,14 @@ def test_load_catalog_from_path_reports_malformed_json(tmp_path):
         load_catalog_from_path(path)
 
 
+def test_load_catalog_from_path_rejects_valid_json_that_is_not_an_object(tmp_path):
+    path = tmp_path / "array-catalog.json"
+    path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+
+    with pytest.raises(DatabricksCatalogError, match="must be a JSON object"):
+        load_catalog_from_path(path)
+
+
 def test_load_catalog_from_path_rejects_zero_photon_unit_price(tmp_path):
     path = tmp_path / "broken-photon-price.json"
     path.write_text(
