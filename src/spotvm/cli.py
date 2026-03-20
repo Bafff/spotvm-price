@@ -579,7 +579,7 @@ def _run_unattended_iteration(
     except AzureHttpError as exc:
         logger.error(f"Azure API request failed: {exc}")  # noqa: TRY400 - traceback is noise for API failures
         logger.info("Continuing despite error...")
-        return unexpected_error_count, None
+        return 0, None
     except DatabricksCatalogError as exc:
         unexpected_error_count += 1
         logger.error(  # noqa: TRY400 - catalog failures are user-facing and do not need tracebacks

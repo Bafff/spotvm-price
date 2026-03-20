@@ -9,7 +9,6 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from functools import cache
 from importlib import resources
-from importlib.resources import as_file
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -167,13 +166,7 @@ def load_azure_dbu_pricing_rows() -> list[AzureNodeTypePricingRow]:
 
 
 def load_azure_dbu_pricing_last_updated() -> datetime:
-    csv_resource = resources.files("spotvm").joinpath("data/databricks_azure_dbu_pricing.csv")
-    try:
-        with as_file(csv_resource) as csv_path:
-            csv_mtime = datetime.fromtimestamp(csv_path.stat().st_mtime, tz=timezone.utc)
-    except OSError as exc:
-        raise DatabricksCatalogError("Failed to stat vendored Azure DBU pricing CSV") from exc
-    return max(load_catalog().captured_at, csv_mtime)
+    return load_catalog().captured_at
 
 
 @cache
@@ -330,7 +323,7 @@ def _catalog_from_payload(payload: dict[str, Any]) -> DatabricksCatalog:
             )
         )
     entries.sort(key=lambda entry: entry.sku)
-    return DatabricksCatalog(
+    return _catalog(
         catalog_version=catalog_version_int,
         cloud=cloud_text,
         pricing_profile=_pricing_profile(
@@ -501,4 +494,26 @@ def _catalog_entry(
             notes=notes,
         )
     except ValueError as exc:
+        raise DatabricksCatalogError(str(exc)) from exc
+
+
+def _catalog(
+    *,
+    catalog_version: int,
+    cloud: str,
+    pricing_profile: DatabricksPricingProfile,
+    captured_at: datetime,
+    source: Mapping[str, str],
+    entries: tuple[DatabricksCatalogEntry, ...],
+) -> DatabricksCatalog:
+    try:
+        return DatabricksCatalog(
+            catalog_version=catalog_version,
+            cloud=cloud,
+            pricing_profile=pricing_profile,
+            captured_at=captured_at,
+            source=source,
+            entries=entries,
+        )
+    except (TypeError, ValueError) as exc:
         raise DatabricksCatalogError(str(exc)) from exc
