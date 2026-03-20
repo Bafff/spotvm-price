@@ -9,6 +9,9 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import os
+import tempfile
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -75,7 +78,7 @@ def save_run_results(
     except TypeError as exc:
         raise _serialization_error(filepath, exc) from exc
 
-    filepath.write_text(serialized_snapshot, encoding="utf-8")
+    _write_text_atomically(filepath, serialized_snapshot)
 
     return filepath
 
@@ -134,6 +137,24 @@ def _required_snapshot_field(data: dict[str, Any], key: str) -> Any:
 
 def _serialization_error(filepath: Path, cause: TypeError) -> ValueError:
     return ValueError(f"Failed to serialize historical run snapshot: {filepath} ({cause})")
+
+
+def _write_text_atomically(filepath: Path, content: str) -> None:
+    fd, temp_name = tempfile.mkstemp(
+        dir=filepath.parent,
+        prefix=f".{filepath.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    os.close(fd)
+    temp_path = Path(temp_name)
+    try:
+        temp_path.write_text(content, encoding="utf-8")
+        temp_path.replace(filepath)
+    except Exception:
+        with suppress(OSError):
+            temp_path.unlink(missing_ok=True)
+        raise
 
 
 def _missing_snapshot_field(key: str) -> HistoricalSnapshotError:

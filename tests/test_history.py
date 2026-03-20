@@ -124,6 +124,25 @@ def test_save_run_results_wraps_json_serialization_type_error(
     assert list((temp_results_dir / "runs").glob("*.json")) == []
 
 
+def test_save_run_results_does_not_leave_partial_snapshot_on_write_failure(
+    temp_results_dir, sample_candidates, sample_config, monkeypatch
+):
+    original_write_text = Path.write_text
+
+    def interrupted_write(self: Path, data: str, *args, **kwargs):
+        if self.parent.name == "runs":
+            original_write_text(self, data[:32], *args, **kwargs)
+            raise OSError("disk write interrupted")
+        return original_write_text(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", interrupted_write)
+
+    with pytest.raises(OSError, match="disk write interrupted"):
+        save_run_results(sample_candidates, sample_config, temp_results_dir)
+
+    assert list((temp_results_dir / "runs").glob("*.json")) == []
+
+
 def test_load_historical_runs_empty_dir(temp_results_dir):
     """Test loading from empty directory returns empty list."""
     snapshots = load_historical_runs(temp_results_dir)
