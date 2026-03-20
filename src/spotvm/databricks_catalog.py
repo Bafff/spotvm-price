@@ -5,6 +5,7 @@ import json
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from functools import cache
 from importlib import resources
 from pathlib import Path
@@ -115,6 +116,16 @@ def load_catalog_from_path(path: Path) -> DatabricksCatalog:
 
 def load_azure_dbu_pricing_rows() -> list[AzureNodeTypePricingRow]:
     return list(_load_azure_dbu_pricing_rows())
+
+
+def load_azure_dbu_pricing_last_updated() -> datetime:
+    resource = resources.files("spotvm").joinpath("data/databricks_azure_dbu_pricing.csv")
+    with resources.as_file(resource) as path:
+        try:
+            modified_at = path.stat().st_mtime
+        except OSError as exc:
+            raise DatabricksCatalogError("Failed to inspect vendored Azure DBU pricing CSV") from exc
+    return datetime.fromtimestamp(modified_at, tz=timezone.utc)
 
 
 @cache

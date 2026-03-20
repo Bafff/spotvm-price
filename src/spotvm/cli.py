@@ -572,9 +572,25 @@ def _run_unattended_iteration(
         logger.info("Continuing despite error...")
         return 0, None
     except DatabricksCatalogError as exc:
-        logger.error("Databricks pricing catalog failed: %s", exc)  # noqa: TRY400 - traceback is noise for catalog failures
+        unexpected_error_count += 1
+        logger.error(
+            "Databricks pricing catalog failed (%d/%d): %s",
+            unexpected_error_count,
+            config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES,
+            exc,
+        )
+        if unexpected_error_count >= config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES:
+            logger.error(
+                "Stopping unattended mode after %d consecutive Databricks catalog errors",
+                config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES,
+            )
+            emit(
+                f"\n{'[x]' if request.no_color else '❌'} Stopping monitoring after "
+                f"{config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES} consecutive Databricks catalog errors."
+            )
+            return unexpected_error_count, 1
         logger.info("Continuing despite error...")
-        return 0, None
+        return unexpected_error_count, None
     except Exception:
         unexpected_error_count += 1
         logger.exception(

@@ -4,7 +4,12 @@ import logging
 from collections.abc import Iterable
 from datetime import datetime, timezone
 
-from .databricks_catalog import DatabricksCatalogError, load_catalog, lookup_azure_node_type_pricing
+from .databricks_catalog import (
+    DatabricksCatalogError,
+    load_azure_dbu_pricing_last_updated,
+    load_catalog,
+    lookup_azure_node_type_pricing,
+)
 from .models import CandidateInsight, CPUArchitecture, HistoricalMetrics, PlacementScoreResult, effective_price_usd
 from .vm_specs import (
     VMSpec,
@@ -136,9 +141,11 @@ def enrich_with_databricks_cost(
     catalog = load_catalog()
     dbu_unit_price = catalog.pricing_profile.dbu_unit_price_usd
     photon_dbu_unit_price = catalog.pricing_profile.photon_dbu_unit_price_usd
-    catalog_updated = _parse_catalog_timestamp(catalog.captured_at)
+    catalog_updated = load_azure_dbu_pricing_last_updated()
     missing_catalog_match_count = 0
     missing_dbu_rate_count = 0
+    missing_catalog_match_examples: list[str] = []
+    missing_dbu_rate_examples: list[str] = []
 
     for candidate in candidates:
         compute_price = candidate.price_usd
@@ -147,9 +154,15 @@ def enrich_with_databricks_cost(
         row = lookup_azure_node_type_pricing(candidate.vm_size)
         if row is None:
             missing_catalog_match_count += 1
+            if len(missing_catalog_match_examples) < 3:
+                missing_catalog_match_examples.append(candidate.vm_size)
+            candidate.notes = _append_note(candidate.notes, "Databricks DBU data not available for this SKU.")
             continue
         if row.dbu_per_hour is None:
             missing_dbu_rate_count += 1
+            if len(missing_dbu_rate_examples) < 3:
+                missing_dbu_rate_examples.append(candidate.vm_size)
+            candidate.notes = _append_note(candidate.notes, "Databricks DBU rate missing for this SKU.")
             continue
 
         candidate.databricks_dbu_per_hour = row.dbu_per_hour
@@ -171,13 +184,15 @@ def enrich_with_databricks_cost(
 
     if missing_catalog_match_count > 0:
         logger.warning(
-            "Databricks DBU catalog match not found for %d candidate(s); leaving Databricks fields empty for unmatched SKUs",
+            "Databricks DBU catalog match not found for %d candidate(s); leaving Databricks fields empty for unmatched SKUs (examples: %s)",
             missing_catalog_match_count,
+            ", ".join(missing_catalog_match_examples),
         )
     if missing_dbu_rate_count > 0:
         logger.warning(
-            "Databricks DBU rate missing for %d candidate(s); leaving Databricks fields empty for catalog rows without DBU data",
+            "Databricks DBU rate missing for %d candidate(s); leaving Databricks fields empty for catalog rows without DBU data (examples: %s)",
             missing_dbu_rate_count,
+            ", ".join(missing_dbu_rate_examples),
         )
 
     return candidates
@@ -195,6 +210,14 @@ def _parse_catalog_timestamp(value: str) -> datetime:
 
 def _invalid_catalog_timestamp(value: object) -> DatabricksCatalogError:
     return DatabricksCatalogError(f"Invalid Databricks catalog captured_at timestamp: {value!r}")
+
+
+def _append_note(existing: str | None, note: str) -> str:
+    if existing is None or existing == "":
+        return note
+    if note in existing:
+        return existing
+    return f"{existing}; {note}"
 
 
 def summarize_top_candidates(
