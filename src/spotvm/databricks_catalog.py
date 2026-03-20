@@ -108,6 +108,8 @@ class AzureNodeTypePricingRow:
                 raise ValueError("memory_gb must be finite")
             if self.memory_gb < 0.0:
                 raise ValueError("memory_gb must be non-negative")
+            if self.memory_gb == 0.0:
+                raise ValueError("memory_gb must be positive")
         if self.local_disk_gb is not None and self.local_disk_gb < 0:
             raise ValueError("local_disk_gb must be non-negative")
         if self.num_gpus is not None and self.num_gpus < 0:
@@ -235,6 +237,7 @@ def _load_azure_dbu_pricing_rows() -> tuple[AzureNodeTypePricingRow, ...]:
         )
     if not rows:
         logger.warning("Loaded 0 usable Azure Databricks DBU pricing rows from %s", path)
+        raise DatabricksCatalogError("Loaded 0 usable Azure Databricks DBU pricing rows from vendored catalog")
     return tuple(rows)
 
 

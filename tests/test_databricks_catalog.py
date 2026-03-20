@@ -605,10 +605,15 @@ def test_load_azure_dbu_pricing_rows_warns_when_no_usable_rows_loaded(tmp_path, 
     databricks_catalog._load_azure_dbu_pricing_rows.cache_clear()
     databricks_catalog._azure_dbu_pricing_index.cache_clear()
 
-    with caplog.at_level("WARNING", logger="spotvm"):
-        rows = load_azure_dbu_pricing_rows()
+    with (
+        caplog.at_level("WARNING", logger="spotvm"),
+        pytest.raises(
+            DatabricksCatalogError,
+            match="Loaded 0 usable Azure Databricks DBU pricing rows",
+        ),
+    ):
+        load_azure_dbu_pricing_rows()
 
-    assert rows == []
     assert "Loaded 0 usable Azure Databricks DBU pricing rows" in caplog.text
 
 
@@ -662,6 +667,21 @@ def test_load_azure_dbu_pricing_rows_warns_when_rows_are_skipped_for_blank_node_
 
     assert len(rows) == 1
     assert "Skipped 1 Azure Databricks DBU pricing row(s) with blank node_type_id" in caplog.text
+
+
+def test_azure_node_type_pricing_row_rejects_zero_memory_gb():
+    with pytest.raises(ValueError, match="memory_gb must be positive"):
+        AzureNodeTypePricingRow(
+            node_type_id="Standard_D4ds_v5",
+            category="General Purpose",
+            num_cores=4,
+            memory_gb=0.0,
+            dbu_per_hour=1.0,
+            local_disk_gb=150,
+            num_gpus=0,
+            photon_capable=True,
+            deprecated=False,
+        )
 
 
 def test_azure_node_type_pricing_row_validates_required_fields():

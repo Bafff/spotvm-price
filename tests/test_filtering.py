@@ -148,6 +148,33 @@ def test_filter_by_cost_uses_total_price_even_when_raw_vm_price_is_missing():
     assert filtered == []
 
 
+def test_filter_by_max_price_logs_missing_databricks_total_price_at_info(caplog):
+    candidates = [
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D4ds_v5",
+            placement_score="High",
+            quota_available=True,
+            price_usd=0.05,
+            compute_price_usd=0.05,
+            total_price_usd=None,
+            price_last_updated=datetime(2025, 1, 25, 14, 0),
+            eviction_rate=5.0,
+            eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+        )
+    ]
+
+    with caplog.at_level(logging.INFO):
+        filtered = filter_by_cost(candidates, max_price=0.20)
+
+    assert filtered == []
+    assert "Databricks total price unavailable for this SKU" in caplog.text
+    assert (
+        "Excluded 1 candidate(s) from --max-price filtering because Databricks total price was unavailable"
+        in caplog.text
+    )
+
+
 def test_vm_spec_source_has_no_duplicate_sku_keys():
     repo_root = Path(__file__).resolve().parents[1]
     source = (repo_root / "src" / "spotvm" / "vm_specs.py").read_text()

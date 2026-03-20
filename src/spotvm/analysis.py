@@ -135,7 +135,7 @@ def enrich_with_databricks_cost(
     Keeps ``price_usd`` as the raw Azure VM price and stores the Databricks-aware
     result separately in ``total_price_usd``.  When Photon mode is enabled, the
     Photon DBU rate is derived by multiplying the base ``dbu_per_hour`` by the
-    Photon Jobs multiplier (2.5x). The resulting Photon cost replaces
+    Photon Jobs multiplier (``PHOTON_JOBS_MULTIPLIER``). The resulting Photon cost replaces
     (not supplements) the base DBU cost when computing ``total_price_usd``.
     """
     if not candidates:
@@ -173,7 +173,7 @@ def enrich_with_databricks_cost(
         candidate.databricks_catalog_updated = catalog_updated
 
         # When Photon is enabled for a capable node, the Photon DBU cost
-        # (base * 2.5x multiplier for Photon Jobs compute) replaces the standard DBU cost in
+        # (base * PHOTON_JOBS_MULTIPLIER for Photon Jobs compute) replaces the standard DBU cost in
         # total_price_usd — Photon is an alternative compute tier, not an
         # additive surcharge.
         databricks_cost = candidate.databricks_dbu_cost_usd
@@ -312,11 +312,16 @@ def filter_by_cost(
 
     filtered = []
     filtered_count = 0
+    missing_databricks_total_count = 0
 
     for candidate in candidates:
         filter_message = _cost_filter_message(candidate, max_price, max_eviction, min_performance)
         if filter_message is not None:
-            logger.debug(filter_message)
+            if _is_missing_databricks_total_price_filter(candidate, max_price):
+                logger.info(filter_message)
+                missing_databricks_total_count += 1
+            else:
+                logger.debug(filter_message)
             filtered_count += 1
             continue
 
@@ -325,6 +330,11 @@ def filter_by_cost(
     if filtered_count > 0:
         parts = _cost_constraint_parts(max_price, max_eviction, min_performance)
         logger.info(f"Filtered out {filtered_count} candidate(s) not meeting cost constraints ({', '.join(parts)})")
+    if missing_databricks_total_count > 0:
+        logger.info(
+            "Excluded %d candidate(s) from --max-price filtering because Databricks total price was unavailable",
+            missing_databricks_total_count,
+        )
 
     return filtered
 
@@ -513,6 +523,10 @@ def _cost_filter_message(
             f"performance {candidate.performance_relative:.0f}% < {min_performance}% min"
         )
     return None
+
+
+def _is_missing_databricks_total_price_filter(candidate: CandidateInsight, max_price: float | None) -> bool:
+    return max_price is not None and candidate.compute_price_usd is not None and effective_price_usd(candidate) is None
 
 
 def _cost_constraint_parts(

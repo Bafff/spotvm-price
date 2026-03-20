@@ -45,6 +45,7 @@ from .resource_graph import ResourceGraphRequest, fetch_historical_metrics
 from .vm_specs import discover_skus
 
 logger = logging.getLogger("spotvm")
+_FATAL_UNATTENDED_EXCEPTIONS = (AssertionError, AttributeError, KeyError, NameError, TypeError)
 
 
 @dataclass(frozen=True)
@@ -479,7 +480,11 @@ def _run_analysis_mode(
         logger.error("Azure API request failed: %s", exc)  # noqa: TRY400 - user-facing API failure should stay concise
         return 2
     except DatabricksCatalogError as exc:
-        logger.error("Databricks pricing catalog failed: %s", exc)  # noqa: TRY400 - user-facing catalog failure should stay concise
+        logger.error(  # noqa: TRY400 - user-facing remediation should stay concise without a traceback
+            "Databricks pricing catalog failed: %s. Use --refresh-databricks-catalog to refresh vendored data, "
+            "or remove --include-databricks-cost to continue without Databricks enrichment.",
+            exc,
+        )
         return 2
 
     return 0
@@ -592,18 +597,22 @@ def _run_unattended_iteration(
         )
         if unexpected_error_count >= config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES:
             logger.error(  # noqa: TRY400 - stop condition is a state transition, not an exception report
-                "Stopping unattended mode after %d consecutive Databricks catalog errors",
+                "Stopping unattended mode after %d consecutive unattended monitoring failures",
                 config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES,
             )
             emit(
                 f"\n{'[x]' if request.no_color else '❌'} Stopping monitoring after "
-                f"{config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES} consecutive Databricks catalog errors."
+                f"{config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES} consecutive unattended monitoring failures."
             )
             return unexpected_error_count, 1
         logger.info("Continuing despite error...")
         return unexpected_error_count, None
     except MemoryError:
         raise
+    except _FATAL_UNATTENDED_EXCEPTIONS:
+        logger.exception("Fatal programming error in unattended run")
+        emit(f"\n{'[x]' if request.no_color else '❌'} Stopping monitoring after a fatal programming error.")
+        return unexpected_error_count, 1
     except Exception:
         unexpected_error_count += 1
         logger.exception(
@@ -613,12 +622,12 @@ def _run_unattended_iteration(
         )
         if unexpected_error_count >= config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES:
             logger.error(  # noqa: TRY400 - traceback already emitted immediately above
-                "Stopping unattended mode after %d consecutive unexpected errors",
+                "Stopping unattended mode after %d consecutive unattended monitoring failures",
                 config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES,
             )
             emit(
                 f"\n{'[x]' if request.no_color else '❌'} Stopping monitoring after "
-                f"{config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES} consecutive unexpected errors."
+                f"{config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES} consecutive unattended monitoring failures."
             )
             return unexpected_error_count, 1
         logger.info("Continuing despite error...")

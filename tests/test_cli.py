@@ -284,11 +284,11 @@ class TestMainWithMocks:
         mock_sleep.assert_not_called()
         logger.exception.assert_called_once()
         logger.error.assert_called_once_with(
-            "Stopping unattended mode after %d consecutive unexpected errors",
+            "Stopping unattended mode after %d consecutive unattended monitoring failures",
             1,
         )
         captured = capsys.readouterr()
-        assert "Stopping monitoring after 1 consecutive unexpected errors" in captured.out
+        assert "Stopping monitoring after 1 consecutive unattended monitoring failures" in captured.out
 
     @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 1)
     @patch("spotvm.cli.signal.signal")
@@ -330,11 +330,11 @@ class TestMainWithMocks:
             "Azure API request failed: Azure API request failed (429) for https://example.test: busy"
         )
         logger.error.assert_any_call(
-            "Stopping unattended mode after %d consecutive unexpected errors",
+            "Stopping unattended mode after %d consecutive unattended monitoring failures",
             1,
         )
         captured = capsys.readouterr()
-        assert "Stopping monitoring after 1 consecutive unexpected errors" in captured.out
+        assert "Stopping monitoring after 1 consecutive unattended monitoring failures" in captured.out
 
     @patch("spotvm.cli.signal.signal")
     def test_run_unattended_monitoring_returns_zero_after_single_success_when_stop_requested(
@@ -396,11 +396,11 @@ class TestMainWithMocks:
             2,
         )
         logger.error.assert_called_once_with(
-            "Stopping unattended mode after %d consecutive unexpected errors",
+            "Stopping unattended mode after %d consecutive unattended monitoring failures",
             2,
         )
         captured = capsys.readouterr()
-        assert "Stopping monitoring after 2 consecutive unexpected errors" in captured.out
+        assert "Stopping monitoring after 2 consecutive unattended monitoring failures" in captured.out
 
     @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 2)
     def test_run_unattended_iteration_preserves_error_count_after_azure_http_error(self):
@@ -469,7 +469,10 @@ class TestMainWithMocks:
         assert exit_code == 1
         logger.exception.assert_not_called()
         assert logger.error.call_count == 2
-        assert "Stopping unattended mode after" in logger.error.call_args_list[-1].args[0]
+        assert logger.error.call_args_list[-1].args == (
+            "Stopping unattended mode after %d consecutive unattended monitoring failures",
+            2,
+        )
 
     @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 3)
     def test_run_unattended_iteration_continues_for_below_threshold_databricks_catalog_error(self):
@@ -498,6 +501,28 @@ class TestMainWithMocks:
         logger.error.assert_called_once()
         assert logger.error.call_args.args[:3] == ("Databricks pricing catalog failed (%d/%d): %s", 2, 3)
         assert str(logger.error.call_args.args[3]) == "broken catalog"
+
+    def test_run_unattended_iteration_stops_immediately_for_programming_errors(self, capsys):
+        logger = MagicMock()
+        request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+        run_single_analysis = MagicMock(side_effect=TypeError("wrong type"))
+
+        unexpected_error_count, exit_code = cli._run_unattended_iteration(
+            request=request,
+            config=config,
+            logger=logger,
+            run_single_analysis=run_single_analysis,
+            unexpected_error_count=1,
+            emit=_stdout_emitter,
+        )
+
+        assert unexpected_error_count == 1
+        assert exit_code == 1
+        logger.exception.assert_called_once_with("Fatal programming error in unattended run")
+        logger.info.assert_not_called()
+        captured = capsys.readouterr()
+        assert "Stopping monitoring after a fatal programming error" in captured.out
 
     def test_sleep_until_next_run_emits_schedule_and_stops_early(self, capsys):
         logger = MagicMock()
@@ -615,7 +640,11 @@ class TestMainWithMocks:
         )
 
         assert rc == 2
-        logger.error.assert_called_once_with("Databricks pricing catalog failed: %s", error)
+        logger.error.assert_called_once_with(
+            "Databricks pricing catalog failed: %s. Use --refresh-databricks-catalog to refresh vendored data, "
+            "or remove --include-databricks-cost to continue without Databricks enrichment.",
+            error,
+        )
 
     @patch("spotvm.cli.AzureAuthenticator")
     @patch("spotvm.cli.AzureRestClient")

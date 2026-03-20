@@ -102,6 +102,39 @@ def test_rank_candidates_prefers_effective_total_price_for_databricks_candidates
     assert [candidate.vm_size for candidate in ranked] == ["Standard_D8as_v5", "Standard_D4as_v5"]
 
 
+def test_rank_candidates_places_candidates_without_databricks_total_after_fully_priced_matches():
+    candidates = [
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D4as_v5",
+            placement_score="High",
+            quota_available=True,
+            price_usd=0.10,
+            compute_price_usd=0.10,
+            total_price_usd=None,
+            price_last_updated=None,
+            eviction_rate=2.0,
+            eviction_last_updated=None,
+        ),
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D8as_v5",
+            placement_score="High",
+            quota_available=True,
+            price_usd=0.20,
+            compute_price_usd=0.20,
+            total_price_usd=0.30,
+            price_last_updated=None,
+            eviction_rate=2.0,
+            eviction_last_updated=None,
+        ),
+    ]
+
+    ranked = rank_candidates(candidates)
+
+    assert [candidate.vm_size for candidate in ranked] == ["Standard_D8as_v5", "Standard_D4as_v5"]
+
+
 def test_merge_datasets_keeps_distinct_zone_candidates_for_same_sku_and_region():
     placement_scores = [
         PlacementScoreResult(
@@ -177,6 +210,28 @@ def test_summarize_top_candidates_includes_zone_score_perf_and_price():
     assert summary == [
         "#1 Standard_D4as_v5 in eastus; zone 1; placement score High; eviction 2.5%; perf 115%; $0.1234/hr"
     ]
+
+
+def test_summarize_top_candidates_uses_databricks_total_price_when_present():
+    candidates = [
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D4as_v5",
+            placement_score="High",
+            quota_available=True,
+            price_usd=0.1234,
+            compute_price_usd=0.1234,
+            total_price_usd=0.4234,
+            price_last_updated=None,
+            eviction_rate=2.5,
+            eviction_last_updated=None,
+            recommendation_rank=1,
+        )
+    ]
+
+    summary = summarize_top_candidates(candidates)
+
+    assert summary == ["#1 Standard_D4as_v5 in eastus; placement score High; eviction 2.5%; $0.4234/hr"]
 
 
 def test_enrich_with_databricks_cost_populates_cost_fields(monkeypatch):
