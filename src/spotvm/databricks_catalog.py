@@ -20,7 +20,7 @@ from functools import cache
 from importlib import resources
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 
 class DatabricksCatalogError(RuntimeError):
@@ -37,7 +37,9 @@ class DatabricksPricingProfile:
     photon_dbu_unit_price_usd: float
 
     def __post_init__(self) -> None:
-        if not self.name:
+        normalized_name = self.name.strip()
+        object.__setattr__(self, "name", normalized_name)
+        if not normalized_name:
             raise ValueError("name must be non-empty")
         if not math.isfinite(self.dbu_unit_price_usd):
             raise ValueError("dbu_unit_price_usd must be finite")
@@ -56,8 +58,9 @@ class DatabricksCatalogEntry:
     Runtime VM enrichment uses the vendored Azure CSV because it has the broadest
     Azure SKU coverage. The JSON entry list remains a validated reference
     snapshot rather than the authoritative VM-size lookup table for all SKUs.
-    Photon per-SKU rates here are informational; runtime enrichment uses the
-    shared Photon Jobs multiplier on top of the CSV base DBU rate.
+    Photon per-SKU rates here are informational and describe the base DBU rate
+    for Photon-capable SKUs before the shared Photon Jobs multiplier is applied
+    at runtime.
     """
 
     sku: str
@@ -94,7 +97,9 @@ class AzureNodeTypePricingRow:
     deprecated: bool | None
 
     def __post_init__(self) -> None:
-        if not self.node_type_id:
+        normalized_node_type_id = self.node_type_id.strip()
+        object.__setattr__(self, "node_type_id", normalized_node_type_id)
+        if not normalized_node_type_id:
             raise ValueError("node_type_id must be non-empty")
         if self.num_cores is not None and self.num_cores <= 0:
             raise ValueError("num_cores must be positive")
@@ -119,7 +124,7 @@ class DatabricksCatalog:
     catalog_version: int
     cloud: str
     pricing_profile: DatabricksPricingProfile
-    captured_at: datetime
+    captured_at: datetime | str
     source: Mapping[str, str]
     entries: tuple[DatabricksCatalogEntry, ...]
 
@@ -147,7 +152,7 @@ class DatabricksCatalog:
             "catalog_version": self.catalog_version,
             "cloud": self.cloud,
             "pricing_profile": asdict(self.pricing_profile),
-            "captured_at": _format_catalog_timestamp(self.captured_at),
+            "captured_at": _format_catalog_timestamp(cast(datetime, self.captured_at)),
             "source": dict(self.source),
             "entries": [asdict(entry) for entry in self.entries],
         }
@@ -175,7 +180,8 @@ def load_azure_dbu_pricing_rows() -> list[AzureNodeTypePricingRow]:
 
 
 def load_azure_dbu_pricing_last_updated() -> datetime:
-    return load_catalog().captured_at
+    """Return the vendored catalog snapshot timestamp used for DBU pricing metadata."""
+    return cast(datetime, load_catalog().captured_at)
 
 
 @cache

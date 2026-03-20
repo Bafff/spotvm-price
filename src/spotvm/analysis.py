@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
+from datetime import datetime
+from typing import cast
 
 from .databricks_catalog import (
     load_catalog,
@@ -141,7 +143,7 @@ def enrich_with_databricks_cost(
     catalog = load_catalog()
     dbu_unit_price = catalog.pricing_profile.dbu_unit_price_usd
     photon_dbu_unit_price = catalog.pricing_profile.photon_dbu_unit_price_usd
-    catalog_updated = catalog.captured_at
+    catalog_updated = cast(datetime, catalog.captured_at)
     missing_catalog_match_count = 0
     missing_dbu_rate_count = 0
     missing_catalog_match_examples: list[str] = []

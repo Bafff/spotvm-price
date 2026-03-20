@@ -336,6 +336,14 @@ def test_databricks_pricing_profile_requires_non_empty_name():
         DatabricksPricingProfile(name="", dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15)
 
 
+def test_databricks_pricing_profile_strips_surrounding_name_whitespace():
+    profile = DatabricksPricingProfile(
+        name="  standard_jobs  ", dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15
+    )
+
+    assert profile.name == "standard_jobs"
+
+
 @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
 def test_databricks_pricing_profile_rejects_non_finite_prices(value):
     with pytest.raises(ValueError, match="must be finite"):
@@ -671,6 +679,22 @@ def test_azure_node_type_pricing_row_validates_required_fields():
             photon_capable=True,
             deprecated=False,
         )
+
+
+def test_azure_node_type_pricing_row_strips_surrounding_node_type_whitespace():
+    row = AzureNodeTypePricingRow(
+        node_type_id="  Standard_D4ds_v5  ",
+        category="General Purpose",
+        num_cores=4,
+        memory_gb=16.0,
+        dbu_per_hour=1.0,
+        local_disk_gb=150,
+        num_gpus=0,
+        photon_capable=True,
+        deprecated=False,
+    )
+
+    assert row.node_type_id == "Standard_D4ds_v5"
 
 
 def test_load_azure_dbu_pricing_rows_rejects_fractional_integer_fields(tmp_path, monkeypatch):

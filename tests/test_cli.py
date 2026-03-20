@@ -403,7 +403,7 @@ class TestMainWithMocks:
         assert "Stopping monitoring after 2 consecutive unexpected errors" in captured.out
 
     @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 2)
-    def test_run_unattended_iteration_resets_error_count_after_azure_http_error(self):
+    def test_run_unattended_iteration_preserves_error_count_after_azure_http_error(self):
         logger = MagicMock()
         request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
@@ -418,13 +418,32 @@ class TestMainWithMocks:
             emit=_stdout_emitter,
         )
 
-        assert unexpected_error_count == 0
+        assert unexpected_error_count == 1
         assert exit_code is None
         logger.exception.assert_not_called()
         logger.error.assert_called_once_with(
             "Azure API request failed: Azure API request failed (429) for https://example.test: busy"
         )
         logger.info.assert_called_once_with("Continuing despite error...")
+
+    def test_run_unattended_iteration_reraises_memory_error(self):
+        logger = MagicMock()
+        request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+        run_single_analysis = MagicMock(side_effect=MemoryError("oom"))
+
+        with pytest.raises(MemoryError, match="oom"):
+            cli._run_unattended_iteration(
+                request=request,
+                config=config,
+                logger=logger,
+                run_single_analysis=run_single_analysis,
+                unexpected_error_count=0,
+                emit=_stdout_emitter,
+            )
+
+        logger.exception.assert_not_called()
+        logger.error.assert_not_called()
 
     @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 2)
     def test_run_unattended_iteration_counts_databricks_catalog_errors_toward_stop_threshold(self):
