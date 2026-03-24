@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from . import config as config_defaults
 from .analysis import (
@@ -37,7 +37,7 @@ from .databricks_catalog import (
     refresh_databricks_catalog_cache,
 )
 from .http_client import AzureHttpError, AzureRestClient
-from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
+from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult, SortOrder
 from .placement_score import PlacementScoreRequest, fetch_placement_scores
 from .projection import project_for_report
 from .reporting import RenderOptions, export_to_csv, initialize_color_output, render_table
@@ -58,7 +58,7 @@ class AnalysisRunRequest:
     max_price: float | None
     max_eviction: float | None
     min_performance: float | None
-    sort_order: str
+    sort_order: SortOrder
     csv: Path | None
     results_dir: Path
     save_results: bool
@@ -74,7 +74,7 @@ def _build_analysis_run_request(args: argparse.Namespace, *, save_results: bool)
         max_price=args.max_price,
         max_eviction=args.max_eviction,
         min_performance=args.min_performance,
-        sort_order=args.sort,
+        sort_order=cast(SortOrder, args.sort),
         csv=args.csv,
         results_dir=args.results_dir,
         save_results=save_results,
