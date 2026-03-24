@@ -189,6 +189,7 @@ def render_table(
         columns += [c for c in _DATABRICKS_TABLE_COLUMNS if c not in hidden]
 
     rows: list[list[str]] = [columns]
+    footnotes_used: dict[str, str] = {}  # marker -> full text
     for item in candidates:
         all_cells = {
             "Rank": _format_rank(item.recommendation_rank),
@@ -218,6 +219,10 @@ def render_table(
             "Total Cost": _format_price(item.total_price_usd),
             "Catalog Updated": _format_catalog_updated(item.databricks_catalog_updated),
         }
+        # Track which footnotes are used in this table
+        if item.notes and item.notes in _FOOTNOTE_ABBREVIATIONS:
+            marker = _FOOTNOTE_ABBREVIATIONS[item.notes]
+            footnotes_used[marker] = item.notes
         rows.append([all_cells[c] for c in columns])
 
     # Auto-hide columns where every data row is empty or dash
@@ -234,7 +239,15 @@ def render_table(
     col_widths = _compute_widths(rows)
     lines = [_format_row(row, col_widths) for row in rows]
     separator = "-" * len(lines[0])
-    return "\n".join([lines[0], separator, *lines[1:]])
+    result = "\n".join([lines[0], separator, *lines[1:]])
+
+    # Append footnotes for abbreviated notes
+    if footnotes_used:
+        result += "\n"
+        for marker, full_text in footnotes_used.items():
+            result += f"\n  {marker} {full_text}"
+
+    return result
 
 
 def _compute_widths(rows: list[list[str]]) -> list[int]:
@@ -326,11 +339,20 @@ def _format_coremark_per_vcpu(value: float | None) -> str:
     return f"{value:,.0f}"
 
 
+# Map long note text to short footnote markers displayed in the table.
+_FOOTNOTE_ABBREVIATIONS: dict[str, str] = {
+    "Databricks DBU data not available for this SKU.": "*",
+    "Databricks DBU rate missing for this SKU.": "**",
+}
+
+
 def _format_table_notes(item: CandidateInsight) -> str:
     """Keep the terminal table compact and refer detailed perf fallback text to the footer."""
     parts: list[str] = []
     if item.notes:
-        parts.append(item.notes)
+        # Replace long notes with short footnote markers when available.
+        abbreviated = _FOOTNOTE_ABBREVIATIONS.get(item.notes, item.notes)
+        parts.append(abbreviated)
     if item.performance_note and item.performance_basis == "heuristic":
         parts.append("Heuristic perf*")
     return "; ".join(dict.fromkeys(parts))
