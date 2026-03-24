@@ -220,9 +220,10 @@ def render_table(
             "Catalog Updated": _format_catalog_updated(item.databricks_catalog_updated),
         }
         # Track which footnotes are used in this table
-        if item.notes and item.notes in _FOOTNOTE_ABBREVIATIONS:
-            marker = _FOOTNOTE_ABBREVIATIONS[item.notes]
-            footnotes_used[marker] = item.notes
+        for note in _split_notes(item.notes):
+            marker = _FOOTNOTE_ABBREVIATIONS.get(note)
+            if marker is not None:
+                footnotes_used.setdefault(marker, note)
         rows.append([all_cells[c] for c in columns])
 
     # Auto-hide columns where every data row is empty or dash
@@ -341,18 +342,20 @@ def _format_coremark_per_vcpu(value: float | None) -> str:
 
 # Map long note text to short footnote markers displayed in the table.
 _FOOTNOTE_ABBREVIATIONS: dict[str, str] = {
-    "Databricks DBU data not available for this SKU.": "*",
-    "Databricks DBU rate missing for this SKU.": "**",
+    "Databricks DBU data not available for this SKU.": "DBU1",
+    "Databricks DBU rate missing for this SKU.": "DBU2",
 }
+
+
+def _split_notes(notes: str | None) -> list[str]:
+    if not notes:
+        return []
+    return [part.strip() for part in notes.split(";") if part.strip()]
 
 
 def _format_table_notes(item: CandidateInsight) -> str:
     """Keep the terminal table compact and refer detailed perf fallback text to the footer."""
-    parts: list[str] = []
-    if item.notes:
-        # Replace long notes with short footnote markers when available.
-        abbreviated = _FOOTNOTE_ABBREVIATIONS.get(item.notes, item.notes)
-        parts.append(abbreviated)
+    parts = [_FOOTNOTE_ABBREVIATIONS.get(note, note) for note in _split_notes(item.notes)]
     if item.performance_note and item.performance_basis == "heuristic":
         parts.append("Heuristic perf*")
     return "; ".join(dict.fromkeys(parts))
