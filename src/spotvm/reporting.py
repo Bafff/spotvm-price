@@ -307,7 +307,7 @@ def _format_dt(value: datetime | None) -> str:
 def _format_catalog_updated(value: datetime | str | None) -> str:
     if isinstance(value, datetime):
         return value.strftime("%Y-%m-%d")
-    if value is None or value == "":
+    if not value:
         return "-"
     return value[:10] if len(value) >= 10 else value
 

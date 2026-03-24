@@ -9,7 +9,14 @@ from .databricks_catalog import (
     load_catalog,
     lookup_azure_node_type_pricing,
 )
-from .models import CandidateInsight, CPUArchitecture, HistoricalMetrics, PlacementScoreResult, SortOrder, effective_price_usd
+from .models import (
+    CandidateInsight,
+    CPUArchitecture,
+    HistoricalMetrics,
+    PlacementScoreResult,
+    SortOrder,
+    effective_price_usd,
+)
 from .vm_specs import (
     VMSpec,
     calculate_relative_performance_details,
@@ -148,10 +155,8 @@ def enrich_with_databricks_cost(
     dbu_unit_price = catalog.pricing_profile.dbu_unit_price_usd
     photon_dbu_unit_price = catalog.pricing_profile.photon_dbu_unit_price_usd
     catalog_updated = cast(datetime, catalog.captured_at)
-    missing_catalog_match_count = 0
-    missing_dbu_rate_count = 0
-    missing_catalog_match_examples: list[str] = []
-    missing_dbu_rate_examples: list[str] = []
+    missing_catalog: list[str] = []
+    missing_dbu_rate: list[str] = []
 
     for candidate in candidates:
         compute_price = candidate.price_usd
@@ -159,15 +164,11 @@ def enrich_with_databricks_cost(
 
         row = lookup_azure_node_type_pricing(candidate.vm_size)
         if row is None:
-            missing_catalog_match_count += 1
-            if len(missing_catalog_match_examples) < 3:
-                missing_catalog_match_examples.append(candidate.vm_size)
+            missing_catalog.append(candidate.vm_size)
             candidate.notes = _append_note(candidate.notes, "Databricks DBU data not available for this SKU.")
             continue
         if row.dbu_per_hour is None:
-            missing_dbu_rate_count += 1
-            if len(missing_dbu_rate_examples) < 3:
-                missing_dbu_rate_examples.append(candidate.vm_size)
+            missing_dbu_rate.append(candidate.vm_size)
             candidate.notes = _append_note(candidate.notes, "Databricks DBU rate missing for this SKU.")
             continue
 
@@ -176,9 +177,8 @@ def enrich_with_databricks_cost(
         candidate.databricks_catalog_updated = catalog_updated
 
         # When Photon is enabled for a capable node, the Photon DBU cost
-        # (base * PHOTON_JOBS_MULTIPLIER for Photon Jobs compute) replaces the standard DBU cost in
-        # total_price_usd — Photon is an alternative compute tier, not an
-        # additive surcharge.
+        # replaces the standard DBU cost in total_price_usd -- Photon is an
+        # alternative compute tier, not an additive surcharge.
         databricks_cost = candidate.databricks_dbu_cost_usd
         if include_photon and row.photon_capable:
             candidate.databricks_photon_dbu_per_hour = row.dbu_per_hour * PHOTON_JOBS_MULTIPLIER
@@ -188,24 +188,24 @@ def enrich_with_databricks_cost(
         if compute_price is not None and databricks_cost is not None:
             candidate.total_price_usd = compute_price + databricks_cost
 
-    if missing_catalog_match_count > 0:
+    if missing_catalog:
         logger.warning(
             "Databricks DBU catalog match not found for %d candidate(s); leaving Databricks fields empty for unmatched SKUs (examples: %s)",
-            missing_catalog_match_count,
-            ", ".join(missing_catalog_match_examples),
+            len(missing_catalog),
+            ", ".join(missing_catalog[:3]),
         )
-    if missing_dbu_rate_count > 0:
+    if missing_dbu_rate:
         logger.warning(
             "Databricks DBU rate missing for %d candidate(s); leaving Databricks fields empty for catalog rows without DBU data (examples: %s)",
-            missing_dbu_rate_count,
-            ", ".join(missing_dbu_rate_examples),
+            len(missing_dbu_rate),
+            ", ".join(missing_dbu_rate[:3]),
         )
 
     return candidates
 
 
 def _append_note(existing: str | None, note: str) -> str:
-    if existing is None or existing == "":
+    if not existing:
         return note
     if note in existing:
         return existing

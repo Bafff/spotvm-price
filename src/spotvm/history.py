@@ -132,7 +132,7 @@ def _invalid_snapshot_payload() -> HistoricalSnapshotError:
 def _required_snapshot_field(data: dict[str, Any], key: str) -> Any:
     if key not in data:
         raise _missing_snapshot_field(key)
-    return data.get(key)
+    return data[key]
 
 
 def _serialization_error(filepath: Path, cause: TypeError) -> ValueError:
