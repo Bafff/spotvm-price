@@ -52,6 +52,7 @@ def _analysis_args(**overrides):
         "max_price": None,
         "max_eviction": None,
         "min_performance": None,
+        "sort_order": "price",
         "csv": None,
         "results_dir": Path("./results"),
         "save_results": False,

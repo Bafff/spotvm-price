@@ -9,7 +9,7 @@ from .databricks_catalog import (
     load_catalog,
     lookup_azure_node_type_pricing,
 )
-from .models import CandidateInsight, CPUArchitecture, HistoricalMetrics, PlacementScoreResult, effective_price_usd
+from .models import CandidateInsight, CPUArchitecture, HistoricalMetrics, PlacementScoreResult, SortOrder, effective_price_usd
 from .vm_specs import (
     VMSpec,
     calculate_relative_performance_details,
@@ -29,7 +29,6 @@ PLACEMENT_ORDER = {"high": 3, "medium": 2, "low": 1}
 PHOTON_JOBS_MULTIPLIER = 2.5
 PlacementLookupKey = tuple[str, str, str | None]
 MetricsLookupKey = tuple[str, str]
-RankSortKey = tuple[int, float, float]
 
 
 def merge_datasets(
@@ -57,8 +56,12 @@ def merge_datasets(
     return combined
 
 
-def rank_candidates(candidates: list[CandidateInsight]) -> list[CandidateInsight]:
-    ranked = sorted(candidates, key=_rank_sort_key)
+def rank_candidates(
+    candidates: list[CandidateInsight],
+    sort_order: SortOrder = "price",
+) -> list[CandidateInsight]:
+    key_fn = _SORT_KEY_FUNCTIONS.get(sort_order, _sort_key_price)
+    ranked = sorted(candidates, key=key_fn)
     for idx, item in enumerate(ranked, 1):
         item.recommendation_rank = idx
     return ranked
@@ -398,15 +401,45 @@ def _build_candidate_insight(
     )
 
 
-def _rank_sort_key(item: CandidateInsight) -> RankSortKey:
-    score_rank = PLACEMENT_ORDER.get((item.placement_score or "").lower(), 0)
+def _effective_price(item: CandidateInsight) -> float:
+    price = effective_price_usd(item)
+    return price if price is not None else float("inf")
+
+
+def _vcpu_count(item: CandidateInsight) -> int:
+    if item.vm_size:
+        spec = get_vm_spec(item.vm_size)
+        if spec is not None:
+            return spec.vcpus
+    return 0
+
+
+def _sort_key_price(item: CandidateInsight) -> tuple[float, float]:
+    """Sort by price ascending, then eviction rate ascending."""
     eviction = item.eviction_rate if item.eviction_rate is not None else float("inf")
-    if item.price_per_performance is not None:
-        price_metric = item.price_per_performance
-    else:
-        display_price = effective_price_usd(item)
-        price_metric = display_price if display_price is not None else float("inf")
-    return (-score_rank, eviction, price_metric)
+    return (_effective_price(item), eviction)
+
+
+def _sort_key_price_per_vcpu(item: CandidateInsight) -> tuple[float, float]:
+    """Sort by price-per-vCPU ascending, then eviction rate ascending."""
+    price = _effective_price(item)
+    vcpus = _vcpu_count(item)
+    per_vcpu = price / vcpus if vcpus > 0 else float("inf")
+    eviction = item.eviction_rate if item.eviction_rate is not None else float("inf")
+    return (per_vcpu, eviction)
+
+
+def _sort_key_eviction(item: CandidateInsight) -> tuple[float, float]:
+    """Sort by eviction rate ascending, then price ascending."""
+    eviction = item.eviction_rate if item.eviction_rate is not None else float("inf")
+    return (eviction, _effective_price(item))
+
+
+_SORT_KEY_FUNCTIONS = {
+    "price": _sort_key_price,
+    "price-per-vcpu": _sort_key_price_per_vcpu,
+    "eviction": _sort_key_eviction,
+}
 
 
 def _matches_requested_architecture(

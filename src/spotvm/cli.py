@@ -58,6 +58,7 @@ class AnalysisRunRequest:
     max_price: float | None
     max_eviction: float | None
     min_performance: float | None
+    sort_order: str
     csv: Path | None
     results_dir: Path
     save_results: bool
@@ -73,6 +74,7 @@ def _build_analysis_run_request(args: argparse.Namespace, *, save_results: bool)
         max_price=args.max_price,
         max_eviction=args.max_eviction,
         min_performance=args.min_performance,
+        sort_order=args.sort,
         csv=args.csv,
         results_dir=args.results_dir,
         save_results=save_results,
@@ -254,6 +256,15 @@ def _add_filtering_arguments(parser: argparse.ArgumentParser) -> None:
         "--min-performance",
         type=float,
         help="Minimum performance relative to baseline in percentage (requires --baseline-sku, e.g., 80 for 80%%)",
+    )
+
+    # Sorting
+    parser.add_argument(
+        "--sort",
+        type=str,
+        choices=["price", "price-per-vcpu", "eviction"],
+        default="price",
+        help="Sort order for results: price (default), price-per-vcpu, or eviction",
     )
 
 
@@ -836,7 +847,7 @@ def _build_ranked_candidates(
             include_photon=config.include_photon_cost,
         )
 
-    ranked = rank_candidates(candidates)
+    ranked = rank_candidates(candidates, sort_order=request.sort_order)
     ranked = enrich_with_performance(ranked, config.baseline_sku)
     ranked = enrich_with_coremark(ranked)
     ranked = filter_by_cost(

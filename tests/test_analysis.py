@@ -39,7 +39,7 @@ def test_merge_datasets_creates_synthetic_candidate_for_metrics_only_rows():
     assert candidate.cpu_arch == "x64"
 
 
-def test_rank_candidates_prefers_price_per_performance_before_raw_price():
+def test_rank_candidates_default_sorts_by_price():
     candidates = [
         CandidateInsight(
             region="eastus",
@@ -50,7 +50,6 @@ def test_rank_candidates_prefers_price_per_performance_before_raw_price():
             price_last_updated=None,
             eviction_rate=2.0,
             eviction_last_updated=None,
-            price_per_performance=0.0040,
         ),
         CandidateInsight(
             region="eastus",
@@ -61,14 +60,72 @@ def test_rank_candidates_prefers_price_per_performance_before_raw_price():
             price_last_updated=None,
             eviction_rate=2.0,
             eviction_last_updated=None,
-            price_per_performance=0.0060,
         ),
     ]
 
     ranked = rank_candidates(candidates)
 
-    assert [candidate.vm_size for candidate in ranked] == ["Standard_D4as_v5", "Standard_D8as_v5"]
-    assert [candidate.recommendation_rank for candidate in ranked] == [1, 2]
+    assert [c.vm_size for c in ranked] == ["Standard_D8as_v5", "Standard_D4as_v5"]
+    assert [c.recommendation_rank for c in ranked] == [1, 2]
+
+
+def test_rank_candidates_price_per_vcpu_sort():
+    # Standard_D4as_v5 = 4 vCPUs, Standard_D8as_v5 = 8 vCPUs
+    candidates = [
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D4as_v5",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.10,  # $0.025/vCPU
+            price_last_updated=None,
+            eviction_rate=5.0,
+            eviction_last_updated=None,
+        ),
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D8as_v5",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.16,  # $0.020/vCPU — cheaper per vCPU
+            price_last_updated=None,
+            eviction_rate=5.0,
+            eviction_last_updated=None,
+        ),
+    ]
+
+    ranked = rank_candidates(candidates, sort_order="price-per-vcpu")
+
+    assert [c.vm_size for c in ranked] == ["Standard_D8as_v5", "Standard_D4as_v5"]
+
+
+def test_rank_candidates_eviction_sort():
+    candidates = [
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D4as_v5",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.10,
+            price_last_updated=None,
+            eviction_rate=15.0,
+            eviction_last_updated=None,
+        ),
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D8as_v5",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.20,
+            price_last_updated=None,
+            eviction_rate=3.0,
+            eviction_last_updated=None,
+        ),
+    ]
+
+    ranked = rank_candidates(candidates, sort_order="eviction")
+
+    assert [c.vm_size for c in ranked] == ["Standard_D8as_v5", "Standard_D4as_v5"]
 
 
 def test_rank_candidates_prefers_effective_total_price_for_databricks_candidates():

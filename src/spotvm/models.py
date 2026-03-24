@@ -6,6 +6,7 @@ from typing import Literal
 
 PerformanceBasis = Literal["coremark", "heuristic"]
 CPUArchitecture = Literal["x64", "arm"]
+SortOrder = Literal["price", "price-per-vcpu", "eviction"]
 DATABRICKS_OPTIONAL_FIELDS = (
     "compute_price_usd",
     "databricks_dbu_per_hour",
