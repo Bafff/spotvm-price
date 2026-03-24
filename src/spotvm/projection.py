@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
@@ -39,8 +40,8 @@ def project_for_history(candidate: CandidateInsight) -> dict[str, Any]:
 
 def project_for_report(
     candidate: CandidateInsight,
-    json_serializer: Any,
-    merge_notes: Any,
+    json_serializer: Callable[[Any], Any],
+    merge_notes: Callable[..., str | None],
     *,
     show_databricks: bool = False,
     show_photon: bool = False,
@@ -81,7 +82,7 @@ def project_for_csv(
     candidate: CandidateInsight,
     vendor_text: str,
     formatters: dict[str, Any],
-    format_notes: Any,
+    format_notes: Callable[[CandidateInsight], str],
     *,
     show_databricks: bool = False,
     show_photon: bool = False,
