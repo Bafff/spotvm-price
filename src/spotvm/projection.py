@@ -6,6 +6,13 @@ from typing import Any
 
 from .models import DATABRICKS_OPTIONAL_FIELDS, CandidateInsight, effective_price_usd
 
+# Fail fast if a field in DATABRICKS_OPTIONAL_FIELDS is renamed on the dataclass.
+for _f in DATABRICKS_OPTIONAL_FIELDS:
+    if not hasattr(CandidateInsight, _f):
+        msg = f"DATABRICKS_OPTIONAL_FIELDS references '{_f}' which does not exist on CandidateInsight"
+        raise AttributeError(msg)
+del _f
+
 
 def project_for_history(candidate: CandidateInsight) -> dict[str, Any]:
     """Project a candidate to a dictionary for historical JSON storage.
