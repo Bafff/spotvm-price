@@ -199,8 +199,8 @@ def _load_azure_dbu_pricing_rows() -> tuple[AzureNodeTypePricingRow, ...]:
     rows: list[AzureNodeTypePricingRow] = []
     skipped_blank_node_type_id = 0
     skipped_blank_node_type_id_rows: list[int] = []
-    skipped_incomplete_metadata = 0
-    skipped_incomplete_metadata_examples: list[str] = []
+    skipped_default_stub_rows = 0
+    skipped_default_stub_examples: list[str] = []
     for row_number, item in enumerate(reader, start=2):
         node_type_id = (item.get("node_type_id") or "").strip()
         if not node_type_id:
@@ -211,16 +211,23 @@ def _load_azure_dbu_pricing_rows() -> tuple[AzureNodeTypePricingRow, ...]:
 
         category = _optional_str(item.get("category"))
         num_cores = _optional_int(item.get("num_cores"), row_number=row_number, column_name="num_cores")
+        dbu_per_hour = _optional_float(
+            item.get("dbu_per_hour"),
+            row_number=row_number,
+            column_name="dbu_per_hour",
+        )
 
-        # Rows missing both category and num_cores are placeholder stubs from the
-        # browser extraction (defaultNodeTypeToPricingUnitsMap).  Their dbu_per_hour
-        # is often a default value (e.g. 1) that does not reflect actual pricing.
-        # Skip them so they fall through to the "DBU data not available" warning
-        # path instead of silently using incorrect data.
-        if category is None and num_cores is None:
-            skipped_incomplete_metadata += 1
-            if len(skipped_incomplete_metadata_examples) < 5:
-                skipped_incomplete_metadata_examples.append(node_type_id)
+        # The browser extraction includes placeholder rows that only carry the
+        # node_type_id plus a default dbu_per_hour of 1. Those rows skew runtime
+        # ranking badly (for example D16as_v6) and should fall through to the
+        # "DBU data not available" path instead of being treated as real pricing.
+        # Keep blank-metadata rows when they carry a specific non-default rate,
+        # because the vendored catalog also contains legitimate pricing in that
+        # shape (for example DS14=4 and DS3=0.75).
+        if category is None and num_cores is None and dbu_per_hour == 1.0:
+            skipped_default_stub_rows += 1
+            if len(skipped_default_stub_examples) < 5:
+                skipped_default_stub_examples.append(node_type_id)
             continue
 
         rows.append(
@@ -229,11 +236,7 @@ def _load_azure_dbu_pricing_rows() -> tuple[AzureNodeTypePricingRow, ...]:
                 category=category,
                 num_cores=num_cores,
                 memory_gb=_optional_float(item.get("memory_gb"), row_number=row_number, column_name="memory_gb"),
-                dbu_per_hour=_optional_float(
-                    item.get("dbu_per_hour"),
-                    row_number=row_number,
-                    column_name="dbu_per_hour",
-                ),
+                dbu_per_hour=dbu_per_hour,
                 local_disk_gb=_optional_int(
                     item.get("local_disk_gb"), row_number=row_number, column_name="local_disk_gb"
                 ),
@@ -252,13 +255,13 @@ def _load_azure_dbu_pricing_rows() -> tuple[AzureNodeTypePricingRow, ...]:
             skipped_blank_node_type_id,
             ", ".join(str(row) for row in skipped_blank_node_type_id_rows),
         )
-    if skipped_incomplete_metadata > 0:
+    if skipped_default_stub_rows > 0:
         logger.info(
-            "Skipped %d Azure Databricks DBU pricing row(s) missing category and num_cores "
+            "Skipped %d Azure Databricks DBU pricing row(s) missing category and num_cores with default dbu_per_hour=1 "
             "(likely placeholder data): %s%s",
-            skipped_incomplete_metadata,
-            ", ".join(skipped_incomplete_metadata_examples),
-            " ..." if skipped_incomplete_metadata > 5 else "",
+            skipped_default_stub_rows,
+            ", ".join(skipped_default_stub_examples),
+            " ..." if skipped_default_stub_rows > 5 else "",
         )
     if not rows:
         logger.warning("Loaded 0 usable Azure Databricks DBU pricing rows from %s", path)

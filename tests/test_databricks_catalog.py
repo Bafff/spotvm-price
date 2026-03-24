@@ -669,6 +669,59 @@ def test_load_azure_dbu_pricing_rows_warns_when_rows_are_skipped_for_blank_node_
     assert "Skipped 1 Azure Databricks DBU pricing row(s) with blank node_type_id" in caplog.text
 
 
+def test_lookup_azure_node_type_pricing_keeps_priced_rows_with_blank_metadata(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "databricks_azure_dbu_pricing.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "node_type_id,category,num_cores,memory_gb,dbu_per_hour,local_disk_gb,num_gpus,photon_capable,deprecated",
+                "Standard_DS14,,,,4,,,,",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("spotvm.databricks_catalog.resources.files", lambda _pkg: tmp_path)
+    import spotvm.databricks_catalog as databricks_catalog
+
+    databricks_catalog._load_azure_dbu_pricing_rows.cache_clear()
+    databricks_catalog._azure_dbu_pricing_index.cache_clear()
+
+    row = lookup_azure_node_type_pricing("Standard_DS14")
+
+    assert row is not None
+    assert row.node_type_id == "Standard_DS14"
+    assert row.category is None
+    assert row.num_cores is None
+    assert row.dbu_per_hour == 4.0
+
+
+def test_lookup_azure_node_type_pricing_skips_default_rate_stub_rows_with_blank_metadata(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "databricks_azure_dbu_pricing.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "node_type_id,category,num_cores,memory_gb,dbu_per_hour,local_disk_gb,num_gpus,photon_capable,deprecated",
+                "Standard_D16as_v6,,,,1,,,,",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("spotvm.databricks_catalog.resources.files", lambda _pkg: tmp_path)
+    import spotvm.databricks_catalog as databricks_catalog
+
+    databricks_catalog._load_azure_dbu_pricing_rows.cache_clear()
+    databricks_catalog._azure_dbu_pricing_index.cache_clear()
+
+    with pytest.raises(DatabricksCatalogError, match="Loaded 0 usable Azure Databricks DBU pricing rows"):
+        lookup_azure_node_type_pricing("Standard_D16as_v6")
+
+
 def test_azure_node_type_pricing_row_rejects_zero_memory_gb():
     with pytest.raises(ValueError, match="memory_gb must be positive"):
         AzureNodeTypePricingRow(
