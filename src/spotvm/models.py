@@ -40,6 +40,19 @@ class HistoricalMetrics:
 
 @dataclass
 class CandidateInsight:
+    """Unified candidate row used across ranking, reporting, and saved history.
+
+    Databricks fields follow two intentional groups:
+    - `compute_price_usd` keeps the raw Azure VM hourly price when Databricks
+      enrichment ran.
+    - `total_price_usd` holds the comparable ranked/display price only when a
+      full Databricks-aware total could be computed.
+
+    When Databricks enrichment runs but `total_price_usd` stays `None`,
+    reporting may still show the raw VM price via `compute_price_usd`, but
+    ranking and `--max-price` must treat the candidate as non-comparable.
+    """
+
     region: str
     vm_size: str
     placement_score: str | None
@@ -72,8 +85,10 @@ def effective_price_usd(candidate: CandidateInsight) -> float | None:
 
     Prefers total_price_usd (which includes Databricks DBU cost when present)
     over the raw Azure VM price_usd. When Databricks enrichment ran but could
-    not compute a comparable total price, returns None instead of falling back
-    to the raw VM price.
+    not compute a comparable total price, intentionally returns None instead of
+    falling back to the raw VM price. This preserves comparable-total semantics
+    for ranking and `--max-price` filtering while still allowing reporting to
+    show `compute_price_usd` separately.
     """
     if candidate.total_price_usd is not None:
         return candidate.total_price_usd

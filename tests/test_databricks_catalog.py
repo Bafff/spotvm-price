@@ -722,6 +722,34 @@ def test_lookup_azure_node_type_pricing_skips_default_rate_stub_rows_with_blank_
         lookup_azure_node_type_pricing("Standard_D16as_v6")
 
 
+def test_load_azure_dbu_pricing_rows_warns_when_default_rate_stub_rows_are_skipped(tmp_path, monkeypatch, caplog):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    csv_path = data_dir / "databricks_azure_dbu_pricing.csv"
+    csv_path.write_text(
+        "\n".join(
+            [
+                "node_type_id,category,num_cores,memory_gb,dbu_per_hour,local_disk_gb,num_gpus,photon_capable,deprecated",
+                "Standard_D16as_v6,,,,1,,,,",
+                "Standard_D4ds_v5,General Purpose,4,16.0,1.2,150,0,True,False",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("spotvm.databricks_catalog.resources.files", lambda _pkg: tmp_path)
+    import spotvm.databricks_catalog as databricks_catalog
+
+    databricks_catalog._load_azure_dbu_pricing_rows.cache_clear()
+    databricks_catalog._azure_dbu_pricing_index.cache_clear()
+
+    with caplog.at_level("WARNING", logger="spotvm"):
+        rows = load_azure_dbu_pricing_rows()
+
+    assert len(rows) == 1
+    assert "Skipped 1 Azure Databricks DBU pricing row(s) missing category and num_cores" in caplog.text
+
+
 def test_azure_node_type_pricing_row_rejects_zero_memory_gb():
     with pytest.raises(ValueError, match="memory_gb must be positive"):
         AzureNodeTypePricingRow(

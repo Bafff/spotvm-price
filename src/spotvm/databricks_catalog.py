@@ -170,7 +170,7 @@ def load_azure_dbu_pricing_rows() -> list[AzureNodeTypePricingRow]:
 
 
 def load_azure_dbu_pricing_last_updated() -> datetime:
-    """Return the vendored catalog snapshot timestamp used for DBU pricing metadata."""
+    """Return the vendored JSON snapshot timestamp that accompanies the CSV DBU data."""
     return cast(datetime, load_catalog().captured_at)
 
 
@@ -244,7 +244,7 @@ def _load_azure_dbu_pricing_rows() -> tuple[AzureNodeTypePricingRow, ...]:
             ", ".join(str(row) for row in skipped_blank_node_type_id_rows),
         )
     if skipped_default_stub_rows > 0:
-        logger.info(
+        logger.warning(
             "Skipped %d Azure Databricks DBU pricing row(s) missing category and num_cores with default dbu_per_hour=1 "
             "(likely placeholder data): %s%s",
             skipped_default_stub_rows,

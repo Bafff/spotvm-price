@@ -767,7 +767,7 @@ def _run_history_analysis(
             depth=depth,
             output_path=output_path,
         )
-    except HistoricalSnapshotError as exc:
+    except (HistoricalSnapshotError, OSError) as exc:
         logger.error("Historical analysis failed: %s", str(exc))  # noqa: TRY400 - user-facing history failure should stay concise
         return 2
 
@@ -829,6 +829,7 @@ def _build_ranked_candidates(
     historical_metrics: list[HistoricalMetrics],
     request: AnalysisRunRequest,
     config: ToolConfig,
+    filter_stats: dict[str, int] | None = None,
 ) -> list[CandidateInsight]:
     candidates = merge_datasets(placement_scores, historical_metrics)
 
@@ -855,6 +856,7 @@ def _build_ranked_candidates(
         max_price=request.max_price,
         max_eviction=request.max_eviction,
         min_performance=request.min_performance,
+        filter_stats=filter_stats,
     )
 
     if config.result_limit:
@@ -884,11 +886,13 @@ def _run_single_analysis(
         client=client,
         config=config,
     )
+    filter_stats: dict[str, int] = {}
     ranked = _build_ranked_candidates(
         placement_scores=placement_scores,
         historical_metrics=historical_metrics,
         request=request,
         config=config,
+        filter_stats=filter_stats,
     )
 
     def emit(*values: Any, **kwargs: Any) -> None:
@@ -915,6 +919,7 @@ def _run_single_analysis(
         config=config,
         render_options=render_options,
         emit=emit,
+        missing_databricks_total_count=filter_stats.get("missing_databricks_total_price_count", 0),
     )
 
 
@@ -1042,9 +1047,16 @@ def _render_analysis_results(
     config: ToolConfig,
     render_options: RenderOptions,
     emit,
+    missing_databricks_total_count: int = 0,
 ) -> None:
     if not ranked:
         emit("No candidates match the specified filters. Try relaxing constraints.")
+        _emit_missing_databricks_total_note(
+            emit=emit,
+            request=request,
+            config=config,
+            missing_databricks_total_count=missing_databricks_total_count,
+        )
         return
 
     emit(
@@ -1100,6 +1112,13 @@ def _render_analysis_results(
         for line in summary_lines:
             emit(f" - {line}")
 
+    _emit_missing_databricks_total_note(
+        emit=emit,
+        request=request,
+        config=config,
+        missing_databricks_total_count=missing_databricks_total_count,
+    )
+
     if config.enable_placement:
         disclaimer = (
             "Note: Azure Spot placement scores are point-in-time indicators and "
@@ -1111,6 +1130,22 @@ def _render_analysis_results(
             "\nNote: Spot VM pricing and eviction rates are historical estimates "
             "and may change. Use --placement-check for capacity/quota data."
         )
+
+
+def _emit_missing_databricks_total_note(
+    *,
+    emit,
+    request: AnalysisRunRequest,
+    config: ToolConfig,
+    missing_databricks_total_count: int,
+) -> None:
+    if missing_databricks_total_count <= 0 or not config.include_databricks_cost or request.max_price is None:
+        return
+    emit(
+        "\nDatabricks pricing note: "
+        f"{missing_databricks_total_count} candidate(s) were excluded from --max-price "
+        "because Databricks total price was unavailable for those SKUs."
+    )
 
 
 def _build_report(

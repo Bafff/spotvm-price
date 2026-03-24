@@ -295,6 +295,7 @@ def filter_by_cost(
     max_price: float | None = None,
     max_eviction: float | None = None,
     min_performance: float | None = None,
+    filter_stats: dict[str, int] | None = None,
 ) -> list[CandidateInsight]:
     """Filter candidates by cost and performance constraints.
 
@@ -333,6 +334,8 @@ def filter_by_cost(
     if filtered_count > 0:
         parts = _cost_constraint_parts(max_price, max_eviction, min_performance)
         logger.info(f"Filtered out {filtered_count} candidate(s) not meeting cost constraints ({', '.join(parts)})")
+    if filter_stats is not None:
+        filter_stats["missing_databricks_total_price_count"] = missing_databricks_total_count
     if missing_databricks_total_count > 0:
         logger.info(
             "Excluded %d candidate(s) from --max-price filtering because Databricks total price was unavailable",

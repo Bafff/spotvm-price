@@ -257,6 +257,30 @@ class TestMainWithMocks:
             "All historical run files failed to load",
         )
 
+    @patch("spotvm.history.analyze_history", side_effect=OSError("disk full"))
+    def test_run_history_analysis_returns_two_when_csv_write_fails(
+        self,
+        mock_analyze_history,
+        tmp_path,
+    ):
+        results_dir = tmp_path / "results"
+        logger = MagicMock()
+
+        rc = _run_history_analysis(
+            results_dir=results_dir,
+            depth=None,
+            history_output=None,
+            logger=logger,
+            emit=_stdout_emitter,
+        )
+
+        assert rc == 2
+        mock_analyze_history.assert_called_once()
+        logger.error.assert_called_once_with(
+            "Historical analysis failed: %s",
+            "disk full",
+        )
+
     @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 1)
     @patch("spotvm.cli.time.sleep")
     @patch("spotvm.cli.signal.signal")
@@ -844,6 +868,42 @@ class TestMainWithMocks:
         assert ranked[0].databricks_dbu_cost_usd == 0.15
         assert ranked[0].total_price_usd == 0.20
 
+    def test_build_ranked_candidates_tracks_missing_databricks_total_price_exclusions(self, monkeypatch):
+        monkeypatch.setattr(
+            "spotvm.analysis.load_catalog",
+            lambda: SimpleNamespace(
+                captured_at="2026-03-19T00:00:00Z",
+                pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+            ),
+        )
+
+        pricing_rows = {
+            "Standard_D4s_v4": SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),
+        }
+        monkeypatch.setattr(
+            "spotvm.analysis.lookup_azure_node_type_pricing",
+            lambda sku: pricing_rows.get(sku),
+        )
+
+        filter_stats: dict[str, int] = {}
+        ranked = _build_ranked_candidates(
+            placement_scores=[],
+            historical_metrics=[
+                _historical_metric("Standard_D4s_v4", price_usd=0.05, eviction_rate=5.0),
+                _historical_metric("Standard_E4s_v4", price_usd=0.05, eviction_rate=5.0),
+            ],
+            request=_analysis_args(max_price=0.30),
+            config=ToolConfig(
+                regions=["centralus"],
+                sizes=["Standard_D4s_v4", "Standard_E4s_v4"],
+                include_databricks_cost=True,
+            ),
+            filter_stats=filter_stats,
+        )
+
+        assert [candidate.vm_size for candidate in ranked] == ["Standard_D4s_v4"]
+        assert filter_stats == {"missing_databricks_total_price_count": 1}
+
     def test_build_ranked_candidates_refreshes_databricks_catalog_caches_per_run(self, monkeypatch):
         monkeypatch.setattr("spotvm.cli.refresh_databricks_catalog_cache", MagicMock())
         monkeypatch.setattr(
@@ -1337,6 +1397,30 @@ class TestMainWithMocks:
         assert "No candidates match the specified filters" in captured.out
         mock_render_table.assert_not_called()
 
+    @patch("spotvm.cli.render_table")
+    def test_render_analysis_results_empty_state_reports_missing_databricks_total_exclusions(
+        self,
+        mock_render_table,
+        capsys,
+    ):
+        _render_analysis_results(
+            [],
+            request=_analysis_args(max_price=0.30),
+            config=ToolConfig(
+                regions=["centralus"],
+                sizes=["Standard_D4s_v5"],
+                include_databricks_cost=True,
+            ),
+            render_options=RenderOptions(colors_enabled=False),
+            emit=_stdout_emitter,
+            missing_databricks_total_count=1,
+        )
+
+        captured = capsys.readouterr()
+        assert "No candidates match the specified filters" in captured.out
+        assert "1 candidate(s) were excluded from --max-price" in captured.out
+        mock_render_table.assert_not_called()
+
     @patch("spotvm.cli.summarize_top_candidates", return_value=[])
     @patch("spotvm.cli.render_table")
     def test_render_analysis_results_explains_heuristic_marker_once(
@@ -1383,6 +1467,53 @@ class TestMainWithMocks:
         assert "* Heuristic perf:" in captured.out
         assert "comparable CoreMark data is unavailable" in captured.out
         assert "Some Perf % / Price/Perf values use a vCPU/RAM heuristic" not in captured.out
+        mock_summarize.assert_called_once_with([candidate])
+
+    @patch("spotvm.cli.summarize_top_candidates", return_value=[])
+    @patch("spotvm.cli.render_table")
+    def test_render_analysis_results_reports_missing_databricks_total_exclusions(
+        self,
+        mock_render_table,
+        mock_summarize,
+        capsys,
+    ):
+        candidate = SimpleNamespace(
+            recommendation_rank=1,
+            region="centralus",
+            availability_zone=None,
+            vm_size="Standard_D4s_v4",
+            cpu_arch="x64",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.01,
+            price_last_updated=None,
+            eviction_rate=1.0,
+            performance_relative=None,
+            price_per_performance=None,
+            performance_basis=None,
+            performance_note=None,
+            coremark_score=None,
+            coremark_per_vcpu=None,
+            notes=None,
+        )
+        mock_render_table.return_value = "RANKED TABLE"
+
+        _render_analysis_results(
+            [candidate],
+            request=_analysis_args(max_price=0.30),
+            config=ToolConfig(
+                regions=["centralus"],
+                sizes=["Standard_D4s_v4"],
+                include_databricks_cost=True,
+            ),
+            render_options=RenderOptions(colors_enabled=False),
+            emit=_stdout_emitter,
+            missing_databricks_total_count=2,
+        )
+
+        captured = capsys.readouterr()
+        assert "2 candidate(s) were excluded from --max-price" in captured.out
+        assert "Databricks total price was unavailable" in captured.out
         mock_summarize.assert_called_once_with([candidate])
 
     @patch("spotvm.cli.export_to_csv", side_effect=PermissionError("disk full"))
