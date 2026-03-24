@@ -30,6 +30,14 @@ class DatabricksCatalogError(RuntimeError):
 logger = logging.getLogger("spotvm")
 
 
+def _require_positive_finite(value: float, name: str) -> None:
+    """Validate that a float field is finite and strictly positive."""
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be finite")
+    if value <= 0.0:
+        raise ValueError(f"{name} must be positive")
+
+
 @dataclass(frozen=True)
 class DatabricksPricingProfile:
     name: str
@@ -41,14 +49,8 @@ class DatabricksPricingProfile:
         object.__setattr__(self, "name", normalized_name)
         if not normalized_name:
             raise ValueError("name must be non-empty")
-        if not math.isfinite(self.dbu_unit_price_usd):
-            raise ValueError("dbu_unit_price_usd must be finite")
-        if self.dbu_unit_price_usd <= 0.0:
-            raise ValueError("dbu_unit_price_usd must be positive")
-        if not math.isfinite(self.photon_dbu_unit_price_usd):
-            raise ValueError("photon_dbu_unit_price_usd must be finite")
-        if self.photon_dbu_unit_price_usd <= 0.0:
-            raise ValueError("photon_dbu_unit_price_usd must be positive")
+        _require_positive_finite(self.dbu_unit_price_usd, "dbu_unit_price_usd")
+        _require_positive_finite(self.photon_dbu_unit_price_usd, "photon_dbu_unit_price_usd")
 
 
 @dataclass(frozen=True)
@@ -73,15 +75,9 @@ class DatabricksCatalogEntry:
         object.__setattr__(self, "sku", normalized_sku)
         if not normalized_sku:
             raise ValueError("sku must be non-empty")
-        if not math.isfinite(self.dbu_per_hour):
-            raise ValueError("dbu_per_hour must be finite")
-        if self.dbu_per_hour <= 0.0:
-            raise ValueError("dbu_per_hour must be positive")
+        _require_positive_finite(self.dbu_per_hour, "dbu_per_hour")
         if self.photon_dbu_per_hour is not None:
-            if not math.isfinite(self.photon_dbu_per_hour):
-                raise ValueError("photon_dbu_per_hour must be finite")
-            if self.photon_dbu_per_hour <= 0.0:
-                raise ValueError("photon_dbu_per_hour must be positive")
+            _require_positive_finite(self.photon_dbu_per_hour, "photon_dbu_per_hour")
 
 
 @dataclass(frozen=True)
@@ -104,21 +100,13 @@ class AzureNodeTypePricingRow:
         if self.num_cores is not None and self.num_cores <= 0:
             raise ValueError("num_cores must be positive")
         if self.memory_gb is not None:
-            if not math.isfinite(self.memory_gb):
-                raise ValueError("memory_gb must be finite")
-            if self.memory_gb < 0.0:
-                raise ValueError("memory_gb must be non-negative")
-            if self.memory_gb == 0.0:
-                raise ValueError("memory_gb must be positive")
+            _require_positive_finite(self.memory_gb, "memory_gb")
         if self.local_disk_gb is not None and self.local_disk_gb < 0:
             raise ValueError("local_disk_gb must be non-negative")
         if self.num_gpus is not None and self.num_gpus < 0:
             raise ValueError("num_gpus must be non-negative")
         if self.dbu_per_hour is not None:
-            if not math.isfinite(self.dbu_per_hour):
-                raise ValueError("dbu_per_hour must be finite")
-            if self.dbu_per_hour <= 0.0:
-                raise ValueError("dbu_per_hour must be positive")
+            _require_positive_finite(self.dbu_per_hour, "dbu_per_hour")
 
 
 @dataclass(frozen=True)
@@ -275,10 +263,8 @@ def lookup_azure_node_type_pricing(node_type_id: str) -> AzureNodeTypePricingRow
 
 @cache
 def _azure_dbu_pricing_index() -> dict[str, AzureNodeTypePricingRow]:
-    rows = _load_azure_dbu_pricing_rows()
-    if not rows:
-        raise DatabricksCatalogError("Loaded 0 usable Azure Databricks DBU pricing rows from vendored catalog")
-    return {row.node_type_id: row for row in rows}
+    # _load_azure_dbu_pricing_rows already raises if no usable rows are found
+    return {row.node_type_id: row for row in _load_azure_dbu_pricing_rows()}
 
 
 def refresh_databricks_catalog_cache() -> None:
@@ -366,7 +352,7 @@ def _catalog_from_payload(payload: dict[str, Any]) -> DatabricksCatalog:
                     context=f"Databricks catalog entry for SKU {sku}",
                 ),
                 photon_dbu_per_hour=(
-                    _float_optional_value(
+                    _float_value(
                         photon_raw,
                         context=f"Databricks catalog entry for SKU {sku} photon_dbu_per_hour",
                     )
@@ -493,10 +479,6 @@ def _validate_azure_dbu_csv_headers(fieldnames: Sequence[str] | None) -> None:
 
 def _float_mapping_value(mapping: dict[str, Any], key: str, *, context: str) -> float:
     return _float_value(_required_mapping_value(mapping, key, context=context), context=f"{context}.{key}")
-
-
-def _float_optional_value(value: Any, *, context: str) -> float:
-    return _float_value(value, context=context)
 
 
 def _float_value(value: Any, *, context: str) -> float:

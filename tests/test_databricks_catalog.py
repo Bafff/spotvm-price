@@ -410,7 +410,7 @@ def test_databricks_catalog_requires_sorted_unique_entries():
 @pytest.mark.parametrize(
     ("field_name", "value", "expected_message"),
     [
-        ("memory_gb", -1.0, "memory_gb must be non-negative"),
+        ("memory_gb", -1.0, "memory_gb must be positive"),
         ("local_disk_gb", -1, "local_disk_gb must be non-negative"),
         ("num_gpus", -1, "num_gpus must be non-negative"),
     ],
