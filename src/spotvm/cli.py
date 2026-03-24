@@ -11,11 +11,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast, get_args
 
 from . import config as config_defaults
 from .analysis import (
     enrich_with_coremark,
+    enrich_with_databricks_cost,
     enrich_with_performance,
     filter_by_cost,
     filter_by_requirements,
@@ -30,13 +31,23 @@ from .config import (
     load_config_file,
     merge_cli_overrides,
 )
+from .databricks_catalog import (
+    DatabricksCatalogError,
+    refresh_catalog_instructions,
+    refresh_databricks_catalog_cache,
+)
 from .http_client import AzureHttpError, AzureRestClient
-from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
+from .models import CandidateInsight, HistoricalMetrics, PlacementScoreResult, SortOrder
 from .placement_score import PlacementScoreRequest, fetch_placement_scores
 from .projection import project_for_report
 from .reporting import RenderOptions, export_to_csv, initialize_color_output, render_table
 from .resource_graph import ResourceGraphRequest, fetch_historical_metrics
 from .vm_specs import discover_skus
+
+logger = logging.getLogger("spotvm")
+# These exception types point to programmer bugs in unattended control flow.
+# Retrying would just loop on a broken release, so unattended mode aborts fast.
+_FATAL_UNATTENDED_EXCEPTIONS = (AssertionError, AttributeError, KeyError, NameError, TypeError)
 
 
 @dataclass(frozen=True)
@@ -49,6 +60,7 @@ class AnalysisRunRequest:
     max_price: float | None
     max_eviction: float | None
     min_performance: float | None
+    sort_order: SortOrder
     csv: Path | None
     results_dir: Path
     save_results: bool
@@ -64,6 +76,7 @@ def _build_analysis_run_request(args: argparse.Namespace, *, save_results: bool)
         max_price=args.max_price,
         max_eviction=args.max_eviction,
         min_performance=args.min_performance,
+        sort_order=cast(SortOrder, args.sort),
         csv=args.csv,
         results_dir=args.results_dir,
         save_results=save_results,
@@ -186,6 +199,21 @@ def _add_base_arguments(parser: argparse.ArgumentParser) -> None:
         type=str,
         help="Baseline VM size for relative performance comparison (e.g., Standard_D4as_v6 = 100%%)",
     )
+    parser.add_argument(
+        "--include-databricks-cost",
+        action="store_true",
+        help="Overlay vendored Databricks DBU cost metadata onto matching VM SKUs",
+    )
+    parser.add_argument(
+        "--include-photon-cost",
+        action="store_true",
+        help="Use the full Photon DBU rate when Databricks cost mode is enabled",
+    )
+    parser.add_argument(
+        "--refresh-databricks-catalog",
+        action="store_true",
+        help="Print the manual Databricks pricing refresh procedure and exit",
+    )
 
 
 def _add_filtering_arguments(parser: argparse.ArgumentParser) -> None:
@@ -216,7 +244,10 @@ def _add_filtering_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--max-price",
         type=float,
-        help="Maximum acceptable price per hour in USD (e.g., 0.10 for $0.10/hr)",
+        help=(
+            "Maximum acceptable hourly price in USD "
+            "(uses combined VM + Databricks hourly cost when --include-databricks-cost is enabled)"
+        ),
     )
     parser.add_argument(
         "--max-eviction",
@@ -227,6 +258,15 @@ def _add_filtering_arguments(parser: argparse.ArgumentParser) -> None:
         "--min-performance",
         type=float,
         help="Minimum performance relative to baseline in percentage (requires --baseline-sku, e.g., 80 for 80%%)",
+    )
+
+    # Sorting
+    parser.add_argument(
+        "--sort",
+        type=str,
+        choices=get_args(SortOrder),
+        default="price",
+        help="Sort order for results: price (default), price-per-vcpu, or eviction",
     )
 
 
@@ -282,6 +322,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     args = parser.parse_args(argv)
     logger = _build_cli_logger(args)
+    if args.refresh_databricks_catalog:
+        return _run_refresh_mode(logger=logger)
     history_rc = _run_history_mode_if_requested(
         args=args,
         logger=logger,
@@ -387,6 +429,8 @@ def _build_runtime_config(
         "result_limit": args.limit,
         "baseline_sku": args.baseline_sku,
         "cpu_arch": args.cpu_arch,
+        "include_databricks_cost": args.include_databricks_cost or None,
+        "include_photon_cost": args.include_photon_cost or None,
     }
     if args.placement_check:
         overrides["enable_placement"] = True
@@ -404,6 +448,8 @@ def _build_runtime_config(
             parser.error("--desired-count requires --placement-check (or enable_placement in config)")
     if args.min_performance is not None and not merged_baseline:
         parser.error("--min-performance requires --baseline-sku (on CLI or in config)")
+    if config_data.get("include_photon_cost") and not config_data.get("include_databricks_cost"):
+        parser.error("--include-photon-cost requires --include-databricks-cost")
 
     try:
         return ToolConfig.from_dict(config_data)
@@ -446,7 +492,20 @@ def _run_analysis_mode(
     except AzureHttpError as exc:
         logger.error("Azure API request failed: %s", exc)  # noqa: TRY400 - user-facing API failure should stay concise
         return 2
+    except DatabricksCatalogError as exc:
+        logger.error(  # noqa: TRY400 - user-facing remediation should stay concise without a traceback
+            "Databricks pricing catalog failed: %s. Use --refresh-databricks-catalog to refresh vendored data, "
+            "or remove --include-databricks-cost to continue without Databricks enrichment.",
+            exc,
+        )
+        return 2
 
+    return 0
+
+
+def _run_refresh_mode(*, logger: logging.Logger) -> int:
+    logger.info("Databricks catalog refresh is manual-only")
+    print(refresh_catalog_instructions())
     return 0
 
 
@@ -536,9 +595,37 @@ def _run_unattended_iteration(
             logger=logger,
         )
     except AzureHttpError as exc:
+        # Azure API failures are treated as transient service errors in
+        # unattended mode, so they do not count toward the stop threshold.
         logger.error(f"Azure API request failed: {exc}")  # noqa: TRY400 - traceback is noise for API failures
         logger.info("Continuing despite error...")
-        return 0, None
+        return unexpected_error_count, None
+    except DatabricksCatalogError as exc:
+        unexpected_error_count += 1
+        logger.error(  # noqa: TRY400 - catalog failures are user-facing and do not need tracebacks
+            "Databricks pricing catalog failed (%d/%d): %s",
+            unexpected_error_count,
+            config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES,
+            exc,
+        )
+        if unexpected_error_count >= config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES:
+            logger.error(  # noqa: TRY400 - stop condition is a state transition, not an exception report
+                "Stopping unattended mode after %d consecutive unattended monitoring failures",
+                config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES,
+            )
+            emit(
+                f"\n{'[x]' if request.no_color else '❌'} Stopping monitoring after "
+                f"{config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES} consecutive unattended monitoring failures."
+            )
+            return unexpected_error_count, 1
+        logger.info("Continuing despite error...")
+        return unexpected_error_count, None
+    except MemoryError:
+        raise
+    except _FATAL_UNATTENDED_EXCEPTIONS:
+        logger.exception("Fatal programming error in unattended run")
+        emit(f"\n{'[x]' if request.no_color else '❌'} Stopping monitoring after a fatal programming error.")
+        return unexpected_error_count, 1
     except Exception:
         unexpected_error_count += 1
         logger.exception(
@@ -548,12 +635,12 @@ def _run_unattended_iteration(
         )
         if unexpected_error_count >= config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES:
             logger.error(  # noqa: TRY400 - traceback already emitted immediately above
-                "Stopping unattended mode after %d consecutive unexpected errors",
+                "Stopping unattended mode after %d consecutive unattended monitoring failures",
                 config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES,
             )
             emit(
                 f"\n{'[x]' if request.no_color else '❌'} Stopping monitoring after "
-                f"{config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES} consecutive unexpected errors."
+                f"{config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES} consecutive unattended monitoring failures."
             )
             return unexpected_error_count, 1
         logger.info("Continuing despite error...")
@@ -671,25 +758,33 @@ def _run_history_analysis(
     logger: logging.Logger,
     emit=print,
 ) -> int:
-    from .history import analyze_history
+    from .history import HistoricalSnapshotError, analyze_history
 
     output_path = history_output or (results_dir / "history.csv")
 
     logger.info("Analyzing historical data from %s", results_dir)
-    num_runs, num_datapoints, csv_path = analyze_history(
-        results_dir=results_dir,
-        depth=depth,
-        output_path=output_path,
-    )
+    try:
+        num_runs, num_datapoints, csv_path, skipped_files = analyze_history(
+            results_dir=results_dir,
+            depth=depth,
+            output_path=output_path,
+        )
+    except (HistoricalSnapshotError, OSError) as exc:
+        logger.error("Historical analysis failed: %s", str(exc))  # noqa: TRY400 - user-facing history failure should stay concise
+        return 2
 
     emit("Historical Analysis Complete:")
     emit(f"  Runs analyzed: {num_runs}")
     emit(f"  Data points: {num_datapoints}")
-    emit(f"  CSV output: {csv_path}")
-    emit("\nUse this CSV for visualization with tools like:")
-    emit(f"  - Excel/Google Sheets: Import {csv_path}")
-    emit(f"  - Python: pd.read_csv('{csv_path}')")
-    emit("  - Grafana: CSV data source plugin")
+    emit(f"  Skipped invalid files: {skipped_files}")
+    if csv_path.exists():
+        emit(f"  CSV output: {csv_path}")
+        emit("\nUse this CSV for visualization with tools like:")
+        emit(f"  - Excel/Google Sheets: Import {csv_path}")
+        emit(f"  - Python: pd.read_csv('{csv_path}')")
+        emit("  - Grafana: CSV data source plugin")
+    else:
+        emit("  CSV output: not created (no data points)")
 
     return 0
 
@@ -736,6 +831,7 @@ def _build_ranked_candidates(
     historical_metrics: list[HistoricalMetrics],
     request: AnalysisRunRequest,
     config: ToolConfig,
+    filter_stats: dict[str, int] | None = None,
 ) -> list[CandidateInsight]:
     candidates = merge_datasets(placement_scores, historical_metrics)
 
@@ -747,8 +843,14 @@ def _build_ranked_candidates(
         cpu_arch=config.cpu_arch,
         no_max_limit=effective_no_max_limit,
     )
+    if config.include_databricks_cost:
+        refresh_databricks_catalog_cache()
+        candidates = enrich_with_databricks_cost(
+            candidates,
+            include_photon=config.include_photon_cost,
+        )
 
-    ranked = rank_candidates(candidates)
+    ranked = rank_candidates(candidates, sort_order=request.sort_order)
     ranked = enrich_with_performance(ranked, config.baseline_sku)
     ranked = enrich_with_coremark(ranked)
     ranked = filter_by_cost(
@@ -756,6 +858,7 @@ def _build_ranked_candidates(
         max_price=request.max_price,
         max_eviction=request.max_eviction,
         min_performance=request.min_performance,
+        filter_stats=filter_stats,
     )
 
     if config.result_limit:
@@ -785,11 +888,13 @@ def _run_single_analysis(
         client=client,
         config=config,
     )
+    filter_stats: dict[str, int] = {}
     ranked = _build_ranked_candidates(
         placement_scores=placement_scores,
         historical_metrics=historical_metrics,
         request=request,
         config=config,
+        filter_stats=filter_stats,
     )
 
     def emit(*values: Any, **kwargs: Any) -> None:
@@ -816,6 +921,7 @@ def _run_single_analysis(
         config=config,
         render_options=render_options,
         emit=emit,
+        missing_databricks_total_count=filter_stats.get("missing_databricks_total_price_count", 0),
     )
 
 
@@ -847,6 +953,8 @@ def _persist_analysis_outputs(
                 request.csv,
                 show_placement=config.enable_placement,
                 show_baseline=config.baseline_sku is not None,
+                show_databricks=config.include_databricks_cost,
+                show_photon=config.include_photon_cost,
             )
         except OSError as exc:
             logger.error(  # noqa: TRY400 - expected filesystem failure path
@@ -890,7 +998,7 @@ def _save_run_results_if_requested(
             config=config,
             results_dir=request.results_dir,
         )
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         logger.warning("Failed to save run results: %s", exc)
         emit_error(f"Failed to save run results: {exc}")
     else:
@@ -910,7 +1018,11 @@ def _emit_report_if_requested(
     if not (config.emit_json or config.save_report):
         return False
 
-    report_payload = _build_report(ranked)
+    report_payload = _build_report(
+        ranked,
+        show_databricks=config.include_databricks_cost,
+        show_photon=config.include_photon_cost,
+    )
     if config.emit_json:
         print(json.dumps(report_payload, indent=2, default=_json_serializer), file=sys.stdout)
     if config.save_report:
@@ -937,9 +1049,16 @@ def _render_analysis_results(
     config: ToolConfig,
     render_options: RenderOptions,
     emit,
+    missing_databricks_total_count: int = 0,
 ) -> None:
     if not ranked:
         emit("No candidates match the specified filters. Try relaxing constraints.")
+        _emit_missing_databricks_total_note(
+            emit=emit,
+            request=request,
+            config=config,
+            missing_databricks_total_count=missing_databricks_total_count,
+        )
         return
 
     emit(
@@ -947,6 +1066,8 @@ def _render_analysis_results(
             ranked,
             show_placement=config.enable_placement,
             show_baseline=config.baseline_sku is not None,
+            show_databricks=config.include_databricks_cost,
+            show_photon=config.include_photon_cost,
             render_options=render_options,
         )
     )
@@ -993,6 +1114,13 @@ def _render_analysis_results(
         for line in summary_lines:
             emit(f" - {line}")
 
+    _emit_missing_databricks_total_note(
+        emit=emit,
+        request=request,
+        config=config,
+        missing_databricks_total_count=missing_databricks_total_count,
+    )
+
     if config.enable_placement:
         disclaimer = (
             "Note: Azure Spot placement scores are point-in-time indicators and "
@@ -1006,10 +1134,40 @@ def _render_analysis_results(
         )
 
 
-def _build_report(candidates: list[CandidateInsight]) -> dict[str, Any]:
+def _emit_missing_databricks_total_note(
+    *,
+    emit,
+    request: AnalysisRunRequest,
+    config: ToolConfig,
+    missing_databricks_total_count: int,
+) -> None:
+    if missing_databricks_total_count <= 0 or not config.include_databricks_cost or request.max_price is None:
+        return
+    emit(
+        "\nDatabricks pricing note: "
+        f"{missing_databricks_total_count} candidate(s) were excluded from --max-price "
+        "because Databricks total price was unavailable for those SKUs."
+    )
+
+
+def _build_report(
+    candidates: list[CandidateInsight],
+    *,
+    show_databricks: bool = False,
+    show_photon: bool = False,
+) -> dict[str, Any]:
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
-        "candidates": [project_for_report(item, _json_serializer, _merge_notes) for item in candidates],
+        "candidates": [
+            project_for_report(
+                item,
+                _json_serializer,
+                _merge_notes,
+                show_databricks=show_databricks,
+                show_photon=show_photon,
+            )
+            for item in candidates
+        ],
     }
 
 
@@ -1024,7 +1182,13 @@ def _merge_notes(*notes: Any) -> Any:
 def _json_serializer(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat(timespec="seconds")
-    return value
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise _unsupported_json_type_error(value)
+
+
+def _unsupported_json_type_error(value: Any) -> TypeError:
+    return TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 if __name__ == "__main__":

@@ -34,6 +34,7 @@ reports/
 # Historical data
 results/
 *.csv
+!src/spotvm/data/databricks_azure_dbu_pricing.csv
 
 # Desloppify local state
 .desloppify/

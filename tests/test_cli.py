@@ -10,6 +10,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import spotvm.cli as cli
 from spotvm.cli import (
     AnalysisRunRequest,
@@ -17,6 +19,7 @@ from spotvm.cli import (
     _build_ranked_candidates,
     _emit_report_if_requested,
     _fetch_analysis_inputs,
+    _json_serializer,
     _persist_analysis_outputs,
     _prepare_analysis_execution,
     _render_analysis_results,
@@ -30,8 +33,10 @@ from spotvm.cli import (
     main,
 )
 from spotvm.config import ToolConfig
+from spotvm.databricks_catalog import DatabricksCatalogError
+from spotvm.history import HistoricalSnapshotError
 from spotvm.http_client import AzureHttpError
-from spotvm.models import HistoricalMetrics
+from spotvm.models import CandidateInsight, HistoricalMetrics
 from spotvm.placement_score import PlacementScoreRequest
 from spotvm.reporting import RenderOptions
 from spotvm.resource_graph import ResourceGraphRequest
@@ -47,12 +52,18 @@ def _analysis_args(**overrides):
         "max_price": None,
         "max_eviction": None,
         "min_performance": None,
+        "sort_order": "price",
         "csv": None,
         "results_dir": Path("./results"),
         "save_results": False,
     }
     defaults.update(overrides)
     return AnalysisRunRequest(**defaults)
+
+
+def test_json_serializer_raises_for_unknown_type():
+    with pytest.raises(TypeError, match="Object of type object is not JSON serializable"):
+        _json_serializer(object())
 
 
 def _historical_metric(
@@ -160,7 +171,7 @@ class TestMainWithMocks:
         assert kwargs["depth"] == 7
         assert kwargs["history_output"] == history_output
 
-    @patch("spotvm.history.analyze_history", return_value=(3, 9, Path("/tmp/history.csv")))
+    @patch("spotvm.history.analyze_history")
     def test_run_history_analysis_uses_default_output_path_and_prints_summary(
         self,
         mock_analyze_history,
@@ -168,7 +179,10 @@ class TestMainWithMocks:
         capsys,
     ):
         results_dir = tmp_path / "results"
+        csv_path = tmp_path / "history.csv"
+        csv_path.write_text("timestamp\n", encoding="utf-8")
         logger = MagicMock()
+        mock_analyze_history.return_value = (3, 9, csv_path, 1)
 
         rc = _run_history_analysis(
             results_dir=results_dir,
@@ -189,7 +203,83 @@ class TestMainWithMocks:
         assert "Historical Analysis Complete:" in captured.out
         assert "Runs analyzed: 3" in captured.out
         assert "Data points: 9" in captured.out
-        assert "Python: pd.read_csv('/tmp/history.csv')" in captured.out
+        assert "Skipped invalid files: 1" in captured.out
+        assert f"Python: pd.read_csv('{csv_path}')" in captured.out
+
+    @patch("spotvm.history.analyze_history")
+    def test_run_history_analysis_reports_when_no_csv_was_created(
+        self,
+        mock_analyze_history,
+        tmp_path,
+        capsys,
+    ):
+        results_dir = tmp_path / "results"
+        missing_csv = tmp_path / "missing-history.csv"
+        logger = MagicMock()
+        mock_analyze_history.return_value = (0, 0, missing_csv, 0)
+
+        rc = _run_history_analysis(
+            results_dir=results_dir,
+            depth=None,
+            history_output=None,
+            logger=logger,
+            emit=_stdout_emitter,
+        )
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "CSV output: not created (no data points)" in captured.out
+        assert "pd.read_csv" not in captured.out
+
+    @patch(
+        "spotvm.history.analyze_history", side_effect=HistoricalSnapshotError("All historical run files failed to load")
+    )
+    def test_run_history_analysis_returns_two_when_all_historical_runs_are_invalid(
+        self,
+        mock_analyze_history,
+        tmp_path,
+    ):
+        results_dir = tmp_path / "results"
+        logger = MagicMock()
+
+        rc = _run_history_analysis(
+            results_dir=results_dir,
+            depth=None,
+            history_output=None,
+            logger=logger,
+            emit=_stdout_emitter,
+        )
+
+        assert rc == 2
+        mock_analyze_history.assert_called_once()
+        logger.error.assert_called_once_with(
+            "Historical analysis failed: %s",
+            "All historical run files failed to load",
+        )
+
+    @patch("spotvm.history.analyze_history", side_effect=OSError("disk full"))
+    def test_run_history_analysis_returns_two_when_csv_write_fails(
+        self,
+        mock_analyze_history,
+        tmp_path,
+    ):
+        results_dir = tmp_path / "results"
+        logger = MagicMock()
+
+        rc = _run_history_analysis(
+            results_dir=results_dir,
+            depth=None,
+            history_output=None,
+            logger=logger,
+            emit=_stdout_emitter,
+        )
+
+        assert rc == 2
+        mock_analyze_history.assert_called_once()
+        logger.error.assert_called_once_with(
+            "Historical analysis failed: %s",
+            "disk full",
+        )
 
     @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 1)
     @patch("spotvm.cli.time.sleep")
@@ -219,11 +309,11 @@ class TestMainWithMocks:
         mock_sleep.assert_not_called()
         logger.exception.assert_called_once()
         logger.error.assert_called_once_with(
-            "Stopping unattended mode after %d consecutive unexpected errors",
+            "Stopping unattended mode after %d consecutive unattended monitoring failures",
             1,
         )
         captured = capsys.readouterr()
-        assert "Stopping monitoring after 1 consecutive unexpected errors" in captured.out
+        assert "Stopping monitoring after 1 consecutive unattended monitoring failures" in captured.out
 
     @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 1)
     @patch("spotvm.cli.signal.signal")
@@ -265,11 +355,11 @@ class TestMainWithMocks:
             "Azure API request failed: Azure API request failed (429) for https://example.test: busy"
         )
         logger.error.assert_any_call(
-            "Stopping unattended mode after %d consecutive unexpected errors",
+            "Stopping unattended mode after %d consecutive unattended monitoring failures",
             1,
         )
         captured = capsys.readouterr()
-        assert "Stopping monitoring after 1 consecutive unexpected errors" in captured.out
+        assert "Stopping monitoring after 1 consecutive unattended monitoring failures" in captured.out
 
     @patch("spotvm.cli.signal.signal")
     def test_run_unattended_monitoring_returns_zero_after_single_success_when_stop_requested(
@@ -331,14 +421,14 @@ class TestMainWithMocks:
             2,
         )
         logger.error.assert_called_once_with(
-            "Stopping unattended mode after %d consecutive unexpected errors",
+            "Stopping unattended mode after %d consecutive unattended monitoring failures",
             2,
         )
         captured = capsys.readouterr()
-        assert "Stopping monitoring after 2 consecutive unexpected errors" in captured.out
+        assert "Stopping monitoring after 2 consecutive unattended monitoring failures" in captured.out
 
     @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 2)
-    def test_run_unattended_iteration_resets_error_count_after_azure_http_error(self):
+    def test_run_unattended_iteration_preserves_error_count_after_azure_http_error(self):
         logger = MagicMock()
         request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
         config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
@@ -353,13 +443,111 @@ class TestMainWithMocks:
             emit=_stdout_emitter,
         )
 
-        assert unexpected_error_count == 0
+        assert unexpected_error_count == 1
         assert exit_code is None
         logger.exception.assert_not_called()
         logger.error.assert_called_once_with(
             "Azure API request failed: Azure API request failed (429) for https://example.test: busy"
         )
         logger.info.assert_called_once_with("Continuing despite error...")
+
+    def test_run_unattended_iteration_reraises_memory_error(self):
+        logger = MagicMock()
+        request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+        run_single_analysis = MagicMock(side_effect=MemoryError("oom"))
+
+        with pytest.raises(MemoryError, match="oom"):
+            cli._run_unattended_iteration(
+                request=request,
+                config=config,
+                logger=logger,
+                run_single_analysis=run_single_analysis,
+                unexpected_error_count=0,
+                emit=_stdout_emitter,
+            )
+
+        logger.exception.assert_not_called()
+        logger.error.assert_not_called()
+
+    @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 2)
+    def test_run_unattended_iteration_counts_databricks_catalog_errors_toward_stop_threshold(self):
+        logger = MagicMock()
+        request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
+        config = ToolConfig(
+            regions=["centralus"],
+            sizes=["Standard_D4s_v5"],
+            include_databricks_cost=True,
+        )
+        run_single_analysis = MagicMock(side_effect=DatabricksCatalogError("broken catalog"))
+
+        unexpected_error_count, exit_code = cli._run_unattended_iteration(
+            request=request,
+            config=config,
+            logger=logger,
+            run_single_analysis=run_single_analysis,
+            unexpected_error_count=1,
+            emit=_stdout_emitter,
+        )
+
+        assert unexpected_error_count == 2
+        assert exit_code == 1
+        logger.exception.assert_not_called()
+        assert logger.error.call_count == 2
+        assert logger.error.call_args_list[-1].args == (
+            "Stopping unattended mode after %d consecutive unattended monitoring failures",
+            2,
+        )
+
+    @patch("spotvm.cli.config_defaults.DEFAULT_MAX_UNATTENDED_FAILURES", 3)
+    def test_run_unattended_iteration_continues_for_below_threshold_databricks_catalog_error(self):
+        logger = MagicMock()
+        request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
+        config = ToolConfig(
+            regions=["centralus"],
+            sizes=["Standard_D4s_v5"],
+            include_databricks_cost=True,
+        )
+        run_single_analysis = MagicMock(side_effect=DatabricksCatalogError("broken catalog"))
+
+        unexpected_error_count, exit_code = cli._run_unattended_iteration(
+            request=request,
+            config=config,
+            logger=logger,
+            run_single_analysis=run_single_analysis,
+            unexpected_error_count=1,
+            emit=_stdout_emitter,
+        )
+
+        assert unexpected_error_count == 2
+        assert exit_code is None
+        logger.exception.assert_not_called()
+        logger.info.assert_called_once_with("Continuing despite error...")
+        logger.error.assert_called_once()
+        assert logger.error.call_args.args[:3] == ("Databricks pricing catalog failed (%d/%d): %s", 2, 3)
+        assert str(logger.error.call_args.args[3]) == "broken catalog"
+
+    def test_run_unattended_iteration_stops_immediately_for_programming_errors(self, capsys):
+        logger = MagicMock()
+        request = _analysis_args(no_color=True, results_dir=Path("results"), save_results=True)
+        config = ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"])
+        run_single_analysis = MagicMock(side_effect=TypeError("wrong type"))
+
+        unexpected_error_count, exit_code = cli._run_unattended_iteration(
+            request=request,
+            config=config,
+            logger=logger,
+            run_single_analysis=run_single_analysis,
+            unexpected_error_count=1,
+            emit=_stdout_emitter,
+        )
+
+        assert unexpected_error_count == 1
+        assert exit_code == 1
+        logger.exception.assert_called_once_with("Fatal programming error in unattended run")
+        logger.info.assert_not_called()
+        captured = capsys.readouterr()
+        assert "Stopping monitoring after a fatal programming error" in captured.out
 
     def test_sleep_until_next_run_emits_schedule_and_stops_early(self, capsys):
         logger = MagicMock()
@@ -455,6 +643,33 @@ class TestMainWithMocks:
 
         assert rc == 2
         logger.error.assert_called_once_with("Azure API request failed: %s", error)
+
+    def test_run_analysis_mode_returns_two_for_databricks_catalog_error(self):
+        logger = MagicMock()
+        request = _analysis_args()
+        config = ToolConfig(
+            regions=["centralus"],
+            sizes=["Standard_D4s_v5"],
+            include_databricks_cost=True,
+        )
+        error = DatabricksCatalogError("broken catalog")
+
+        rc = _run_analysis_mode(
+            request=request,
+            config=config,
+            logger=logger,
+            clear_cache=False,
+            interval_minutes=None,
+            run_single_analysis=MagicMock(side_effect=error),
+            run_unattended_monitoring=MagicMock(),
+        )
+
+        assert rc == 2
+        logger.error.assert_called_once_with(
+            "Databricks pricing catalog failed: %s. Use --refresh-databricks-catalog to refresh vendored data, "
+            "or remove --include-databricks-cost to continue without Databricks enrichment.",
+            error,
+        )
 
     @patch("spotvm.cli.AzureAuthenticator")
     @patch("spotvm.cli.AzureRestClient")
@@ -562,6 +777,32 @@ class TestMainWithMocks:
         assert "centralus" in captured.out
         assert "Placement" not in captured.out
 
+    def test_main_propagates_sort_order_from_cli(self, monkeypatch, capsys):
+        _stub_analysis_fetches(
+            monkeypatch,
+            historical_metrics=[
+                _historical_metric("Standard_D2s_v5", price_usd=0.04, eviction_rate=9.0),
+                _historical_metric("Standard_D4s_v5", price_usd=0.08, eviction_rate=3.0),
+            ],
+        )
+
+        rc = main(
+            [
+                "--regions",
+                "centralus",
+                "--sizes",
+                "Standard_D2s_v5",
+                "Standard_D4s_v5",
+                "--sort",
+                "eviction",
+                "--no-color",
+            ]
+        )
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert captured.out.index("Standard_D4s_v5") < captured.out.index("Standard_D2s_v5")
+
     def test_fetch_analysis_inputs_requests_placement_and_history_data(self, monkeypatch):
         placement_marker = object()
         historical_metric = _historical_metric("Standard_D4s_v5")
@@ -615,6 +856,124 @@ class TestMainWithMocks:
 
         assert [candidate.vm_size for candidate in ranked] == ["Standard_D4s_v5"]
         assert ranked[0].performance_relative == 100.0
+
+    def test_build_ranked_candidates_uses_total_databricks_cost_for_price_filtering(self, monkeypatch):
+        monkeypatch.setattr(
+            "spotvm.analysis.load_catalog",
+            lambda: SimpleNamespace(
+                captured_at="2026-03-19T00:00:00Z",
+                pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+            ),
+        )
+
+        pricing_rows = {
+            "Standard_D4s_v4": SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),
+            "Standard_E4s_v4": SimpleNamespace(dbu_per_hour=2.0, photon_capable=True),
+        }
+        monkeypatch.setattr(
+            "spotvm.analysis.lookup_azure_node_type_pricing",
+            lambda sku: pricing_rows.get(sku),
+        )
+
+        ranked = _build_ranked_candidates(
+            placement_scores=[],
+            historical_metrics=[
+                _historical_metric("Standard_D4s_v4", price_usd=0.05, eviction_rate=5.0),
+                _historical_metric("Standard_E4s_v4", price_usd=0.05, eviction_rate=5.0),
+            ],
+            request=_analysis_args(max_price=0.30),
+            config=ToolConfig(
+                regions=["centralus"],
+                sizes=["Standard_D4s_v4", "Standard_E4s_v4"],
+                include_databricks_cost=True,
+            ),
+        )
+
+        assert [candidate.vm_size for candidate in ranked] == ["Standard_D4s_v4"]
+        assert ranked[0].compute_price_usd == 0.05
+        assert ranked[0].databricks_dbu_cost_usd == 0.15
+        assert ranked[0].total_price_usd == 0.20
+
+    def test_build_ranked_candidates_tracks_missing_databricks_total_price_exclusions(self, monkeypatch):
+        monkeypatch.setattr(
+            "spotvm.analysis.load_catalog",
+            lambda: SimpleNamespace(
+                captured_at="2026-03-19T00:00:00Z",
+                pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+            ),
+        )
+
+        pricing_rows = {
+            "Standard_D4s_v4": SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),
+        }
+        monkeypatch.setattr(
+            "spotvm.analysis.lookup_azure_node_type_pricing",
+            lambda sku: pricing_rows.get(sku),
+        )
+
+        filter_stats: dict[str, int] = {}
+        ranked = _build_ranked_candidates(
+            placement_scores=[],
+            historical_metrics=[
+                _historical_metric("Standard_D4s_v4", price_usd=0.05, eviction_rate=5.0),
+                _historical_metric("Standard_E4s_v4", price_usd=0.05, eviction_rate=5.0),
+            ],
+            request=_analysis_args(max_price=0.30),
+            config=ToolConfig(
+                regions=["centralus"],
+                sizes=["Standard_D4s_v4", "Standard_E4s_v4"],
+                include_databricks_cost=True,
+            ),
+            filter_stats=filter_stats,
+        )
+
+        assert [candidate.vm_size for candidate in ranked] == ["Standard_D4s_v4"]
+        assert filter_stats == {"missing_databricks_total_price_count": 1}
+
+    def test_build_ranked_candidates_refreshes_databricks_catalog_caches_per_run(self, monkeypatch):
+        monkeypatch.setattr("spotvm.cli.refresh_databricks_catalog_cache", MagicMock())
+        monkeypatch.setattr(
+            "spotvm.analysis.load_catalog",
+            lambda: SimpleNamespace(
+                captured_at="2026-03-19T00:00:00Z",
+                pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+            ),
+        )
+        monkeypatch.setattr(
+            "spotvm.analysis.lookup_azure_node_type_pricing",
+            lambda _sku: SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),
+        )
+
+        _build_ranked_candidates(
+            placement_scores=[],
+            historical_metrics=[_historical_metric("Standard_D4s_v4", price_usd=0.05, eviction_rate=5.0)],
+            request=_analysis_args(),
+            config=ToolConfig(
+                regions=["centralus"],
+                sizes=["Standard_D4s_v4"],
+                include_databricks_cost=True,
+            ),
+        )
+        cli.refresh_databricks_catalog_cache.assert_called_once_with()
+
+    def test_build_ranked_candidates_propagates_databricks_overlay_failure(self, monkeypatch):
+        monkeypatch.setattr("spotvm.cli.refresh_databricks_catalog_cache", MagicMock())
+        monkeypatch.setattr(
+            "spotvm.cli.enrich_with_databricks_cost",
+            MagicMock(side_effect=DatabricksCatalogError("broken catalog")),
+        )
+
+        with pytest.raises(DatabricksCatalogError, match="broken catalog"):
+            _build_ranked_candidates(
+                placement_scores=[],
+                historical_metrics=[_historical_metric("Standard_D4s_v4", price_usd=0.05, eviction_rate=5.0)],
+                request=_analysis_args(),
+                config=ToolConfig(
+                    regions=["centralus"],
+                    sizes=["Standard_D4s_v4"],
+                    include_databricks_cost=True,
+                ),
+            )
 
     def test_explicit_sizes_bypass_bounded_hardware_window(self, monkeypatch, capsys):
         _stub_analysis_fetches(
@@ -771,7 +1130,7 @@ class TestMainWithMocks:
         assert "placement_request" not in seen
 
     def test_persist_analysis_outputs_keeps_stdout_machine_readable_for_json(self, capsys):
-        candidate = SimpleNamespace(
+        candidate = CandidateInsight(
             recommendation_rank=1,
             region="centralus",
             availability_zone=None,
@@ -782,6 +1141,7 @@ class TestMainWithMocks:
             price_usd=0.01,
             price_last_updated=None,
             eviction_rate=1.0,
+            eviction_last_updated=None,
             performance_relative=100.0,
             price_per_performance=0.0001,
             performance_basis="coremark",
@@ -856,8 +1216,28 @@ class TestMainWithMocks:
         logger.warning.assert_called_once()
         mock_save_results.assert_called_once()
 
+    @patch("spotvm.history.save_run_results", side_effect=ValueError("not serializable"))
+    def test_save_run_results_if_requested_reports_serialization_failure_without_raising(
+        self, mock_save_results, capsys
+    ):
+        logger = MagicMock()
+
+        _save_run_results_if_requested(
+            [object()],
+            request=_analysis_args(results_dir=Path("results"), save_results=True),
+            config=ToolConfig(regions=["centralus"], sizes=["Standard_D4s_v5"]),
+            logger=logger,
+            emit=_stdout_emitter,
+            emit_error=_stderr_emitter,
+        )
+
+        captured = capsys.readouterr()
+        assert "Failed to save run results" in captured.err
+        logger.warning.assert_called_once()
+        mock_save_results.assert_called_once()
+
     def test_emit_report_if_requested_reports_save_failure_without_raising(self, tmp_path, monkeypatch, capsys):
-        candidate = SimpleNamespace(
+        candidate = CandidateInsight(
             recommendation_rank=1,
             region="centralus",
             availability_zone=None,
@@ -868,6 +1248,7 @@ class TestMainWithMocks:
             price_usd=0.01,
             price_last_updated=None,
             eviction_rate=1.0,
+            eviction_last_updated=None,
             performance_relative=None,
             price_per_performance=None,
             coremark_score=None,
@@ -900,7 +1281,7 @@ class TestMainWithMocks:
         logger.error.assert_called_once()
 
     def test_emit_report_if_requested_creates_parent_directories(self, tmp_path, capsys):
-        candidate = SimpleNamespace(
+        candidate = CandidateInsight(
             recommendation_rank=1,
             region="centralus",
             availability_zone=None,
@@ -911,6 +1292,7 @@ class TestMainWithMocks:
             price_usd=0.01,
             price_last_updated=None,
             eviction_rate=1.0,
+            eviction_last_updated=None,
             performance_relative=None,
             price_per_performance=None,
             coremark_score=None,
@@ -938,7 +1320,7 @@ class TestMainWithMocks:
         logger.error.assert_not_called()
 
     def test_emit_report_if_requested_does_not_depend_on_path_write_text(self, tmp_path, monkeypatch, capsys):
-        candidate = SimpleNamespace(
+        candidate = CandidateInsight(
             recommendation_rank=1,
             region="centralus",
             availability_zone=None,
@@ -949,6 +1331,7 @@ class TestMainWithMocks:
             price_usd=0.01,
             price_last_updated=None,
             eviction_rate=1.0,
+            eviction_last_updated=None,
             performance_relative=None,
             price_per_performance=None,
             coremark_score=None,
@@ -1040,6 +1423,30 @@ class TestMainWithMocks:
         assert "No candidates match the specified filters" in captured.out
         mock_render_table.assert_not_called()
 
+    @patch("spotvm.cli.render_table")
+    def test_render_analysis_results_empty_state_reports_missing_databricks_total_exclusions(
+        self,
+        mock_render_table,
+        capsys,
+    ):
+        _render_analysis_results(
+            [],
+            request=_analysis_args(max_price=0.30),
+            config=ToolConfig(
+                regions=["centralus"],
+                sizes=["Standard_D4s_v5"],
+                include_databricks_cost=True,
+            ),
+            render_options=RenderOptions(colors_enabled=False),
+            emit=_stdout_emitter,
+            missing_databricks_total_count=1,
+        )
+
+        captured = capsys.readouterr()
+        assert "No candidates match the specified filters" in captured.out
+        assert "1 candidate(s) were excluded from --max-price" in captured.out
+        mock_render_table.assert_not_called()
+
     @patch("spotvm.cli.summarize_top_candidates", return_value=[])
     @patch("spotvm.cli.render_table")
     def test_render_analysis_results_explains_heuristic_marker_once(
@@ -1086,6 +1493,53 @@ class TestMainWithMocks:
         assert "* Heuristic perf:" in captured.out
         assert "comparable CoreMark data is unavailable" in captured.out
         assert "Some Perf % / Price/Perf values use a vCPU/RAM heuristic" not in captured.out
+        mock_summarize.assert_called_once_with([candidate])
+
+    @patch("spotvm.cli.summarize_top_candidates", return_value=[])
+    @patch("spotvm.cli.render_table")
+    def test_render_analysis_results_reports_missing_databricks_total_exclusions(
+        self,
+        mock_render_table,
+        mock_summarize,
+        capsys,
+    ):
+        candidate = SimpleNamespace(
+            recommendation_rank=1,
+            region="centralus",
+            availability_zone=None,
+            vm_size="Standard_D4s_v4",
+            cpu_arch="x64",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.01,
+            price_last_updated=None,
+            eviction_rate=1.0,
+            performance_relative=None,
+            price_per_performance=None,
+            performance_basis=None,
+            performance_note=None,
+            coremark_score=None,
+            coremark_per_vcpu=None,
+            notes=None,
+        )
+        mock_render_table.return_value = "RANKED TABLE"
+
+        _render_analysis_results(
+            [candidate],
+            request=_analysis_args(max_price=0.30),
+            config=ToolConfig(
+                regions=["centralus"],
+                sizes=["Standard_D4s_v4"],
+                include_databricks_cost=True,
+            ),
+            render_options=RenderOptions(colors_enabled=False),
+            emit=_stdout_emitter,
+            missing_databricks_total_count=2,
+        )
+
+        captured = capsys.readouterr()
+        assert "2 candidate(s) were excluded from --max-price" in captured.out
+        assert "Databricks total price was unavailable" in captured.out
         mock_summarize.assert_called_once_with([candidate])
 
     @patch("spotvm.cli.export_to_csv", side_effect=PermissionError("disk full"))

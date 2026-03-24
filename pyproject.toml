@@ -38,6 +38,9 @@ package-dir = {"" = "src"}
 where = ["src"]
 include = ["spotvm*"]
 
+[tool.setuptools.package-data]
+spotvm = ["data/*.json", "data/*.csv"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 
@@ -70,6 +73,7 @@ ignore = ["E501"]  # handled by Ruff formatter
 [tool.ruff.lint.per-file-ignores]
 "src/spotvm/cli.py" = ["T201"]
 "src/spotvm/config.py" = ["TRY003"]
+"src/spotvm/databricks_catalog.py" = ["TRY003"]
 "tests/*" = ["TRY003"]
 
 [tool.ruff.format]

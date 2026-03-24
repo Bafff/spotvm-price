@@ -13,7 +13,7 @@ from typing import cast
 import wcwidth
 from colorama import Fore, Style, init
 
-from .models import CandidateInsight
+from .models import CandidateInsight, effective_price_usd
 
 
 @dataclass(frozen=True)
@@ -39,7 +39,7 @@ def _colorize_eviction(rate: float | None, *, render_options: RenderOptions | No
     - Blue (<5%): Excellent - very low eviction risk
     - Green (5-10%): Good - low eviction risk
     - Yellow (10-15%): Medium - moderate eviction risk
-    - Red (15-24%): High - high eviction risk
+    - Red (15% to <25%): High - high eviction risk
     - Bright Red (≥25%): Critical - very high eviction risk
     """
     options = _resolve_render_options(render_options)
@@ -156,11 +156,23 @@ TABLE_COLUMNS = [
     "Notes",
 ]
 
+_DATABRICKS_TABLE_COLUMNS = [
+    "VM (USD/hr)",
+    "DBU/h",
+    "DB Cost",
+    "Photon DBU/h",
+    "Photon Cost",
+    "Total Cost",
+    "Catalog Updated",
+]
+
 
 def render_table(
     candidates: Iterable[CandidateInsight],
     show_placement: bool = True,
     show_baseline: bool = True,
+    show_databricks: bool = False,
+    show_photon: bool = False,
     render_options: RenderOptions | None = None,
 ) -> str:
     options = _resolve_render_options(render_options)
@@ -170,9 +182,14 @@ def render_table(
         hidden |= {"Placement", "Quota"}
     if not show_baseline:
         hidden |= {"Perf %", "Price/Perf"}
+    if not show_photon:
+        hidden |= {"Photon DBU/h", "Photon Cost"}
     columns = [c for c in TABLE_COLUMNS if c not in hidden]
+    if show_databricks:
+        columns += [c for c in _DATABRICKS_TABLE_COLUMNS if c not in hidden]
 
     rows: list[list[str]] = [columns]
+    footnotes_used: dict[str, str] = {}  # marker -> full text
     for item in candidates:
         all_cells = {
             "Rank": _format_rank(item.recommendation_rank),
@@ -186,7 +203,7 @@ def render_table(
                 else (item.notes or "N/A")
             ),
             "Quota": _format_quota(item.quota_available, render_options=options),
-            "Price (USD/hr)": _format_price(item.price_usd),
+            "Price (USD/hr)": _format_price(effective_price_usd(item)),
             "Eviction %": _colorize_eviction(item.eviction_rate, render_options=options),
             "Perf %": _format_performance(item.performance_relative),
             "Price/Perf": _format_price_per_perf(item.price_per_performance),
@@ -194,7 +211,19 @@ def render_table(
             "CM/vCPU": _format_coremark_per_vcpu(item.coremark_per_vcpu),
             "Price Updated": _format_dt(item.price_last_updated),
             "Notes": _format_table_notes(item),
+            "VM (USD/hr)": _format_price(item.compute_price_usd),
+            "DBU/h": _format_number(item.databricks_dbu_per_hour),
+            "DB Cost": _format_price(item.databricks_dbu_cost_usd),
+            "Photon DBU/h": _format_number(item.databricks_photon_dbu_per_hour),
+            "Photon Cost": _format_price(item.databricks_photon_cost_usd),
+            "Total Cost": _format_price(item.total_price_usd),
+            "Catalog Updated": _format_catalog_updated(item.databricks_catalog_updated),
         }
+        # Track which footnotes are used in this table
+        for note in _split_notes(item.notes):
+            marker = _FOOTNOTE_ABBREVIATIONS.get(note)
+            if marker is not None:
+                footnotes_used.setdefault(marker, note)
         rows.append([all_cells[c] for c in columns])
 
     # Auto-hide columns where every data row is empty or dash
@@ -211,7 +240,15 @@ def render_table(
     col_widths = _compute_widths(rows)
     lines = [_format_row(row, col_widths) for row in rows]
     separator = "-" * len(lines[0])
-    return "\n".join([lines[0], separator, *lines[1:]])
+    result = "\n".join([lines[0], separator, *lines[1:]])
+
+    # Append footnotes for abbreviated notes
+    if footnotes_used:
+        result += "\n"
+        for marker, full_text in footnotes_used.items():
+            result += f"\n  {marker} {full_text}"
+
+    return result
 
 
 def _compute_widths(rows: list[list[str]]) -> list[int]:
@@ -248,6 +285,12 @@ def _format_price(value: float | None) -> str:
     return f"${value:0.4f}"
 
 
+def _format_number(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:g}"
+
+
 def _format_percentage(value: float | None) -> str:
     if value is None:
         return "-"
@@ -259,6 +302,14 @@ def _format_dt(value: datetime | None) -> str:
     if value is None:
         return "-"
     return value.strftime("%Y-%m-%d")
+
+
+def _format_catalog_updated(value: datetime | str | None) -> str:
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d")
+    if not value:
+        return "-"
+    return value[:10] if len(value) >= 10 else value
 
 
 def _format_performance(value: float | None) -> str:
@@ -289,11 +340,22 @@ def _format_coremark_per_vcpu(value: float | None) -> str:
     return f"{value:,.0f}"
 
 
+# Map long note text to short footnote markers displayed in the table.
+_FOOTNOTE_ABBREVIATIONS: dict[str, str] = {
+    "Databricks DBU data not available for this SKU.": "DBU1",
+    "Databricks DBU rate missing for this SKU.": "DBU2",
+}
+
+
+def _split_notes(notes: str | None) -> list[str]:
+    if not notes:
+        return []
+    return [part.strip() for part in notes.split(";") if part.strip()]
+
+
 def _format_table_notes(item: CandidateInsight) -> str:
-    """Keep the terminal table compact and refer detailed perf fallback text to the footer."""
-    parts: list[str] = []
-    if item.notes:
-        parts.append(item.notes)
+    """Keep the terminal table compact by shortening detailed note text into footnote markers."""
+    parts = [_FOOTNOTE_ABBREVIATIONS.get(note, note) for note in _split_notes(item.notes)]
     if item.performance_note and item.performance_basis == "heuristic":
         parts.append("Heuristic perf*")
     return "; ".join(dict.fromkeys(parts))
@@ -326,9 +388,20 @@ CSV_COLUMNS = [
     "Notes",
 ]
 
+_DATABRICKS_CSV_COLUMNS = [
+    "VM Price (USD/hr)",
+    "DBU per Hour",
+    "Databricks Cost (USD/hr)",
+    "Photon DBU per Hour",
+    "Photon Cost (USD/hr)",
+    "Total Cost (USD/hr)",
+    "Databricks Catalog Updated",
+]
+
 # Columns tied to specific modes
 _CSV_PLACEMENT_COLS = {"Placement Score", "Quota Available"}
 _CSV_BASELINE_COLS = {"Performance (%)", "Price per Performance"}
+_CSV_PHOTON_COLS = {"Photon DBU per Hour", "Photon Cost (USD/hr)"}
 
 
 def export_to_csv(
@@ -336,6 +409,8 @@ def export_to_csv(
     csv_path: Path,
     show_placement: bool = True,
     show_baseline: bool = True,
+    show_databricks: bool = False,
+    show_photon: bool = False,
 ) -> None:
     """Export candidate insights to CSV file for Excel/Google Sheets."""
     from .projection import project_for_csv
@@ -346,11 +421,16 @@ def export_to_csv(
         hidden |= _CSV_PLACEMENT_COLS
     if not show_baseline:
         hidden |= _CSV_BASELINE_COLS
+    if not show_photon:
+        hidden |= _CSV_PHOTON_COLS
     columns = [c for c in CSV_COLUMNS if c not in hidden]
+    if show_databricks:
+        columns += [c for c in _DATABRICKS_CSV_COLUMNS if c not in hidden]
 
     formatters = {
         "quota": _csv_format_quota,
         "price": _csv_format_price,
+        "numeric": _csv_format_number,
         "percentage": _csv_format_percentage,
         "performance": _csv_format_performance,
         "price_per_perf": _csv_format_price_per_perf,
@@ -364,7 +444,14 @@ def export_to_csv(
         vendor = detect_cpu_vendor(item.vm_size) if item.vm_size else ""
         vendor_text = vendor.upper() if vendor else ""
 
-        all_cells = project_for_csv(item, vendor_text, formatters, _format_notes)
+        all_cells = project_for_csv(
+            item,
+            vendor_text,
+            formatters,
+            _format_notes,
+            show_databricks=show_databricks,
+            show_photon=show_photon,
+        )
         rows.append([all_cells[c] for c in columns])
 
     _write_csv_atomic(csv_path, columns, rows)
@@ -410,6 +497,12 @@ def _csv_format_price(value: float | None) -> str:
     return f"{value:.4f}"
 
 
+def _csv_format_number(value: float | None) -> str:
+    if value is None:
+        return ""
+    return f"{value:g}"
+
+
 def _csv_format_percentage(value: float | None) -> str:
     """Format percentage for CSV (numeric value without % symbol for Excel sorting)."""
     if value is None:
@@ -431,10 +524,12 @@ def _csv_format_price_per_perf(value: float | None) -> str:
     return f"{value:.6f}"
 
 
-def _csv_format_datetime(value: datetime | None) -> str:
+def _csv_format_datetime(value: datetime | str | None) -> str:
     """Format datetime for CSV (ISO format for Excel compatibility)."""
     if value is None:
         return ""
+    if isinstance(value, str):
+        return value
     return value.isoformat()
 
 

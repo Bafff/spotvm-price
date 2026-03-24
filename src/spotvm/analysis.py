@@ -3,7 +3,18 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 
-from .models import CandidateInsight, CPUArchitecture, HistoricalMetrics, PlacementScoreResult
+from .databricks_catalog import (
+    load_catalog,
+    lookup_azure_node_type_pricing,
+)
+from .models import (
+    CandidateInsight,
+    CPUArchitecture,
+    HistoricalMetrics,
+    PlacementScoreResult,
+    SortOrder,
+    effective_price_usd,
+)
 from .vm_specs import (
     VMSpec,
     calculate_relative_performance_details,
@@ -15,9 +26,14 @@ from .vm_specs import (
 logger = logging.getLogger("spotvm")
 
 PLACEMENT_ORDER = {"high": 3, "medium": 2, "low": 1}
+# Extracted from Databricks UI performance multipliers for Photon Jobs compute.
+# The same workspace config also exposes 2.0x for Photon All-Purpose, but this
+# tool models jobs-style Photon pricing, so the jobs multiplier is the correct
+# runtime constant here. Keep this in sync with the manual refresh notes in
+# docs/databricks-dbu-pricing-refresh.md if Databricks changes the multiplier.
+PHOTON_JOBS_MULTIPLIER = 2.5
 PlacementLookupKey = tuple[str, str, str | None]
 MetricsLookupKey = tuple[str, str]
-RankSortKey = tuple[int, float, float]
 
 
 def merge_datasets(
@@ -45,8 +61,12 @@ def merge_datasets(
     return combined
 
 
-def rank_candidates(candidates: list[CandidateInsight]) -> list[CandidateInsight]:
-    ranked = sorted(candidates, key=_rank_sort_key)
+def rank_candidates(
+    candidates: list[CandidateInsight],
+    sort_order: SortOrder = "price",
+) -> list[CandidateInsight]:
+    key_fn = _SORT_KEY_FUNCTIONS.get(sort_order, _sort_key_price)
+    ranked = sorted(candidates, key=key_fn)
     for idx, item in enumerate(ranked, 1):
         item.recommendation_rank = idx
     return ranked
@@ -81,9 +101,10 @@ def enrich_with_performance(
             )
 
         # Calculate price per performance unit
-        if perf and perf > 0 and candidate.price_usd:
+        display_price = effective_price_usd(candidate)
+        if perf and perf > 0 and display_price is not None:
             # Price per 1% of baseline performance
-            candidate.price_per_performance = candidate.price_usd / perf
+            candidate.price_per_performance = display_price / perf
         else:
             candidate.price_per_performance = None
 
@@ -112,6 +133,85 @@ def enrich_with_coremark(
     return candidates
 
 
+def enrich_with_databricks_cost(
+    candidates: list[CandidateInsight],
+    *,
+    include_photon: bool = False,
+) -> list[CandidateInsight]:
+    """Overlay Databricks DBU pricing onto matching Azure VM candidates.
+
+    Keeps ``price_usd`` as the raw Azure VM price and stores the Databricks-aware
+    result separately in ``total_price_usd``.  When Photon mode is enabled, the
+    Photon DBU rate is derived by multiplying the base ``dbu_per_hour`` by the
+    Photon Jobs multiplier (``PHOTON_JOBS_MULTIPLIER``), and the resulting
+    Photon hourly cost uses ``photon_dbu_unit_price_usd`` from the pricing
+    profile. That Photon cost replaces (not supplements) the base DBU cost when
+    computing ``total_price_usd``.
+    """
+    if not candidates:
+        return candidates
+
+    catalog = load_catalog()
+    dbu_unit_price = catalog.pricing_profile.dbu_unit_price_usd
+    photon_dbu_unit_price = catalog.pricing_profile.photon_dbu_unit_price_usd
+    catalog_updated = catalog.captured_at
+    missing_catalog: list[str] = []
+    missing_dbu_rate: list[str] = []
+
+    for candidate in candidates:
+        compute_price = candidate.price_usd
+        candidate.compute_price_usd = compute_price
+
+        row = lookup_azure_node_type_pricing(candidate.vm_size)
+        if row is None:
+            missing_catalog.append(candidate.vm_size)
+            candidate.notes = _append_note(candidate.notes, "Databricks DBU data not available for this SKU.")
+            continue
+        if row.dbu_per_hour is None:
+            missing_dbu_rate.append(candidate.vm_size)
+            candidate.notes = _append_note(candidate.notes, "Databricks DBU rate missing for this SKU.")
+            continue
+
+        candidate.databricks_dbu_per_hour = row.dbu_per_hour
+        candidate.databricks_dbu_cost_usd = row.dbu_per_hour * dbu_unit_price
+        candidate.databricks_catalog_updated = catalog_updated
+
+        # When Photon is enabled for a capable node, the Photon DBU cost
+        # replaces the standard DBU cost in total_price_usd -- Photon is an
+        # alternative compute tier, not an additive surcharge.
+        databricks_cost = candidate.databricks_dbu_cost_usd
+        if include_photon and row.photon_capable:
+            candidate.databricks_photon_dbu_per_hour = row.dbu_per_hour * PHOTON_JOBS_MULTIPLIER
+            candidate.databricks_photon_cost_usd = candidate.databricks_photon_dbu_per_hour * photon_dbu_unit_price
+            databricks_cost = candidate.databricks_photon_cost_usd
+
+        if compute_price is not None and databricks_cost is not None:
+            candidate.total_price_usd = compute_price + databricks_cost
+
+    if missing_catalog:
+        logger.warning(
+            "Databricks DBU catalog match not found for %d candidate(s); leaving Databricks fields empty for unmatched SKUs (examples: %s)",
+            len(missing_catalog),
+            ", ".join(missing_catalog[:3]),
+        )
+    if missing_dbu_rate:
+        logger.warning(
+            "Databricks DBU rate missing for %d candidate(s); leaving Databricks fields empty for catalog rows without DBU data (examples: %s)",
+            len(missing_dbu_rate),
+            ", ".join(missing_dbu_rate[:3]),
+        )
+
+    return candidates
+
+
+def _append_note(existing: str | None, note: str) -> str:
+    if not existing:
+        return note
+    if note in existing:
+        return existing
+    return f"{existing}; {note}"
+
+
 def summarize_top_candidates(
     candidates: list[CandidateInsight],
     limit: int = 3,
@@ -129,8 +229,9 @@ def summarize_top_candidates(
             parts.append(f"eviction {item.eviction_rate:.1f}%")
         if item.performance_relative is not None:
             parts.append(f"perf {item.performance_relative:.0f}%")
-        if item.price_usd is not None:
-            parts.append(f"${item.price_usd:.4f}/hr")
+        display_price = effective_price_usd(item)
+        if display_price is not None:
+            parts.append(f"${display_price:.4f}/hr")
         summary.append("; ".join(parts))
     return summary
 
@@ -194,6 +295,7 @@ def filter_by_cost(
     max_price: float | None = None,
     max_eviction: float | None = None,
     min_performance: float | None = None,
+    filter_stats: dict[str, int] | None = None,
 ) -> list[CandidateInsight]:
     """Filter candidates by cost and performance constraints.
 
@@ -214,11 +316,16 @@ def filter_by_cost(
 
     filtered = []
     filtered_count = 0
+    missing_databricks_total_count = 0
 
     for candidate in candidates:
         filter_message = _cost_filter_message(candidate, max_price, max_eviction, min_performance)
         if filter_message is not None:
-            logger.debug(filter_message)
+            if _is_missing_databricks_total_price_filter(candidate, max_price):
+                logger.info(filter_message)
+                missing_databricks_total_count += 1
+            else:
+                logger.debug(filter_message)
             filtered_count += 1
             continue
 
@@ -227,6 +334,13 @@ def filter_by_cost(
     if filtered_count > 0:
         parts = _cost_constraint_parts(max_price, max_eviction, min_performance)
         logger.info(f"Filtered out {filtered_count} candidate(s) not meeting cost constraints ({', '.join(parts)})")
+    if filter_stats is not None:
+        filter_stats["missing_databricks_total_price_count"] = missing_databricks_total_count
+    if missing_databricks_total_count > 0:
+        logger.info(
+            "Excluded %d candidate(s) from --max-price filtering because Databricks total price was unavailable",
+            missing_databricks_total_count,
+        )
 
     return filtered
 
@@ -290,14 +404,45 @@ def _build_candidate_insight(
     )
 
 
-def _rank_sort_key(item: CandidateInsight) -> RankSortKey:
-    score_rank = PLACEMENT_ORDER.get((item.placement_score or "").lower(), 0)
+def _effective_price(item: CandidateInsight) -> float:
+    price = effective_price_usd(item)
+    return price if price is not None else float("inf")
+
+
+def _vcpu_count(item: CandidateInsight) -> int:
+    if item.vm_size:
+        spec = get_vm_spec(item.vm_size)
+        if spec is not None:
+            return spec.vcpus
+    return 0
+
+
+def _sort_key_price(item: CandidateInsight) -> tuple[float, float]:
+    """Sort by price ascending, then eviction rate ascending."""
     eviction = item.eviction_rate if item.eviction_rate is not None else float("inf")
-    if item.price_per_performance is not None:
-        price_metric = item.price_per_performance
-    else:
-        price_metric = item.price_usd if item.price_usd is not None else float("inf")
-    return (-score_rank, eviction, price_metric)
+    return (_effective_price(item), eviction)
+
+
+def _sort_key_price_per_vcpu(item: CandidateInsight) -> tuple[float, float]:
+    """Sort by price-per-vCPU ascending, then eviction rate ascending."""
+    price = _effective_price(item)
+    vcpus = _vcpu_count(item)
+    per_vcpu = price / vcpus if vcpus > 0 else float("inf")
+    eviction = item.eviction_rate if item.eviction_rate is not None else float("inf")
+    return (per_vcpu, eviction)
+
+
+def _sort_key_eviction(item: CandidateInsight) -> tuple[float, float]:
+    """Sort by eviction rate ascending, then price ascending."""
+    eviction = item.eviction_rate if item.eviction_rate is not None else float("inf")
+    return (eviction, _effective_price(item))
+
+
+_SORT_KEY_FUNCTIONS = {
+    "price": _sort_key_price,
+    "price-per-vcpu": _sort_key_price_per_vcpu,
+    "eviction": _sort_key_eviction,
+}
 
 
 def _matches_requested_architecture(
@@ -394,10 +539,11 @@ def _cost_filter_message(
     max_eviction: float | None,
     min_performance: float | None,
 ) -> str | None:
-    if max_price is not None and candidate.price_usd is not None and candidate.price_usd > max_price:
-        return (
-            f"Filtered {candidate.vm_size} in {candidate.region}: price ${candidate.price_usd:.4f} > ${max_price} max"
-        )
+    display_price = effective_price_usd(candidate)
+    if max_price is not None and candidate.compute_price_usd is not None and display_price is None:
+        return f"Filtered {candidate.vm_size} in {candidate.region}: Databricks total price unavailable for this SKU"
+    if max_price is not None and display_price is not None and display_price > max_price:
+        return f"Filtered {candidate.vm_size} in {candidate.region}: price ${display_price:.4f} > ${max_price} max"
     if max_eviction is not None and candidate.eviction_rate is not None and candidate.eviction_rate > max_eviction:
         return (
             f"Filtered {candidate.vm_size} in {candidate.region}: "
@@ -413,6 +559,10 @@ def _cost_filter_message(
             f"performance {candidate.performance_relative:.0f}% < {min_performance}% min"
         )
     return None
+
+
+def _is_missing_databricks_total_price_filter(candidate: CandidateInsight, max_price: float | None) -> bool:
+    return max_price is not None and candidate.compute_price_usd is not None and effective_price_usd(candidate) is None
 
 
 def _cost_constraint_parts(

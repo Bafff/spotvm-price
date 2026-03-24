@@ -210,6 +210,60 @@ class TestBuildParser:
 
         assert config.desired_count == 1
         assert config.enable_placement is False
+        assert config.include_databricks_cost is False
+        assert config.include_photon_cost is False
+
+    def test_parser_accepts_databricks_pricing_flags(self):
+        args = build_parser().parse_args(
+            [
+                "--regions",
+                "centralus",
+                "--sizes",
+                "Standard_D4ps_v6",
+                "--include-databricks-cost",
+                "--include-photon-cost",
+                "--refresh-databricks-catalog",
+            ]
+        )
+
+        assert args.include_databricks_cost is True
+        assert args.include_photon_cost is True
+        assert args.refresh_databricks_catalog is True
+
+    def test_include_photon_cost_without_databricks_errors(self):
+        with pytest.raises(SystemExit):
+            main(
+                [
+                    "--regions",
+                    "centralus",
+                    "--sizes",
+                    "Standard_D4ps_v6",
+                    "--include-photon-cost",
+                ]
+            )
+
+    def test_build_runtime_config_accepts_databricks_pricing_flags(self):
+        parser = build_parser()
+        args = parser.parse_args(
+            [
+                "--regions",
+                "centralus",
+                "--sizes",
+                "Standard_D4ps_v6",
+                "--include-databricks-cost",
+                "--include-photon-cost",
+            ]
+        )
+
+        config = _build_runtime_config(
+            parser=parser,
+            args=args,
+            base_config={},
+            sizes=args.sizes,
+        )
+
+        assert config.include_databricks_cost is True
+        assert config.include_photon_cost is True
 
     def test_build_runtime_config_uses_config_placement_for_cli_desired_count(self):
         parser = build_parser()
@@ -305,12 +359,26 @@ class TestBuildParser:
         assert "next three distinct" in help_text
         assert "specs database" in help_text
 
+    def test_help_describes_databricks_aware_max_price_filtering(self):
+        parser = build_parser()
+        help_text = " ".join(parser.format_help().split())
+
+        assert "--max-price" in help_text
+        assert "combined VM + Databricks hourly cost" in help_text
+
     def test_help_describes_effective_desired_count_default(self):
         parser = build_parser()
         help_text = " ".join(parser.format_help().split())
 
         assert "effective default" in help_text
         assert "placement-check" in help_text
+
+    def test_help_describes_photon_as_full_rate_not_surcharge(self):
+        parser = build_parser()
+        help_text = " ".join(parser.format_help().split())
+
+        assert "--include-photon-cost" in help_text
+        assert "full Photon DBU rate" in help_text
 
     def test_resolve_effective_cpu_arch_normalizes_config_value(self):
         parser = build_parser()

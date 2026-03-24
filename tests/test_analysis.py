@@ -1,8 +1,19 @@
 from __future__ import annotations
 
-from datetime import datetime
+import logging
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
-from spotvm.analysis import merge_datasets, rank_candidates, summarize_top_candidates
+import pytest
+
+from spotvm.analysis import (
+    _append_note,
+    enrich_with_databricks_cost,
+    merge_datasets,
+    rank_candidates,
+    summarize_top_candidates,
+)
+from spotvm.databricks_catalog import DatabricksCatalogError
 from spotvm.models import CandidateInsight, HistoricalMetrics, PlacementScoreResult
 
 
@@ -28,7 +39,7 @@ def test_merge_datasets_creates_synthetic_candidate_for_metrics_only_rows():
     assert candidate.cpu_arch == "x64"
 
 
-def test_rank_candidates_prefers_price_per_performance_before_raw_price():
+def test_rank_candidates_default_sorts_by_price():
     candidates = [
         CandidateInsight(
             region="eastus",
@@ -39,7 +50,6 @@ def test_rank_candidates_prefers_price_per_performance_before_raw_price():
             price_last_updated=None,
             eviction_rate=2.0,
             eviction_last_updated=None,
-            price_per_performance=0.0040,
         ),
         CandidateInsight(
             region="eastus",
@@ -50,14 +60,136 @@ def test_rank_candidates_prefers_price_per_performance_before_raw_price():
             price_last_updated=None,
             eviction_rate=2.0,
             eviction_last_updated=None,
-            price_per_performance=0.0060,
         ),
     ]
 
     ranked = rank_candidates(candidates)
 
-    assert [candidate.vm_size for candidate in ranked] == ["Standard_D4as_v5", "Standard_D8as_v5"]
-    assert [candidate.recommendation_rank for candidate in ranked] == [1, 2]
+    assert [c.vm_size for c in ranked] == ["Standard_D8as_v5", "Standard_D4as_v5"]
+    assert [c.recommendation_rank for c in ranked] == [1, 2]
+
+
+def test_rank_candidates_price_per_vcpu_sort():
+    # Standard_D4as_v5 = 4 vCPUs, Standard_D8as_v5 = 8 vCPUs
+    candidates = [
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D4as_v5",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.10,  # $0.025/vCPU
+            price_last_updated=None,
+            eviction_rate=5.0,
+            eviction_last_updated=None,
+        ),
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D8as_v5",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.16,  # $0.020/vCPU — cheaper per vCPU
+            price_last_updated=None,
+            eviction_rate=5.0,
+            eviction_last_updated=None,
+        ),
+    ]
+
+    ranked = rank_candidates(candidates, sort_order="price-per-vcpu")
+
+    assert [c.vm_size for c in ranked] == ["Standard_D8as_v5", "Standard_D4as_v5"]
+
+
+def test_rank_candidates_eviction_sort():
+    candidates = [
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D4as_v5",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.10,
+            price_last_updated=None,
+            eviction_rate=15.0,
+            eviction_last_updated=None,
+        ),
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D8as_v5",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.20,
+            price_last_updated=None,
+            eviction_rate=3.0,
+            eviction_last_updated=None,
+        ),
+    ]
+
+    ranked = rank_candidates(candidates, sort_order="eviction")
+
+    assert [c.vm_size for c in ranked] == ["Standard_D8as_v5", "Standard_D4as_v5"]
+
+
+def test_rank_candidates_prefers_effective_total_price_for_databricks_candidates():
+    candidates = [
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D4as_v5",
+            placement_score="High",
+            quota_available=True,
+            price_usd=0.10,
+            total_price_usd=0.40,
+            price_last_updated=None,
+            eviction_rate=2.0,
+            eviction_last_updated=None,
+        ),
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D8as_v5",
+            placement_score="High",
+            quota_available=True,
+            price_usd=0.20,
+            total_price_usd=0.30,
+            price_last_updated=None,
+            eviction_rate=2.0,
+            eviction_last_updated=None,
+        ),
+    ]
+
+    ranked = rank_candidates(candidates)
+
+    assert [candidate.vm_size for candidate in ranked] == ["Standard_D8as_v5", "Standard_D4as_v5"]
+
+
+def test_rank_candidates_places_candidates_without_databricks_total_after_fully_priced_matches():
+    candidates = [
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D4as_v5",
+            placement_score="High",
+            quota_available=True,
+            price_usd=0.10,
+            compute_price_usd=0.10,
+            total_price_usd=None,
+            price_last_updated=None,
+            eviction_rate=2.0,
+            eviction_last_updated=None,
+        ),
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D8as_v5",
+            placement_score="High",
+            quota_available=True,
+            price_usd=0.20,
+            compute_price_usd=0.20,
+            total_price_usd=0.30,
+            price_last_updated=None,
+            eviction_rate=2.0,
+            eviction_last_updated=None,
+        ),
+    ]
+
+    ranked = rank_candidates(candidates)
+
+    assert [candidate.vm_size for candidate in ranked] == ["Standard_D8as_v5", "Standard_D4as_v5"]
 
 
 def test_merge_datasets_keeps_distinct_zone_candidates_for_same_sku_and_region():
@@ -135,3 +267,418 @@ def test_summarize_top_candidates_includes_zone_score_perf_and_price():
     assert summary == [
         "#1 Standard_D4as_v5 in eastus; zone 1; placement score High; eviction 2.5%; perf 115%; $0.1234/hr"
     ]
+
+
+def test_summarize_top_candidates_uses_databricks_total_price_when_present():
+    candidates = [
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D4as_v5",
+            placement_score="High",
+            quota_available=True,
+            price_usd=0.1234,
+            compute_price_usd=0.1234,
+            total_price_usd=0.4234,
+            price_last_updated=None,
+            eviction_rate=2.5,
+            eviction_last_updated=None,
+            recommendation_rank=1,
+        )
+    ]
+
+    summary = summarize_top_candidates(candidates)
+
+    assert summary == ["#1 Standard_D4as_v5 in eastus; placement score High; eviction 2.5%; $0.4234/hr"]
+
+
+def test_enrich_with_databricks_cost_populates_cost_fields(monkeypatch):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4ds_v5",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at=datetime(2026, 3, 20, 8, 30, tzinfo=timezone.utc),
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+        ),
+    )
+    monkeypatch.setattr(
+        "spotvm.analysis.lookup_azure_node_type_pricing",
+        lambda _sku: SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),
+    )
+    [enriched] = enrich_with_databricks_cost([candidate], include_photon=False)
+
+    assert enriched.price_usd == 0.0471
+    assert enriched.compute_price_usd == 0.0471
+    assert enriched.databricks_dbu_per_hour == 1.0
+    assert enriched.databricks_dbu_cost_usd == 0.15
+    assert enriched.total_price_usd == 0.1971
+    assert enriched.databricks_catalog_updated == datetime(2026, 3, 20, 8, 30, tzinfo=timezone.utc)
+
+
+def test_enrich_with_databricks_cost_uses_loaded_catalog_timestamp(monkeypatch):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4ds_v5",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at=datetime(2026, 3, 20, 8, 30, tzinfo=timezone.utc),
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.30),
+        ),
+    )
+    monkeypatch.setattr(
+        "spotvm.analysis.lookup_azure_node_type_pricing",
+        lambda _sku: SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),
+    )
+
+    [enriched] = enrich_with_databricks_cost([candidate], include_photon=False)
+
+    assert enriched.databricks_catalog_updated == datetime(2026, 3, 20, 8, 30, tzinfo=timezone.utc)
+
+
+def test_enrich_with_databricks_cost_applies_photon_jobs_rate(monkeypatch):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4ds_v5",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at="2026-03-19T00:00:00Z",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.22),
+        ),
+    )
+    monkeypatch.setattr(
+        "spotvm.analysis.lookup_azure_node_type_pricing",
+        lambda _sku: SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),
+    )
+
+    [enriched] = enrich_with_databricks_cost([candidate], include_photon=True)
+
+    assert enriched.databricks_photon_dbu_per_hour == 2.5
+    assert enriched.databricks_photon_cost_usd == pytest.approx(0.55)
+    assert enriched.total_price_usd == pytest.approx(0.5971)
+
+
+def test_enrich_with_databricks_cost_keeps_photon_fields_empty_when_photon_capability_is_unknown(monkeypatch):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4ds_v5",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at="2026-03-19T00:00:00Z",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+        ),
+    )
+    monkeypatch.setattr(
+        "spotvm.analysis.lookup_azure_node_type_pricing",
+        lambda _sku: SimpleNamespace(dbu_per_hour=1.0, photon_capable=None),
+    )
+
+    [enriched] = enrich_with_databricks_cost([candidate], include_photon=True)
+
+    assert enriched.databricks_dbu_per_hour == 1.0
+    assert enriched.databricks_photon_dbu_per_hour is None
+    assert enriched.databricks_photon_cost_usd is None
+    assert enriched.total_price_usd == pytest.approx(0.1971)
+
+
+def test_enrich_with_databricks_cost_keeps_photon_fields_empty_for_non_photon_vm(monkeypatch):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_F4",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at="2026-03-19T00:00:00Z",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+        ),
+    )
+    monkeypatch.setattr(
+        "spotvm.analysis.lookup_azure_node_type_pricing",
+        lambda _sku: SimpleNamespace(dbu_per_hour=0.5, photon_capable=False),
+    )
+
+    [enriched] = enrich_with_databricks_cost([candidate], include_photon=True)
+
+    assert enriched.databricks_dbu_per_hour == 0.5
+    assert enriched.databricks_dbu_cost_usd == 0.075
+    assert enriched.databricks_photon_dbu_per_hour is None
+    assert enriched.databricks_photon_cost_usd is None
+    assert enriched.total_price_usd == pytest.approx(0.1221)
+
+
+def test_enrich_with_databricks_cost_keeps_unmatched_sku_without_overlay(monkeypatch):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_Unknown",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at="2026-03-19T00:00:00Z",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+        ),
+    )
+    monkeypatch.setattr("spotvm.analysis.lookup_azure_node_type_pricing", lambda _sku: None)
+
+    [enriched] = enrich_with_databricks_cost([candidate], include_photon=False)
+
+    assert enriched.price_usd == 0.0471
+    assert enriched.compute_price_usd == 0.0471
+    assert enriched.databricks_dbu_per_hour is None
+    assert enriched.total_price_usd is None
+    assert enriched.notes == "Databricks DBU data not available for this SKU."
+
+
+def test_enrich_with_databricks_cost_preserves_none_compute_price(monkeypatch):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4ds_v5",
+        placement_score=None,
+        quota_available=None,
+        price_usd=None,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at="2026-03-19T00:00:00Z",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+        ),
+    )
+    monkeypatch.setattr(
+        "spotvm.analysis.lookup_azure_node_type_pricing",
+        lambda _sku: SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),
+    )
+
+    [enriched] = enrich_with_databricks_cost([candidate], include_photon=False)
+
+    assert enriched.price_usd is None
+    assert enriched.compute_price_usd is None
+    assert enriched.databricks_dbu_per_hour == 1.0
+    assert enriched.databricks_dbu_cost_usd == 0.15
+    assert enriched.total_price_usd is None
+
+
+def test_enrich_with_databricks_cost_preserves_none_compute_price_with_photon(monkeypatch):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4ds_v5",
+        placement_score=None,
+        quota_available=None,
+        price_usd=None,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at="2026-03-19T00:00:00Z",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.22),
+        ),
+    )
+    monkeypatch.setattr(
+        "spotvm.analysis.lookup_azure_node_type_pricing",
+        lambda _sku: SimpleNamespace(dbu_per_hour=1.0, photon_capable=True),
+    )
+
+    [enriched] = enrich_with_databricks_cost([candidate], include_photon=True)
+
+    assert enriched.price_usd is None
+    assert enriched.compute_price_usd is None
+    assert enriched.databricks_dbu_per_hour == 1.0
+    assert enriched.databricks_dbu_cost_usd == 0.15
+    assert enriched.databricks_photon_dbu_per_hour == 2.5
+    assert enriched.databricks_photon_cost_usd == pytest.approx(0.55)
+    assert enriched.total_price_usd is None
+
+
+def test_enrich_with_databricks_cost_raises_when_catalog_loading_fails(monkeypatch):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4ds_v5",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: (_ for _ in ()).throw(DatabricksCatalogError("broken catalog")),
+    )
+
+    with pytest.raises(DatabricksCatalogError, match="broken catalog"):
+        enrich_with_databricks_cost([candidate], include_photon=False)
+
+
+def test_enrich_with_databricks_cost_warns_about_unmatched_skus(monkeypatch, caplog):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_Unknown",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at="2026-03-19T00:00:00Z",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+        ),
+    )
+    monkeypatch.setattr("spotvm.analysis.lookup_azure_node_type_pricing", lambda _sku: None)
+
+    with caplog.at_level(logging.WARNING, logger="spotvm"):
+        enrich_with_databricks_cost([candidate], include_photon=False)
+
+    assert "Databricks DBU catalog match not found for 1 candidate(s)" in caplog.text
+    assert "Standard_Unknown" in caplog.text
+
+
+def test_enrich_with_databricks_cost_warns_when_catalog_entry_lacks_dbu_rate(monkeypatch, caplog):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_D4ds_v5",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at="2026-03-19T00:00:00Z",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+        ),
+    )
+    monkeypatch.setattr(
+        "spotvm.analysis.lookup_azure_node_type_pricing",
+        lambda _sku: SimpleNamespace(dbu_per_hour=None, photon_capable=True),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="spotvm"):
+        [enriched] = enrich_with_databricks_cost([candidate], include_photon=False)
+
+    assert enriched.databricks_dbu_per_hour is None
+    assert enriched.total_price_usd is None
+    assert enriched.notes == "Databricks DBU rate missing for this SKU."
+    assert "Databricks DBU rate missing for 1 candidate(s)" in caplog.text
+    assert "Standard_D4ds_v5" in caplog.text
+
+
+def test_enrich_with_databricks_cost_appends_note_without_overwriting_existing_note(monkeypatch):
+    candidate = CandidateInsight(
+        region="centralus",
+        vm_size="Standard_Unknown",
+        placement_score=None,
+        quota_available=None,
+        price_usd=0.0471,
+        price_last_updated=None,
+        eviction_rate=5.0,
+        eviction_last_updated=None,
+        notes="Existing note",
+    )
+
+    monkeypatch.setattr(
+        "spotvm.analysis.load_catalog",
+        lambda: SimpleNamespace(
+            captured_at="2026-03-19T00:00:00Z",
+            pricing_profile=SimpleNamespace(dbu_unit_price_usd=0.15, photon_dbu_unit_price_usd=0.15),
+        ),
+    )
+    monkeypatch.setattr("spotvm.analysis.lookup_azure_node_type_pricing", lambda _sku: None)
+
+    [enriched] = enrich_with_databricks_cost([candidate], include_photon=False)
+
+    assert enriched.notes == "Existing note; Databricks DBU data not available for this SKU."
+
+
+@pytest.mark.parametrize(
+    ("existing", "note", "expected"),
+    [
+        (None, "Databricks DBU data not available for this SKU.", "Databricks DBU data not available for this SKU."),
+        (
+            "Databricks DBU data not available for this SKU.",
+            "Databricks DBU data not available for this SKU.",
+            "Databricks DBU data not available for this SKU.",
+        ),
+        (
+            "Existing note",
+            "Databricks DBU data not available for this SKU.",
+            "Existing note; Databricks DBU data not available for this SKU.",
+        ),
+    ],
+)
+def test_append_note_handles_empty_dedup_and_concat(existing, note, expected):
+    assert _append_note(existing, note) == expected
+
+
+def test_enrich_with_databricks_cost_short_circuits_empty_candidate_list(monkeypatch):
+    load_catalog = pytest.fail
+    monkeypatch.setattr("spotvm.analysis.load_catalog", load_catalog)
+
+    assert enrich_with_databricks_cost([], include_photon=False) == []

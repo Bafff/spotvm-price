@@ -126,6 +126,55 @@ def test_matches_hardware_constraint_respects_bounded_and_unbounded_modes():
     assert matches_hardware_constraint(64, 6, dimension="vcpu", no_max_limit=True) is True
 
 
+def test_filter_by_cost_uses_total_price_even_when_raw_vm_price_is_missing():
+    candidates = [
+        CandidateInsight(
+            region="centralus",
+            vm_size="Standard_D4ds_v5",
+            placement_score="High",
+            quota_available=True,
+            price_usd=None,
+            price_last_updated=None,
+            eviction_rate=2.5,
+            eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+            total_price_usd=0.20,
+        )
+    ]
+
+    kept = filter_by_cost(candidates, max_price=0.25)
+    filtered = filter_by_cost(candidates, max_price=0.15)
+
+    assert kept == candidates
+    assert filtered == []
+
+
+def test_filter_by_max_price_logs_missing_databricks_total_price_at_info(caplog):
+    candidates = [
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D4ds_v5",
+            placement_score="High",
+            quota_available=True,
+            price_usd=0.05,
+            compute_price_usd=0.05,
+            total_price_usd=None,
+            price_last_updated=datetime(2025, 1, 25, 14, 0),
+            eviction_rate=5.0,
+            eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+        )
+    ]
+
+    with caplog.at_level(logging.INFO):
+        filtered = filter_by_cost(candidates, max_price=0.20)
+
+    assert filtered == []
+    assert "Databricks total price unavailable for this SKU" in caplog.text
+    assert (
+        "Excluded 1 candidate(s) from --max-price filtering because Databricks total price was unavailable"
+        in caplog.text
+    )
+
+
 def test_vm_spec_source_has_no_duplicate_sku_keys():
     repo_root = Path(__file__).resolve().parents[1]
     source = (repo_root / "src" / "spotvm" / "vm_specs.py").read_text()
@@ -541,6 +590,68 @@ class TestFilterByCost:
         """Zero min_performance should keep all candidates (0% is the floor)."""
         filtered = filter_by_cost(sample_candidates, min_performance=0.0)
         assert len(filtered) == len(sample_candidates)
+
+    def test_filter_by_max_price_uses_total_price_when_present(self):
+        candidates = [
+            CandidateInsight(
+                vm_size="Standard_D4ds_v5",
+                region="eastus",
+                placement_score="High",
+                quota_available=True,
+                price_usd=0.05,
+                total_price_usd=0.30,
+                price_last_updated=datetime(2025, 1, 25, 14, 0),
+                eviction_rate=5.0,
+                eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+            ),
+            CandidateInsight(
+                vm_size="Standard_D8ds_v5",
+                region="eastus",
+                placement_score="High",
+                quota_available=True,
+                price_usd=0.10,
+                total_price_usd=0.15,
+                price_last_updated=datetime(2025, 1, 25, 14, 0),
+                eviction_rate=5.0,
+                eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+            ),
+        ]
+
+        filtered = filter_by_cost(candidates, max_price=0.20)
+
+        assert [candidate.vm_size for candidate in filtered] == ["Standard_D8ds_v5"]
+
+    def test_filter_by_max_price_excludes_databricks_rows_without_total_price(self):
+        candidates = [
+            CandidateInsight(
+                vm_size="Standard_D4ds_v5",
+                region="eastus",
+                placement_score="High",
+                quota_available=True,
+                price_usd=0.05,
+                compute_price_usd=0.05,
+                total_price_usd=None,
+                price_last_updated=datetime(2025, 1, 25, 14, 0),
+                eviction_rate=5.0,
+                eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+            ),
+            CandidateInsight(
+                vm_size="Standard_D8ds_v5",
+                region="eastus",
+                placement_score="High",
+                quota_available=True,
+                price_usd=0.10,
+                compute_price_usd=0.10,
+                total_price_usd=0.15,
+                price_last_updated=datetime(2025, 1, 25, 14, 0),
+                eviction_rate=5.0,
+                eviction_last_updated=datetime(2025, 1, 25, 14, 0),
+            ),
+        ]
+
+        filtered = filter_by_cost(candidates, max_price=0.20)
+
+        assert [candidate.vm_size for candidate in filtered] == ["Standard_D8ds_v5"]
 
     def test_filter_by_cost_logs_only_active_constraints(self, sample_candidates, caplog):
         with caplog.at_level(logging.INFO):

@@ -9,15 +9,23 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import os
+import tempfile
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from .config import ToolConfig
-from .models import CandidateInsight
+from .models import DATABRICKS_OPTIONAL_FIELDS, CandidateInsight
 from .projection import project_for_history
 
 logger = logging.getLogger("spotvm")
+
+
+class HistoricalSnapshotError(ValueError):
+    pass
 
 
 @dataclass
@@ -65,8 +73,12 @@ def save_run_results(
     filename = timestamp.replace(":", "-") + ".json"
     filepath = runs_dir / filename
 
-    with filepath.open("w") as f:
-        json.dump(asdict(snapshot), f, indent=2)
+    try:
+        serialized_snapshot = json.dumps(asdict(snapshot), indent=2)
+    except TypeError as exc:
+        raise _serialization_error(filepath, exc) from exc
+
+    _write_text_atomically(filepath, serialized_snapshot)
 
     return filepath
 
@@ -84,35 +96,81 @@ def load_historical_runs(
     Returns:
         List of RunSnapshot objects, sorted by timestamp (oldest first)
     """
-    runs_dir = results_dir / "runs"
-    if not runs_dir.exists():
-        return []
-
-    # Find all JSON files
-    json_files = sorted(runs_dir.glob("*.json"))
-
-    # Apply depth limit (take N most recent)
-    if depth is not None and depth > 0:
-        json_files = json_files[-depth:]
-
-    # Load snapshots
-    snapshots = []
-    for filepath in json_files:
-        try:
-            with filepath.open("r") as f:
-                data = json.load(f)
-                snapshots.append(
-                    RunSnapshot(
-                        timestamp=data["timestamp"],
-                        config=data["config"],
-                        candidates=data["candidates"],
-                    )
-                )
-        except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
-            logger.warning("Failed to load historical run %s: %s", filepath, exc)
-            continue
-
+    snapshots, skipped_files = _load_historical_runs_with_skipped_count(results_dir, depth)
+    if skipped_files > 0:
+        logger.warning("Skipped %d invalid historical run file(s)", skipped_files)
     return snapshots
+
+
+def _run_snapshot_from_payload(data: object) -> RunSnapshot:
+    if not isinstance(data, dict):
+        raise _invalid_snapshot_payload()
+    timestamp = _required_snapshot_field(data, "timestamp")
+    config = _required_snapshot_field(data, "config")
+    candidates = _required_snapshot_field(data, "candidates")
+    if not isinstance(timestamp, str):
+        raise _invalid_snapshot_type("timestamp", "a string")
+    if not isinstance(config, dict):
+        raise _invalid_snapshot_type("config", "a mapping")
+    if not isinstance(candidates, list):
+        raise _invalid_snapshot_type("candidates", "a list")
+    return RunSnapshot(
+        timestamp=timestamp,
+        config=config,
+        candidates=candidates,
+    )
+
+
+def _invalid_snapshot_type(field_name: str, expected: str) -> HistoricalSnapshotError:
+    return HistoricalSnapshotError(f"{field_name} must be {expected}")
+
+
+def _invalid_snapshot_payload() -> HistoricalSnapshotError:
+    return HistoricalSnapshotError("snapshot payload must be an object")
+
+
+def _required_snapshot_field(data: dict[str, Any], key: str) -> Any:
+    if key not in data:
+        raise _missing_snapshot_field(key)
+    return data[key]
+
+
+def _serialization_error(filepath: Path, cause: TypeError) -> ValueError:
+    return ValueError(f"Failed to serialize historical run snapshot: {filepath} ({cause})")
+
+
+def _write_text_atomically(filepath: Path, content: str) -> None:
+    fd, temp_name = tempfile.mkstemp(
+        dir=filepath.parent,
+        prefix=f".{filepath.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    os.close(fd)
+    temp_path = Path(temp_name)
+    try:
+        temp_path.write_text(content, encoding="utf-8")
+        temp_path.replace(filepath)
+    except Exception:
+        with suppress(OSError):
+            temp_path.unlink(missing_ok=True)
+        raise
+
+
+def _missing_snapshot_field(key: str) -> HistoricalSnapshotError:
+    return HistoricalSnapshotError(f"{key} is missing")
+
+
+def _all_historical_runs_failed() -> HistoricalSnapshotError:
+    return HistoricalSnapshotError("All historical run files failed to load")
+
+
+def _csv_value(candidate: dict[str, Any], key: str) -> Any:
+    """Return the candidate value for *key*, falling back to ``""`` for missing keys or ``None``."""
+    value = candidate.get(key)
+    if value is None:
+        return ""
+    return value
 
 
 def generate_history_csv(
@@ -134,35 +192,33 @@ def generate_history_csv(
     if not snapshots:
         return 0
 
+    include_databricks = any(
+        any(field in candidate for field in DATABRICKS_OPTIONAL_FIELDS)
+        for snapshot in snapshots
+        for candidate in snapshot.candidates
+    )
+
     # Prepare rows for CSV
     rows = []
     for snapshot in snapshots:
         for candidate in snapshot.candidates:
-            rows.append(
-                {
-                    "timestamp": snapshot.timestamp,
-                    "vm_size": candidate.get("vm_size"),
-                    "region": candidate.get("region"),
-                    "zone": candidate.get("availability_zone") or "",
-                    "price_usd": candidate.get("price_usd") if candidate.get("price_usd") is not None else "",
-                    "eviction_rate": candidate.get("eviction_rate")
-                    if candidate.get("eviction_rate") is not None
-                    else "",
-                    "placement_score": candidate.get("placement_score") or "",
-                    "quota_available": candidate.get("quota_available")
-                    if candidate.get("quota_available") is not None
-                    else "",
-                    "performance_relative": candidate.get("performance_relative")
-                    if candidate.get("performance_relative") is not None
-                    else "",
-                    "price_per_performance": candidate.get("price_per_performance")
-                    if candidate.get("price_per_performance") is not None
-                    else "",
-                    "recommendation_rank": candidate.get("recommendation_rank")
-                    if candidate.get("recommendation_rank") is not None
-                    else "",
-                }
-            )
+            row = {
+                "timestamp": snapshot.timestamp,
+                "vm_size": candidate.get("vm_size"),
+                "region": candidate.get("region"),
+                "zone": candidate.get("availability_zone") or "",
+                "price_usd": _csv_value(candidate, "price_usd"),
+                "eviction_rate": _csv_value(candidate, "eviction_rate"),
+                "placement_score": candidate.get("placement_score") or "",
+                "quota_available": _csv_value(candidate, "quota_available"),
+                "performance_relative": _csv_value(candidate, "performance_relative"),
+                "price_per_performance": _csv_value(candidate, "price_per_performance"),
+                "recommendation_rank": _csv_value(candidate, "recommendation_rank"),
+            }
+            if include_databricks:
+                for field in DATABRICKS_OPTIONAL_FIELDS:
+                    row[field] = _csv_value(candidate, field)
+            rows.append(row)
 
     # Write CSV
     if rows:
@@ -180,6 +236,8 @@ def generate_history_csv(
             "price_per_performance",
             "recommendation_rank",
         ]
+        if include_databricks:
+            fieldnames.extend(DATABRICKS_OPTIONAL_FIELDS)
 
         with output_path.open("w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -193,7 +251,7 @@ def analyze_history(
     results_dir: Path,
     depth: int | None = None,
     output_path: Path | None = None,
-) -> tuple[int, int, Path]:
+) -> tuple[int, int, Path, int]:
     """Analyze historical runs and generate unified CSV.
 
     Convenience function that combines load + generate steps.
@@ -204,9 +262,9 @@ def analyze_history(
         output_path: Where to write CSV (default: results_dir/history.csv)
 
     Returns:
-        Tuple of (num_runs, num_datapoints, csv_path)
+        Tuple of (num_runs, num_datapoints, csv_path, skipped_files)
     """
-    snapshots = load_historical_runs(results_dir, depth)
+    snapshots, skipped_files = _load_historical_runs_with_skipped_count(results_dir, depth)
     num_runs = len(snapshots)
 
     if output_path is None:
@@ -214,4 +272,42 @@ def analyze_history(
 
     num_datapoints = generate_history_csv(snapshots, output_path)
 
-    return (num_runs, num_datapoints, output_path)
+    return (num_runs, num_datapoints, output_path, skipped_files)
+
+
+def _load_historical_runs_with_skipped_count(
+    results_dir: Path,
+    depth: int | None = None,
+) -> tuple[list[RunSnapshot], int]:
+    runs_dir = results_dir / "runs"
+    if not runs_dir.exists():
+        return [], 0
+
+    json_files = sorted(runs_dir.glob("*.json"))
+    if depth is not None and depth > 0:
+        json_files = json_files[-depth:]
+
+    snapshots = []
+    skipped_files = 0
+    for filepath in json_files:
+        try:
+            with filepath.open("r") as f:
+                data = json.load(f)
+                snapshots.append(_run_snapshot_from_payload(data))
+        except OSError as exc:
+            skipped_files += 1
+            logger.warning("Failed to load historical run %s: read error: %s", filepath, exc)
+            continue
+        except json.JSONDecodeError as exc:
+            skipped_files += 1
+            logger.warning("Failed to load historical run %s: invalid JSON: %s", filepath, exc)
+            continue
+        except HistoricalSnapshotError as exc:
+            skipped_files += 1
+            logger.warning("Failed to load historical run %s: invalid snapshot payload: %s", filepath, exc)
+            continue
+
+    if skipped_files > 0 and not snapshots:
+        raise _all_historical_runs_failed()
+
+    return snapshots, skipped_files

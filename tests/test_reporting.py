@@ -10,6 +10,7 @@ from spotvm.models import CandidateInsight
 from spotvm.reporting import (
     _colorize_eviction,
     _colorize_placement,
+    _format_catalog_updated,
     _strip_ansi,
     export_to_csv,
     render_table,
@@ -83,6 +84,69 @@ def test_render_table_shortens_heuristic_performance_note():
 
     assert "Heuristic perf*" in table
     assert "vCPU/RAM heuristic because" not in table
+
+
+def test_render_table_shortens_appended_databricks_note_segment():
+    candidates = [
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D4s_v4",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.0456,
+            price_last_updated=datetime(2025, 10, 24, 12, 0),
+            eviction_rate=3.2,
+            eviction_last_updated=datetime(2025, 10, 20, 8, 0),
+            recommendation_rank=1,
+            notes="Existing note; Databricks DBU data not available for this SKU.",
+        ),
+    ]
+
+    table = render_table(candidates, render_options=NO_COLOR())
+
+    assert "Existing note; DBU1" in table
+    assert "  DBU1 Databricks DBU data not available for this SKU." in table
+
+
+def test_render_table_uses_non_conflicting_databricks_marker_with_heuristic_note():
+    candidates = [
+        CandidateInsight(
+            region="eastus",
+            vm_size="Standard_D4s_v4",
+            placement_score=None,
+            quota_available=None,
+            price_usd=0.0456,
+            price_last_updated=datetime(2025, 10, 24, 12, 0),
+            eviction_rate=3.2,
+            eviction_last_updated=datetime(2025, 10, 20, 8, 0),
+            recommendation_rank=1,
+            notes="Databricks DBU data not available for this SKU.",
+            performance_relative=100.0,
+            price_per_performance=0.000456,
+            performance_basis="heuristic",
+            performance_note="Perf % and Price/Perf use the vCPU/RAM heuristic because CoreMark data is unavailable for this comparison.",
+        ),
+    ]
+
+    table = render_table(candidates, render_options=NO_COLOR())
+
+    assert "DBU1; Heuristic perf*" in table
+    assert "\n  * Databricks DBU data not available for this SKU." not in table
+    assert "  DBU1 Databricks DBU data not available for this SKU." in table
+
+
+@pytest.mark.parametrize(
+    ("input_value", "expected"),
+    [
+        (datetime(2026, 3, 19, 13, 45), "2026-03-19"),
+        (None, "-"),
+        ("", "-"),
+        ("2026-03-19T12:00:00Z", "2026-03-19"),
+        ("2026", "2026"),
+    ],
+)
+def test_format_catalog_updated(input_value, expected):
+    assert _format_catalog_updated(input_value) == expected
 
 
 def test_export_to_csv(tmp_path):
@@ -399,6 +463,97 @@ def test_export_to_csv_hides_baseline_columns(tmp_path):
 
     assert "Performance (%)" not in headers
     assert "Price per Performance" not in headers
+
+
+def test_render_table_shows_databricks_columns_when_enabled():
+    candidates = [
+        _candidate(
+            price_usd=0.381,
+            compute_price_usd=0.03,
+            databricks_dbu_per_hour=1.17,
+            databricks_dbu_cost_usd=0.1755,
+            databricks_photon_dbu_per_hour=1.17,
+            databricks_photon_cost_usd=0.1755,
+            total_price_usd=0.381,
+            databricks_catalog_updated="2026-03-19T00:00:00Z",
+            eviction_rate=3.0,
+            recommendation_rank=1,
+        ),
+    ]
+
+    table = render_table(
+        candidates,
+        show_placement=False,
+        show_baseline=False,
+        show_databricks=True,
+        show_photon=True,
+        render_options=NO_COLOR(),
+    )
+
+    assert "VM (USD/hr)" in table
+    assert "DBU/h" in table
+    assert "DB Cost" in table
+    assert "Photon DBU/h" in table
+    assert "Photon Cost" in table
+    assert "Catalog Updated" in table
+
+
+def test_export_to_csv_writes_databricks_columns_when_enabled(tmp_path):
+    candidates = [
+        _candidate(
+            price_usd=0.381,
+            compute_price_usd=0.03,
+            databricks_dbu_per_hour=1.17,
+            databricks_dbu_cost_usd=0.1755,
+            total_price_usd=0.381,
+            databricks_catalog_updated="2026-03-19T00:00:00Z",
+            eviction_rate=3.0,
+            recommendation_rank=1,
+        ),
+    ]
+    csv_path = tmp_path / "databricks.csv"
+    export_to_csv(
+        candidates,
+        csv_path,
+        show_placement=False,
+        show_baseline=False,
+        show_databricks=True,
+    )
+
+    with csv_path.open("r", encoding="utf-8") as f:
+        row = next(csv.DictReader(f))
+
+    assert row["VM Price (USD/hr)"] == "0.03"
+    assert row["DBU per Hour"] == "1.17"
+    assert row["Databricks Cost (USD/hr)"] == "0.1755"
+    assert row["Total Cost (USD/hr)"] == "0.381"
+    assert row["Databricks Catalog Updated"] == "2026-03-19T00:00:00Z"
+
+
+def test_render_table_uses_total_price_column_value_when_databricks_is_enabled():
+    candidates = [
+        _candidate(
+            price_usd=0.03,
+            compute_price_usd=0.03,
+            databricks_dbu_per_hour=1.17,
+            databricks_dbu_cost_usd=0.1755,
+            total_price_usd=0.2055,
+            databricks_catalog_updated="2026-03-19T00:00:00Z",
+            eviction_rate=3.0,
+            recommendation_rank=1,
+        ),
+    ]
+
+    table = render_table(
+        candidates,
+        show_placement=False,
+        show_baseline=False,
+        show_databricks=True,
+        render_options=NO_COLOR(),
+    )
+
+    assert "0.2055" in table
+    assert "0.03" in table
 
 
 def test_render_table_auto_hides_empty_columns():

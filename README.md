@@ -194,6 +194,40 @@ uv run spotvm \
   --json | jq .
 ```
 
+### Databricks pricing catalog
+The CLI now reserves three Databricks-related flags:
+
+```bash
+uv run spotvm \
+  --regions centralus \
+  --sizes Standard_D4ps_v6 \
+  --include-databricks-cost
+```
+
+- `--include-databricks-cost` enables optional Databricks cost fields in JSON/CSV/table output. Databricks-specific columns appear in this mode, and unmatched SKUs keep empty Databricks cells plus an explanatory note.
+- `--include-photon-cost` requires `--include-databricks-cost`.
+- `--refresh-databricks-catalog` prints the manual refresh procedure and exits. It does not fetch or rewrite pricing data automatically.
+
+### Vendored Azure DBU pricing data
+
+The repo now vendors a saved Azure node-type DBU dataset at:
+
+`src/spotvm/data/databricks_azure_dbu_pricing.csv`
+
+The manual refresh procedure is documented in:
+
+`docs/databricks-dbu-pricing-refresh.md`
+
+Code can reuse this data through `spotvm.databricks_catalog`:
+
+```python
+from spotvm.databricks_catalog import lookup_azure_node_type_pricing
+
+row = lookup_azure_node_type_pricing("Standard_D4ds_v5")
+if row is not None:
+    print(row.dbu_per_hour)
+```
+
 ### Export to CSV for Excel/Google Sheets
 ```bash
 uv run spotvm \

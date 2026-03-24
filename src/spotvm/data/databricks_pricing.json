@@ -1,0 +1,51 @@
+{
+  "catalog_version": 1,
+  "cloud": "azure",
+  "pricing_profile": {
+    "name": "standard_jobs",
+    "dbu_unit_price_usd": 0.15,
+    "photon_dbu_unit_price_usd": 0.15
+  },
+  "captured_at": "2026-03-19T00:00:00Z",
+  "source": {
+    "type": "hybrid_manual_snapshot",
+    "url": "https://azure.microsoft.com/en-us/pricing/details/databricks/",
+    "notes": "DBU unit prices were captured from the Azure Databricks pricing page; node-level DBU values are refreshed manually from Databricks UI config."
+  },
+  "entries": [
+    {
+      "sku": "Standard_D4pds_v6",
+      "dbu_per_hour": 1.17,
+      "photon_dbu_per_hour": 1.17,
+      "notes": ""
+    },
+    {
+      "sku": "Standard_D4ps_v6",
+      "dbu_per_hour": 1.17,
+      "photon_dbu_per_hour": 1.17,
+      "notes": ""
+    },
+    {
+      "sku": "Standard_D8plds_v6",
+      "dbu_per_hour": 2.34,
+      "notes": ""
+    },
+    {
+      "sku": "Standard_D8pls_v6",
+      "dbu_per_hour": 2.34,
+      "notes": ""
+    },
+    {
+      "sku": "Standard_E4pds_v6",
+      "dbu_per_hour": 1.17,
+      "photon_dbu_per_hour": 1.17,
+      "notes": ""
+    },
+    {
+      "sku": "Standard_E4ps_v6",
+      "dbu_per_hour": 1.17,
+      "photon_dbu_per_hour": 1.17,
+      "notes": ""
+    }
+  ]
+}

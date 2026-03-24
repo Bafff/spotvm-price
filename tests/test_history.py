@@ -10,6 +10,9 @@ import pytest
 
 from spotvm.config import ToolConfig
 from spotvm.history import (
+    HistoricalSnapshotError,
+    RunSnapshot,
+    _run_snapshot_from_payload,
     analyze_history,
     generate_history_csv,
     load_historical_runs,
@@ -107,6 +110,39 @@ def test_save_run_results_creates_json(temp_results_dir, sample_candidates, samp
     assert data["candidates"][0]["eviction_rate"] == 2.5
 
 
+def test_save_run_results_wraps_json_serialization_type_error(
+    temp_results_dir, sample_candidates, sample_config, monkeypatch
+):
+    def raising_dump(*_args, **_kwargs):
+        raise TypeError("not serializable")
+
+    monkeypatch.setattr("spotvm.history.json.dumps", raising_dump)
+
+    with pytest.raises(ValueError, match=r"Failed to serialize historical run snapshot.*not serializable"):
+        save_run_results(sample_candidates, sample_config, temp_results_dir)
+
+    assert list((temp_results_dir / "runs").glob("*.json")) == []
+
+
+def test_save_run_results_does_not_leave_partial_snapshot_on_write_failure(
+    temp_results_dir, sample_candidates, sample_config, monkeypatch
+):
+    original_write_text = Path.write_text
+
+    def interrupted_write(self: Path, data: str, *args, **kwargs):
+        if self.parent.name == "runs":
+            original_write_text(self, data[:32], *args, **kwargs)
+            raise OSError("disk write interrupted")
+        return original_write_text(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", interrupted_write)
+
+    with pytest.raises(OSError, match="disk write interrupted"):
+        save_run_results(sample_candidates, sample_config, temp_results_dir)
+
+    assert list((temp_results_dir / "runs").glob("*.json")) == []
+
+
 def test_load_historical_runs_empty_dir(temp_results_dir):
     """Test loading from empty directory returns empty list."""
     snapshots = load_historical_runs(temp_results_dir)
@@ -152,6 +188,54 @@ def test_load_historical_runs_skips_malformed_json_file(temp_results_dir, sample
     assert "Failed to load historical run" in caplog.text
 
 
+def test_load_historical_runs_reports_aggregate_skipped_file_count(
+    temp_results_dir, sample_candidates, sample_config, caplog
+):
+    save_run_results(sample_candidates, sample_config, temp_results_dir)
+    (temp_results_dir / "runs" / "broken.json").write_text("{not-valid-json", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="spotvm"):
+        snapshots = load_historical_runs(temp_results_dir)
+
+    assert len(snapshots) == 1
+    assert "Skipped 1 invalid historical run file(s)" in caplog.text
+
+
+def test_load_historical_runs_skips_invalid_snapshot_shape(temp_results_dir, sample_candidates, sample_config, caplog):
+    save_run_results(sample_candidates, sample_config, temp_results_dir)
+    bad_path = temp_results_dir / "runs" / "invalid-shape.json"
+    bad_path.write_text(
+        json.dumps(
+            {
+                "timestamp": 123,
+                "config": [],
+                "candidates": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="spotvm"):
+        snapshots = load_historical_runs(temp_results_dir)
+
+    assert len(snapshots) == 1
+    assert "invalid snapshot payload" in caplog.text
+
+
+def test_load_historical_runs_skips_top_level_array_snapshot(
+    temp_results_dir, sample_candidates, sample_config, caplog
+):
+    save_run_results(sample_candidates, sample_config, temp_results_dir)
+    bad_path = temp_results_dir / "runs" / "array.json"
+    bad_path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="spotvm"):
+        snapshots = load_historical_runs(temp_results_dir)
+
+    assert len(snapshots) == 1
+    assert "invalid snapshot payload" in caplog.text
+
+
 def test_load_historical_runs_skips_unreadable_file(
     temp_results_dir, sample_candidates, sample_config, monkeypatch, caplog
 ):
@@ -172,7 +256,34 @@ def test_load_historical_runs_skips_unreadable_file(
         snapshots = load_historical_runs(temp_results_dir)
 
     assert len(snapshots) == 1
-    assert "Failed to load historical run" in caplog.text
+    assert "read error" in caplog.text
+
+
+def test_run_snapshot_from_payload_rejects_non_mapping_payload():
+    with pytest.raises(HistoricalSnapshotError, match="snapshot payload must be an object"):
+        _run_snapshot_from_payload([1, 2, 3])
+
+
+def test_run_snapshot_from_payload_rejects_non_string_timestamp():
+    with pytest.raises(HistoricalSnapshotError, match="timestamp must be a string"):
+        _run_snapshot_from_payload(
+            {
+                "timestamp": 123,
+                "config": {},
+                "candidates": [],
+            }
+        )
+
+
+def test_run_snapshot_from_payload_rejects_non_list_candidates():
+    with pytest.raises(HistoricalSnapshotError, match="candidates must be a list"):
+        _run_snapshot_from_payload(
+            {
+                "timestamp": "2026-03-20T10:00:00Z",
+                "config": {},
+                "candidates": {},
+            }
+        )
 
 
 def test_generate_history_csv_creates_file(temp_results_dir, sample_candidates, sample_config):
@@ -202,6 +313,56 @@ def test_generate_history_csv_creates_file(temp_results_dir, sample_candidates, 
     assert rows[0]["eviction_rate"] == "2.5"
 
 
+def test_generate_history_csv_keeps_empty_databricks_cells_for_plain_snapshots(temp_results_dir):
+    snapshots = [
+        RunSnapshot(
+            timestamp="2026-03-20T10:00:00Z",
+            config={},
+            candidates=[
+                {
+                    "vm_size": "Standard_D4as_v5",
+                    "region": "centralus",
+                    "availability_zone": "",
+                    "price_usd": 0.0336,
+                    "eviction_rate": 2.5,
+                }
+            ],
+        ),
+        RunSnapshot(
+            timestamp="2026-03-20T11:00:00Z",
+            config={},
+            candidates=[
+                {
+                    "vm_size": "Standard_D4as_v5",
+                    "region": "centralus",
+                    "availability_zone": "",
+                    "price_usd": 0.0336,
+                    "eviction_rate": 2.5,
+                    "compute_price_usd": 0.0336,
+                    "databricks_dbu_per_hour": 1.0,
+                    "databricks_dbu_cost_usd": 0.15,
+                    "total_price_usd": 0.1836,
+                    "databricks_catalog_updated": "2026-03-19T00:00:00+00:00",
+                }
+            ],
+        ),
+    ]
+    csv_path = temp_results_dir / "history.csv"
+
+    num_points = generate_history_csv(snapshots, csv_path)
+
+    assert num_points == 2
+    with csv_path.open("r", encoding="utf-8", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+
+    assert rows[0]["compute_price_usd"] == ""
+    assert rows[0]["databricks_dbu_per_hour"] == ""
+    assert rows[0]["total_price_usd"] == ""
+    assert rows[1]["compute_price_usd"] == "0.0336"
+    assert rows[1]["databricks_dbu_per_hour"] == "1.0"
+    assert rows[1]["total_price_usd"] == "0.1836"
+
+
 def test_generate_history_csv_handles_empty(temp_results_dir):
     """Test CSV generation with no snapshots."""
     csv_path = temp_results_dir / "empty_history.csv"
@@ -218,15 +379,44 @@ def test_analyze_history_complete_workflow(temp_results_dir, sample_candidates, 
         save_run_results(sample_candidates, sample_config, temp_results_dir)
 
     # Analyze
-    num_runs, num_datapoints, csv_path = analyze_history(
+    num_runs, num_datapoints, csv_path, skipped_files = analyze_history(
         results_dir=temp_results_dir,
         depth=2,  # Only last 2 runs
     )
 
     assert num_runs == 2
     assert num_datapoints == 4  # 2 candidates x 2 runs
+    assert skipped_files == 0
     assert csv_path.exists()
     assert csv_path.name == "history.csv"
+
+
+def test_analyze_history_reports_skipped_invalid_files(temp_results_dir, sample_candidates, sample_config):
+    save_run_results(sample_candidates, sample_config, temp_results_dir)
+    bad_path = temp_results_dir / "runs" / "broken.json"
+    bad_path.write_text("{bad-json", encoding="utf-8")
+
+    num_runs, num_datapoints, csv_path, skipped_files = analyze_history(
+        results_dir=temp_results_dir,
+        depth=None,
+    )
+
+    assert num_runs == 1
+    assert num_datapoints == 2
+    assert skipped_files == 1
+    assert csv_path.exists()
+
+
+def test_analyze_history_raises_when_all_historical_runs_are_invalid(temp_results_dir):
+    runs_dir = temp_results_dir / "runs"
+    runs_dir.mkdir()
+    (runs_dir / "broken.json").write_text("{bad-json", encoding="utf-8")
+
+    with pytest.raises(HistoricalSnapshotError, match="All historical run files failed to load"):
+        analyze_history(
+            results_dir=temp_results_dir,
+            depth=None,
+        )
 
 
 def test_csv_output_format(temp_results_dir, sample_candidates, sample_config):
@@ -256,6 +446,91 @@ def test_csv_output_format(temp_results_dir, sample_candidates, sample_config):
     ]
 
     assert headers == expected_headers
+
+
+def test_save_run_results_persists_databricks_fields_when_present(temp_results_dir, sample_config):
+    candidates = [
+        CandidateInsight(
+            vm_size="Standard_D4ps_v6",
+            region="centralus",
+            availability_zone=None,
+            price_usd=0.03,
+            price_last_updated=datetime(2025, 1, 25, 14, 30),
+            eviction_rate=2.5,
+            eviction_last_updated=datetime(2025, 1, 25, 14, 30),
+            placement_score="High",
+            quota_available=True,
+            recommendation_rank=1,
+            compute_price_usd=0.03,
+            databricks_dbu_per_hour=1.17,
+            databricks_dbu_cost_usd=0.1755,
+            databricks_photon_dbu_per_hour=1.17,
+            databricks_photon_cost_usd=0.1755,
+            total_price_usd=0.381,
+            databricks_catalog_updated="2026-03-19T00:00:00Z",
+        ),
+    ]
+
+    saved_path = save_run_results(
+        candidates=candidates,
+        config=sample_config,
+        results_dir=temp_results_dir,
+    )
+
+    with saved_path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    candidate = data["candidates"][0]
+    assert candidate["price_usd"] == 0.03
+    assert candidate["compute_price_usd"] == 0.03
+    assert candidate["databricks_dbu_per_hour"] == 1.17
+    assert candidate["databricks_dbu_cost_usd"] == 0.1755
+    assert candidate["databricks_photon_dbu_per_hour"] == 1.17
+    assert candidate["databricks_photon_cost_usd"] == 0.1755
+    assert candidate["total_price_usd"] == 0.381
+    assert candidate["databricks_catalog_updated"] == "2026-03-19T00:00:00Z"
+
+
+def test_generate_history_csv_appends_databricks_columns_when_present(temp_results_dir, sample_config):
+    candidates = [
+        CandidateInsight(
+            vm_size="Standard_D4ps_v6",
+            region="centralus",
+            availability_zone=None,
+            price_usd=0.03,
+            price_last_updated=datetime(2025, 1, 25, 14, 30),
+            eviction_rate=2.5,
+            eviction_last_updated=datetime(2025, 1, 25, 14, 30),
+            placement_score="High",
+            quota_available=True,
+            recommendation_rank=1,
+            compute_price_usd=0.03,
+            databricks_dbu_per_hour=1.17,
+            databricks_dbu_cost_usd=0.1755,
+            total_price_usd=0.381,
+            databricks_catalog_updated="2026-03-19T00:00:00Z",
+        ),
+    ]
+
+    save_run_results(candidates, sample_config, temp_results_dir)
+
+    snapshots = load_historical_runs(temp_results_dir)
+    csv_path = temp_results_dir / "databricks_history.csv"
+    generate_history_csv(snapshots, csv_path)
+
+    with csv_path.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        headers = reader.fieldnames or []
+        row = next(reader)
+
+    assert "compute_price_usd" in headers
+    assert "databricks_dbu_per_hour" in headers
+    assert "databricks_dbu_cost_usd" in headers
+    assert "total_price_usd" in headers
+    assert "databricks_catalog_updated" in headers
+    assert row["price_usd"] == "0.03"
+    assert row["compute_price_usd"] == "0.03"
+    assert row["total_price_usd"] == "0.381"
 
 
 def test_csv_handles_none_values(temp_results_dir, sample_config):
