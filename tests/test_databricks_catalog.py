@@ -4,6 +4,7 @@ import json
 import math
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from typing import get_type_hints
 
 import pytest
 
@@ -46,6 +47,10 @@ def test_load_catalog_source_is_immutable_mapping():
 
     with pytest.raises(TypeError):
         catalog.source["extra"] = "value"
+
+
+def test_databricks_catalog_exposes_datetime_typed_captured_at_field():
+    assert get_type_hints(DatabricksCatalog)["captured_at"] is datetime
 
 
 def test_direct_databricks_catalog_constructor_wraps_source_as_immutable_mapping():

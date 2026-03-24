@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 from . import config as config_defaults
 from .analysis import (
@@ -45,6 +45,8 @@ from .resource_graph import ResourceGraphRequest, fetch_historical_metrics
 from .vm_specs import discover_skus
 
 logger = logging.getLogger("spotvm")
+# These exception types point to programmer bugs in unattended control flow.
+# Retrying would just loop on a broken release, so unattended mode aborts fast.
 _FATAL_UNATTENDED_EXCEPTIONS = (AssertionError, AttributeError, KeyError, NameError, TypeError)
 
 
@@ -262,7 +264,7 @@ def _add_filtering_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--sort",
         type=str,
-        choices=["price", "price-per-vcpu", "eviction"],
+        choices=get_args(SortOrder),
         default="price",
         help="Sort order for results: price (default), price-per-vcpu, or eviction",
     )

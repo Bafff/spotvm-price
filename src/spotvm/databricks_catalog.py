@@ -20,7 +20,7 @@ from functools import cache
 from importlib import resources
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any
 
 
 class DatabricksCatalogError(RuntimeError):
@@ -109,22 +109,37 @@ class AzureNodeTypePricingRow:
             _require_positive_finite(self.dbu_per_hour, "dbu_per_hour")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class DatabricksCatalog:
     catalog_version: int
     cloud: str
     pricing_profile: DatabricksPricingProfile
-    captured_at: datetime | str
+    captured_at: datetime
     source: Mapping[str, str]
     entries: tuple[DatabricksCatalogEntry, ...]
+
+    def __init__(
+        self,
+        catalog_version: int,
+        cloud: str,
+        pricing_profile: DatabricksPricingProfile,
+        captured_at: datetime | str,
+        source: Mapping[str, str],
+        entries: tuple[DatabricksCatalogEntry, ...],
+    ) -> None:
+        object.__setattr__(self, "catalog_version", catalog_version)
+        object.__setattr__(self, "cloud", cloud)
+        object.__setattr__(self, "pricing_profile", pricing_profile)
+        object.__setattr__(self, "captured_at", _coerce_catalog_timestamp(captured_at))
+        object.__setattr__(self, "source", source)
+        object.__setattr__(self, "entries", entries)
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         if self.catalog_version <= 0:
             raise ValueError("catalog_version must be positive")
         if not self.cloud:
             raise ValueError("cloud must be non-empty")
-        normalized_captured_at = _coerce_catalog_timestamp(self.captured_at)
-        object.__setattr__(self, "captured_at", normalized_captured_at)
         if not isinstance(self.source, Mapping):
             raise TypeError("source must be a mapping of string keys and values")
         if not all(isinstance(key, str) and isinstance(value, str) for key, value in self.source.items()):
@@ -142,7 +157,7 @@ class DatabricksCatalog:
             "catalog_version": self.catalog_version,
             "cloud": self.cloud,
             "pricing_profile": asdict(self.pricing_profile),
-            "captured_at": _format_catalog_timestamp(cast(datetime, self.captured_at)),
+            "captured_at": _format_catalog_timestamp(self.captured_at),
             "source": dict(self.source),
             "entries": [asdict(entry) for entry in self.entries],
         }
@@ -171,7 +186,7 @@ def load_azure_dbu_pricing_rows() -> list[AzureNodeTypePricingRow]:
 
 def load_azure_dbu_pricing_last_updated() -> datetime:
     """Return the vendored JSON snapshot timestamp that accompanies the CSV DBU data."""
-    return cast(datetime, load_catalog().captured_at)
+    return load_catalog().captured_at
 
 
 @cache

@@ -777,6 +777,32 @@ class TestMainWithMocks:
         assert "centralus" in captured.out
         assert "Placement" not in captured.out
 
+    def test_main_propagates_sort_order_from_cli(self, monkeypatch, capsys):
+        _stub_analysis_fetches(
+            monkeypatch,
+            historical_metrics=[
+                _historical_metric("Standard_D2s_v5", price_usd=0.04, eviction_rate=9.0),
+                _historical_metric("Standard_D4s_v5", price_usd=0.08, eviction_rate=3.0),
+            ],
+        )
+
+        rc = main(
+            [
+                "--regions",
+                "centralus",
+                "--sizes",
+                "Standard_D2s_v5",
+                "Standard_D4s_v5",
+                "--sort",
+                "eviction",
+                "--no-color",
+            ]
+        )
+
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert captured.out.index("Standard_D4s_v5") < captured.out.index("Standard_D2s_v5")
+
     def test_fetch_analysis_inputs_requests_placement_and_history_data(self, monkeypatch):
         placement_marker = object()
         historical_metric = _historical_metric("Standard_D4s_v5")

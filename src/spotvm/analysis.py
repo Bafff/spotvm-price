@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from datetime import datetime
-from typing import cast
 
 from .databricks_catalog import (
     load_catalog,
@@ -145,8 +143,10 @@ def enrich_with_databricks_cost(
     Keeps ``price_usd`` as the raw Azure VM price and stores the Databricks-aware
     result separately in ``total_price_usd``.  When Photon mode is enabled, the
     Photon DBU rate is derived by multiplying the base ``dbu_per_hour`` by the
-    Photon Jobs multiplier (``PHOTON_JOBS_MULTIPLIER``). The resulting Photon cost replaces
-    (not supplements) the base DBU cost when computing ``total_price_usd``.
+    Photon Jobs multiplier (``PHOTON_JOBS_MULTIPLIER``), and the resulting
+    Photon hourly cost uses ``photon_dbu_unit_price_usd`` from the pricing
+    profile. That Photon cost replaces (not supplements) the base DBU cost when
+    computing ``total_price_usd``.
     """
     if not candidates:
         return candidates
@@ -154,7 +154,7 @@ def enrich_with_databricks_cost(
     catalog = load_catalog()
     dbu_unit_price = catalog.pricing_profile.dbu_unit_price_usd
     photon_dbu_unit_price = catalog.pricing_profile.photon_dbu_unit_price_usd
-    catalog_updated = cast(datetime, catalog.captured_at)
+    catalog_updated = catalog.captured_at
     missing_catalog: list[str] = []
     missing_dbu_rate: list[str] = []
 

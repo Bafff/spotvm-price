@@ -85,6 +85,23 @@ def test_effective_price_usd_uses_total_then_raw_price(candidate, expected):
     assert effective_price_usd(candidate) == expected
 
 
+def test_candidate_insight_exposes_effective_price_as_property():
+    candidate = CandidateInsight(
+        region="eastus",
+        vm_size="Standard_D4as_v5",
+        placement_score=None,
+        quota_available=None,
+        price_usd=1.0,
+        compute_price_usd=1.0,
+        total_price_usd=None,
+        price_last_updated=None,
+        eviction_rate=None,
+        eviction_last_updated=None,
+    )
+
+    assert candidate.effective_price_usd is None
+
+
 def test_databricks_optional_fields_are_candidate_insight_attributes():
     """Prevent drift between DATABRICKS_OPTIONAL_FIELDS and CandidateInsight."""
     dataclass_fields = set(CandidateInsight.__dataclass_fields__)

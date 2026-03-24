@@ -354,7 +354,7 @@ def _split_notes(notes: str | None) -> list[str]:
 
 
 def _format_table_notes(item: CandidateInsight) -> str:
-    """Keep the terminal table compact and refer detailed perf fallback text to the footer."""
+    """Keep the terminal table compact by shortening detailed note text into footnote markers."""
     parts = [_FOOTNOTE_ABBREVIATIONS.get(note, note) for note in _split_notes(item.notes)]
     if item.performance_note and item.performance_basis == "heuristic":
         parts.append("Heuristic perf*")

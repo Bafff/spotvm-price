@@ -71,13 +71,22 @@ class CandidateInsight:
     cpu_arch: CPUArchitecture | None = None
     coremark_score: int | None = None  # CoreMark benchmark score
     coremark_per_vcpu: float | None = None  # CoreMark per vCPU (efficiency metric)
-    compute_price_usd: float | None = None
-    databricks_dbu_per_hour: float | None = None
-    databricks_dbu_cost_usd: float | None = None
-    databricks_photon_dbu_per_hour: float | None = None
-    databricks_photon_cost_usd: float | None = None
-    total_price_usd: float | None = None
-    databricks_catalog_updated: datetime | None = None
+    compute_price_usd: float | None = None  # Raw Azure VM hourly price when Databricks enrichment ran
+    databricks_dbu_per_hour: float | None = None  # Base DBU rate from the vendored catalog
+    databricks_dbu_cost_usd: float | None = None  # Base DBU hourly cost using dbu_unit_price_usd
+    databricks_photon_dbu_per_hour: float | None = None  # Derived Photon DBU rate for Photon-capable SKUs
+    databricks_photon_cost_usd: float | None = None  # Photon hourly cost using photon_dbu_unit_price_usd
+    total_price_usd: float | None = None  # Comparable total used for ranking/filtering when fully known
+    databricks_catalog_updated: datetime | None = None  # Vendored Databricks catalog snapshot timestamp
+
+    @property
+    def effective_price_usd(self) -> float | None:
+        """Return the comparable user-facing price for ranking and display."""
+        if self.total_price_usd is not None:
+            return self.total_price_usd
+        if self.compute_price_usd is not None:
+            return None
+        return self.price_usd
 
 
 def effective_price_usd(candidate: CandidateInsight) -> float | None:
@@ -90,8 +99,4 @@ def effective_price_usd(candidate: CandidateInsight) -> float | None:
     for ranking and `--max-price` filtering while still allowing reporting to
     show `compute_price_usd` separately.
     """
-    if candidate.total_price_usd is not None:
-        return candidate.total_price_usd
-    if candidate.compute_price_usd is not None:
-        return None
-    return candidate.price_usd
+    return candidate.effective_price_usd
